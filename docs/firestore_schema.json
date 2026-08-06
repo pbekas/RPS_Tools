@@ -1,0 +1,109 @@
+{
+  "description": "RPS Call QA — Firestore NoSQL schema (manager vs agent views)",
+  "collections": {
+    "users": {
+      "doc_id": "email (normalized lowercase) or stable uid",
+      "fields": {
+        "email": "string",
+        "name": "string",
+        "role": "Admin | Agent",
+        "rolling_ai_feedback": "string — latest coaching narrative",
+        "last_coaching_at": "timestamp | null",
+        "active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      },
+      "indexes": ["role", "email"]
+    },
+    "calls": {
+      "doc_id": "auto-id",
+      "fields": {
+        "agent_name": "string",
+        "agent_email": "string | null — links to users",
+        "call_date": "timestamp",
+        "duration_seconds": "number",
+        "time_to_answer_seconds": "number | null",
+        "topic": "string",
+        "ai_empathy_score": "number 1-10",
+        "ai_name_stated": "boolean — agent stated their name",
+        "ai_summary": "string",
+        "transcript": [
+          {
+            "speaker": "Patient | Agent | System",
+            "text": "string",
+            "timestamp": "string — mm:ss or HH:MM:SS"
+          }
+        ],
+        "transfer_count": "number",
+        "fcr": "boolean — First Call Resolution",
+        "quality_score": "number 1-10 — composite AI QA score",
+        "manager_feedback": "string",
+        "manager_notes": "string",
+        "recording_url": "string — signed or public listen URL",
+        "recording_gcs_path": "string",
+        "original_filename": "string | null",
+        "source": "upload | vonage",
+        "vonage_call_id": "string | null",
+        "vonage_recording_id": "string | null — VBC company recording id (dedupe key)",
+        "vonage_extension": "string | null",
+        "vonage_caller_id": "string | null",
+        "vonage_cnam": "string | null",
+        "vonage_dnis": "string | null",
+        "vonage_direction": "INBOUND | OUTBOUND | INTRA_PBX | null",
+        "recording_storage_uri": "string — s3:// or gs://",
+        "status": "pending | processing | complete | error",
+        "error_message": "string | null",
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+        "reviewed_by": "string | null",
+        "reviewed_at": "timestamp | null"
+      },
+      "indexes": [
+        "agent_email + call_date",
+        "call_date",
+        "status",
+        "agent_name + call_date"
+      ]
+    },
+    "metrics": {
+      "doc_id": "{agent_email}_{YYYY}_W{WW}",
+      "fields": {
+        "agent_email": "string",
+        "agent_name": "string",
+        "week_start": "string YYYY-MM-DD",
+        "week_end": "string YYYY-MM-DD",
+        "year": "number",
+        "week": "number",
+        "call_count": "number",
+        "total_talk_time_seconds": "number",
+        "avg_talk_time_seconds": "number",
+        "avg_empathy_score": "number",
+        "avg_quality_score": "number",
+        "fcr_rate": "number 0-1",
+        "avg_transfers": "number",
+        "updated_at": "timestamp"
+      },
+      "indexes": ["agent_email + week_start", "week_start"]
+    },
+    "feedback": {
+      "doc_id": "auto-id",
+      "description": "Single place to browse all manager feedback across calls",
+      "fields": {
+        "call_id": "string",
+        "agent_email": "string | null",
+        "agent_name": "string",
+        "author_email": "string",
+        "author_name": "string",
+        "text": "string",
+        "call_date": "timestamp | null",
+        "topic": "string | null",
+        "created_at": "timestamp"
+      },
+      "indexes": ["agent_email + created_at", "created_at"]
+    }
+  },
+  "access_model": {
+    "Admin": "Read/write all calls, users, metrics, feedback; agent picker on dashboard",
+    "Agent": "Read own calls (by agent_email), own metrics, own rolling_ai_feedback only"
+  }
+}
