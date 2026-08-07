@@ -38,3 +38,8 @@ htmlcov/
 
 # Local secrets
 secrets/
+
+# CDK
+infra/aws/cdk.out/
+infra/aws/cdk.context.json
+*.egg-info/
