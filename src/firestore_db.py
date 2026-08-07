@@ -346,6 +346,11 @@ def seed_qa_rules(ruleset: dict[str, Any], *, force: bool = False) -> str:
     return f"qa_rules/current + qa_rules/{version}"
 
 
+def save_qa_rules(ruleset: dict[str, Any]) -> str:
+    """Always overwrite qa_rules/current (manager edits)."""
+    return seed_qa_rules(ruleset, force=True)
+
+
 # ── Call Topics ────────────────────────────────────────────────────────
 
 

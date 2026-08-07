@@ -55,6 +55,28 @@ export type TopicSet = {
   topics: CallTopic[];
 };
 
+export type QaRule = {
+  id: string;
+  label: string;
+  description?: string;
+  category?: string;
+  weight?: number;
+  auto_fail?: boolean;
+  pass_criteria?: string;
+  active?: boolean;
+};
+
+export type QaRuleset = {
+  version: string;
+  name: string;
+  description?: string;
+  auto_fail_quality_cap?: number;
+  empathy_pass_threshold?: number;
+  transfer_soft_limit?: number;
+  transfer_auto_fail_at?: number;
+  rules: QaRule[];
+};
+
 export async function getCallTopics(): Promise<TopicSet> {
   const snap = await getDb().collection("call_topics").doc("current").get();
   if (!snap.exists) {
@@ -128,6 +150,146 @@ export async function setCallTopicActive(
     t.id === id ? { ...t, active } : t
   );
   return saveCallTopics({ ...current, topics });
+}
+
+export async function getQaRules(): Promise<QaRuleset> {
+  const snap = await getDb().collection("qa_rules").doc("current").get();
+  if (!snap.exists) {
+    return {
+      version: "v1",
+      name: "QA Rules",
+      description: "",
+      auto_fail_quality_cap: 4,
+      empathy_pass_threshold: 7,
+      transfer_soft_limit: 1,
+      transfer_auto_fail_at: 3,
+      rules: [],
+    };
+  }
+  const data = serializeDoc<QaRuleset & { id: string }>(snap.id, snap.data());
+  return {
+    version: String(data.version || "v1"),
+    name: String(data.name || "QA Rules"),
+    description: String(data.description || ""),
+    auto_fail_quality_cap:
+      typeof data.auto_fail_quality_cap === "number"
+        ? data.auto_fail_quality_cap
+        : 4,
+    empathy_pass_threshold:
+      typeof data.empathy_pass_threshold === "number"
+        ? data.empathy_pass_threshold
+        : 7,
+    transfer_soft_limit:
+      typeof data.transfer_soft_limit === "number" ? data.transfer_soft_limit : 1,
+    transfer_auto_fail_at:
+      typeof data.transfer_auto_fail_at === "number"
+        ? data.transfer_auto_fail_at
+        : 3,
+    rules: Array.isArray(data.rules) ? data.rules : [],
+  };
+}
+
+export async function saveQaRules(ruleset: QaRuleset): Promise<QaRuleset> {
+  const now = new Date();
+  const payload = {
+    version: ruleset.version || "v1",
+    name: ruleset.name || "QA Rules",
+    description: ruleset.description || "",
+    auto_fail_quality_cap: ruleset.auto_fail_quality_cap ?? 4,
+    empathy_pass_threshold: ruleset.empathy_pass_threshold ?? 7,
+    transfer_soft_limit: ruleset.transfer_soft_limit ?? 1,
+    transfer_auto_fail_at: ruleset.transfer_auto_fail_at ?? 3,
+    rules: ruleset.rules,
+    updated_at: now,
+  };
+  await getDb().collection("qa_rules").doc("current").set(payload, { merge: true });
+  await getDb().collection("qa_rules").doc(payload.version).set(payload, { merge: true });
+  return getQaRules();
+}
+
+export async function upsertQaRule(input: {
+  id: string;
+  label: string;
+  description?: string;
+  category?: string;
+  weight?: number;
+  auto_fail?: boolean;
+  pass_criteria?: string;
+  active?: boolean;
+}): Promise<QaRuleset> {
+  const id = input.id.trim().toLowerCase();
+  if (!/^[a-z0-9_]+$/.test(id)) {
+    throw new Error("Rule id must be lowercase letters, numbers, underscores");
+  }
+  const label = input.label.trim();
+  if (!label) throw new Error("Label is required");
+
+  const current = await getQaRules();
+  const rules = [...current.rules];
+  const idx = rules.findIndex((r) => r.id === id);
+  const row: QaRule = {
+    id,
+    label,
+    description: (input.description || "").trim(),
+    category: (input.category || "Process").trim() || "Process",
+    weight:
+      typeof input.weight === "number" && !Number.isNaN(input.weight)
+        ? input.weight
+        : 1,
+    auto_fail: !!input.auto_fail,
+    pass_criteria: (input.pass_criteria || "").trim(),
+    active: input.active !== false,
+  };
+  if (idx >= 0) rules[idx] = { ...rules[idx], ...row };
+  else rules.push(row);
+
+  return saveQaRules({ ...current, rules });
+}
+
+export async function setQaRuleActive(
+  id: string,
+  active: boolean
+): Promise<QaRuleset> {
+  const current = await getQaRules();
+  const rules = current.rules.map((r) =>
+    r.id === id ? { ...r, active } : r
+  );
+  return saveQaRules({ ...current, rules });
+}
+
+export async function updateQaRulesetMeta(input: {
+  name?: string;
+  description?: string;
+  auto_fail_quality_cap?: number;
+  empathy_pass_threshold?: number;
+  transfer_soft_limit?: number;
+  transfer_auto_fail_at?: number;
+}): Promise<QaRuleset> {
+  const current = await getQaRules();
+  return saveQaRules({
+    ...current,
+    name: input.name?.trim() || current.name,
+    description:
+      input.description !== undefined
+        ? input.description.trim()
+        : current.description,
+    auto_fail_quality_cap:
+      typeof input.auto_fail_quality_cap === "number"
+        ? input.auto_fail_quality_cap
+        : current.auto_fail_quality_cap,
+    empathy_pass_threshold:
+      typeof input.empathy_pass_threshold === "number"
+        ? input.empathy_pass_threshold
+        : current.empathy_pass_threshold,
+    transfer_soft_limit:
+      typeof input.transfer_soft_limit === "number"
+        ? input.transfer_soft_limit
+        : current.transfer_soft_limit,
+    transfer_auto_fail_at:
+      typeof input.transfer_auto_fail_at === "number"
+        ? input.transfer_auto_fail_at
+        : current.transfer_auto_fail_at,
+  });
 }
 
 export type CallDoc = {
