@@ -161,9 +161,13 @@ python scripts/reanalyze_calls.py --limit 20
 
 ## Deploy (AWS)
 
-See [`docs/AWS_HOSTING.md`](docs/AWS_HOSTING.md) and [`infra/aws/`](infra/aws/) (CDK starter: ECS Fargate + ALB + S3).
+Production URL: **https://tool.releviumpain.com** (Next.js + Vonage poller on ECS).
 
-Set `S3_BUCKET` + `AWS_REGION` so processed recordings land in your account. Secrets Manager should include OAuth, VBC, and Firestore (if still used). Enable **Bedrock model access** for your Claude model ID.
+```bash
+AWS_PROFILE=claude_account ./scripts/deploy_aws.sh
+```
+
+See [`docs/AWS_HOSTING.md`](docs/AWS_HOSTING.md) and [`infra/aws/`](infra/aws/). Reuses S3 bucket `rps-call-qa-recordings-013908492747`. After deploy, point Cloudflare `tool` at the ALB and add the Google OAuth redirect for that host.
 
 ## Security notes
 
