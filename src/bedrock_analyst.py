@@ -40,6 +40,9 @@ from src.call_flags import (
 BASE_SYSTEM = """You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
 You review phone call transcripts between front-desk/phone agents and patients or callers.
 
+The TRANSCRIPT is already produced by speech-to-text. Do NOT regenerate or rewrite it.
+Use the numbered turns as given. evidence_turn_index must refer to those turn numbers.
+
 Return ONLY valid JSON (no markdown fences) matching this schema:
 {
   "agent_name": "string — best guess of the staff member's name if stated or identifiable; else Unknown",
@@ -49,6 +52,10 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
   "duration_seconds": integer — total call length in seconds (use provided duration if given),
   "time_to_answer_seconds": integer or null — time before a live agent greets, if detectable,
   "transfer_count": integer — number of times the caller was transferred,
+  "speaker_roles": {
+    "spk_0": "Patient | Agent | System",
+    "spk_1": "Patient | Agent | System"
+  },
   "sentiment": {
     "label": "positive | neutral | negative | mixed",
     "score_1_to_10": "integer 1-10 — overall call tone (10 = very positive/warm)",
@@ -60,12 +67,9 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
       "triggered": true,
       "evidence": "short quote from the transcript",
       "evidence_timestamp": "mm:ss",
-      "evidence_turn_index": "integer 0-based",
+      "evidence_turn_index": "integer 0-based index into the PROVIDED transcript",
       "notes": "brief rationale"
     }
-  ],
-  "transcript": [
-    {"speaker": "Patient" | "Agent" | "System", "text": "exact words", "timestamp": "mm:ss"}
   ],
   "rule_results": [
     {
@@ -74,13 +78,15 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
       "score_1_to_10": integer or null — required for empathy; optional otherwise,
       "evidence": "short quote copied from the transcript when possible",
       "evidence_timestamp": "mm:ss — timestamp of the most relevant transcript turn",
-      "evidence_turn_index": "integer 0-based index into the transcript array for that turn",
+      "evidence_turn_index": "integer 0-based index into the PROVIDED transcript",
       "notes": "brief rationale"
     }
   ]
 }
 
 Rules:
+- Do NOT include a transcript array in your response.
+- Include speaker_roles only when speakers are labeled spk_0/spk_1/…; map each to Patient, Agent, or System.
 - Include exactly one rule_results entry for every active rule id provided.
 - For empathy, always set score_1_to_10 (1-10).
 - Always set evidence_timestamp and evidence_turn_index when you can identify a supporting turn.
@@ -88,8 +94,6 @@ Rules:
 - topic MUST be exactly one id from the TOPIC CATALOG.
 - Always include sentiment for the overall call tone.
 - critical_flags: include ONLY flags that triggered (triggered=true). Omit non-triggered flags. These are business alerts, not agent QA fails.
-- Map Transcribe speaker labels to Patient / Agent / System using role cues.
-- Preserve wording; lightly clean filler words only.
 - Medical context: be factual; do not invent clinical details not in the transcript.
 - Do not invent transfers; count only clear transfer/handoff events.
 - Do not invent patient names; use Unknown when not stated.
@@ -97,6 +101,10 @@ Rules:
 
 # Back-compat alias for docs/imports
 SYSTEM_INSTRUCTION = BASE_SYSTEM
+
+
+# Audit scoring uses a cheaper/faster model by default; coaching can stay on Sonnet.
+DEFAULT_AUDIT_MAX_TOKENS = 3072
 
 
 def _system_with_rules(
@@ -166,29 +174,35 @@ def analyze_transcript(
         transcript_text = _format_turns_for_prompt(seed_turns)
 
     user_prompt = (
-        "Analyze this medical office phone call transcript.\n"
+        "Score this medical office phone call. Use the PROVIDED transcript as-is — "
+        "do not rewrite it.\n"
         f"Original filename (may contain hints): {original_filename or 'n/a'}\n"
         f"Known/estimated duration_seconds: {duration_seconds if duration_seconds is not None else 'unknown'}\n"
     )
     if transfer_count_hint is not None:
         user_prompt += f"Hint transfer_count from telephony metadata: {transfer_count_hint}\n"
     user_prompt += (
-        "\nTRANSCRIPT:\n"
+        "\nPROVIDED TRANSCRIPT (numbered turns):\n"
         f"{transcript_text}\n\n"
-        "Return the JSON object described in your system instructions, including rule_results "
-        "for every active rule id, topic as a catalog topic id, sentiment, and any triggered "
-        "critical_flags."
+        "Return JSON with agent_name, patient_name, topic, ai_summary, duration_seconds, "
+        "time_to_answer_seconds, transfer_count, speaker_roles (if spk_* labels), sentiment, "
+        "rule_results for every active rule id, and any triggered critical_flags. "
+        "Do not return a transcript array."
     )
 
     raw = bedrock_text(
         system=_system_with_rules(ruleset, topicset, flagset),
         user=user_prompt,
         temperature=0.2,
-        max_tokens=8192,
+        max_tokens=DEFAULT_AUDIT_MAX_TOKENS,
     )
     data = _extract_json(raw)
 
-    normalized_transcript = _normalize_transcript(data.get("transcript") or seed_turns)
+    # Always keep speech-to-text turns; only apply optional speaker role map from the model.
+    normalized_transcript = _normalize_transcript(
+        seed_turns,
+        speaker_roles=data.get("speaker_roles") if isinstance(data.get("speaker_roles"), dict) else None,
+    )
     transfer_count = int(
         data.get("transfer_count")
         if data.get("transfer_count") is not None
@@ -271,6 +285,7 @@ Tone: direct, kind, actionable. No fluff. Do not invent facts not supported by t
         user=prompt,
         temperature=0.4,
         max_tokens=2048,
+        model_id=get_settings().bedrock_coaching_model_id,
     ).strip()
 
 
@@ -280,11 +295,12 @@ def bedrock_text(
     user: str,
     temperature: float = 0.2,
     max_tokens: int = 4096,
+    model_id: str | None = None,
 ) -> str:
     settings = get_settings()
     client = boto3.client("bedrock-runtime", region_name=settings.aws_region)
     response = client.converse(
-        modelId=settings.bedrock_model_id,
+        modelId=model_id or settings.bedrock_model_id,
         system=[{"text": system}],
         messages=[{"role": "user", "content": [{"text": user}]}],
         inferenceConfig={
@@ -442,17 +458,37 @@ def _turns_from_transcribe_json(payload: dict[str, Any]) -> list[dict[str, str]]
 
 def _format_turns_for_prompt(turns: list[dict[str, str]]) -> str:
     lines = []
-    for t in turns:
-        lines.append(f"[{t.get('timestamp', '')}] {t.get('speaker')}: {t.get('text')}")
+    for i, t in enumerate(turns):
+        lines.append(
+            f"[{i}] [{t.get('timestamp', '')}] {t.get('speaker')}: {t.get('text')}"
+        )
     return "\n".join(lines) if lines else "(empty transcript)"
 
 
-def _normalize_transcript(transcript: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _normalize_transcript(
+    transcript: list[dict[str, Any]],
+    *,
+    speaker_roles: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    role_map: dict[str, str] = {}
+    for raw_key, raw_val in (speaker_roles or {}).items():
+        key = str(raw_key).strip().lower()
+        val = str(raw_val).strip()
+        low = val.lower()
+        if low in {"patient", "caller"}:
+            role_map[key] = "Patient"
+        elif low in {"agent", "staff", "rep"}:
+            role_map[key] = "Agent"
+        elif low in {"system", "ivr"}:
+            role_map[key] = "System"
+
     normalized: list[dict[str, str]] = []
     for turn in transcript:
         speaker = str(turn.get("speaker", "Unknown")).strip()
         low = speaker.lower()
-        if speaker in {"Patient", "Agent", "System"}:
+        if low in role_map:
+            mapped = role_map[low]
+        elif speaker in {"Patient", "Agent", "System"}:
             mapped = speaker
         elif "patient" in low or "caller" in low:
             mapped = "Patient"

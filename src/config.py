@@ -44,11 +44,16 @@ class Settings:
         self.gcs_bucket = os.getenv("GCS_BUCKET", "").strip()
         self.s3_bucket = os.getenv("S3_BUCKET", "").strip()
         self.aws_region = os.getenv("AWS_REGION", "us-west-2").strip()
-        # Claude on Bedrock — enable model access in AWS console for this region
+        # Call QA audit model (cheap/fast). Enable access in Bedrock console.
         self.bedrock_model_id = os.getenv(
             "BEDROCK_MODEL_ID",
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         ).strip()
+        # Optional stronger model for weekly coaching narratives
+        self.bedrock_coaching_model_id = os.getenv(
+            "BEDROCK_COACHING_MODEL_ID",
+            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        ).strip() or self.bedrock_model_id
         self.transcribe_language_code = os.getenv(
             "TRANSCRIBE_LANGUAGE_CODE", "en-US"
         ).strip()
