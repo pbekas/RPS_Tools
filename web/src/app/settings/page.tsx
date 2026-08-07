@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import {
   discoverUnmappedAgents,
   getCallTopics,
+  getQaRules,
   listUsers,
 } from "@/lib/firestore";
 import { SettingsShell } from "@/components/SettingsShell";
@@ -13,10 +14,11 @@ export default async function SettingsPage() {
   if (!session?.user?.email) redirect("/login");
   if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
 
-  const [users, unmapped, topicset] = await Promise.all([
+  const [users, unmapped, topicset, ruleset] = await Promise.all([
     listUsers(),
     discoverUnmappedAgents(),
     getCallTopics(),
+    getQaRules(),
   ]);
   const domain = process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com";
 
@@ -25,6 +27,7 @@ export default async function SettingsPage() {
       initialUsers={users}
       initialUnmapped={unmapped}
       initialTopicset={topicset}
+      initialRuleset={ruleset}
       domain={domain}
     />
   );

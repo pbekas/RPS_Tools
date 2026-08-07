@@ -128,7 +128,7 @@ Starter rubric: [`docs/qa_rules_v1.json`](docs/qa_rules_v1.json). Seeded to Fire
 python scripts/seed_qa_rules.py --force
 ```
 
-Call review shows per-rule PASS/FAIL with evidence. Use **Re-analyze with current rules** to rescore existing transcripts after you edit the rubric.
+Admins can edit rules and scoring thresholds in the Next.js app under **Settings → Audit rules**. Call review shows per-rule PASS/FAIL with evidence. Use **Re-analyze with current rules** to rescore existing transcripts after you edit the rubric.
 
 ## Call topics
 
