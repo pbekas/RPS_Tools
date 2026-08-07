@@ -70,6 +70,60 @@ class VonageVBCClient:
                 "Create an application at https://apimanager.uc.vonage.com "
                 "and subscribe it to the Call Recording API."
             )
+        self._resolved_account_id: str | None = None
+
+    def reports_account_id(self) -> str:
+        """Account id for APIs that reject the literal 'self' (e.g. Reports)."""
+        configured = (self.account_id or "").strip()
+        if configured and configured.lower() != "self":
+            return configured
+        if self._resolved_account_id:
+            return self._resolved_account_id
+        resolved = self._resolve_account_id_from_token()
+        if not resolved:
+            raise VonageVBCError(
+                "VBC Reports requires a real account id (not 'self'). "
+                "Set VBC_ACCOUNT_ID in .env to your VBC account number from "
+                "https://apimanager.uc.vonage.com (or the admin portal)."
+            )
+        self._resolved_account_id = resolved
+        return resolved
+
+    def _resolve_account_id_from_token(self) -> str | None:
+        """Best-effort: pull account id from access-token JWT claims."""
+        token = self.get_access_token()
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        try:
+            pad = parts[1] + "=" * (-len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(pad.encode("ascii")))
+        except Exception:
+            return None
+        if not isinstance(claims, dict):
+            return None
+        for key in (
+            "account_id",
+            "accountId",
+            "vbc_account_id",
+            "vbc.account_id",
+            "http://wso2.org/claims/account_id",
+        ):
+            value = claims.get(key)
+            if value is None and "." in key:
+                continue
+            text = str(value or "").strip()
+            if text and text.lower() != "self":
+                return text
+        # Nested claim bags some IdPs use
+        for bag_key in ("account", "vbc", "https://api.vonage.com/claims"):
+            bag = claims.get(bag_key)
+            if isinstance(bag, dict):
+                for key in ("account_id", "accountId", "id"):
+                    text = str(bag.get(key) or "").strip()
+                    if text and text.lower() != "self":
+                        return text
+        return None
 
     # ── OAuth ──────────────────────────────────────────────────────────
 

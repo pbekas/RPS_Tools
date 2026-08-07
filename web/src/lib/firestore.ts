@@ -8,6 +8,16 @@ import {
 } from "firebase-admin/firestore";
 import fs from "fs";
 import { isQaEligibleDuration } from "@/lib/qa";
+import type { CallLogDoc } from "@/lib/callLogs";
+import { isMissedResult } from "@/lib/callLogs";
+
+export type { CallLogDoc, CallLogStats } from "@/lib/callLogs";
+export { summarizeCallLogs } from "@/lib/callLogs";
+
+export function isFirestoreQuotaError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /RESOURCE_EXHAUSTED|Quota exceeded/i.test(message);
+}
 
 let app: App | undefined;
 let db: Firestore | undefined;
@@ -451,7 +461,7 @@ export async function listCalls(opts?: {
   if (opts?.status) {
     query = query.where("status", "==", opts.status);
   }
-  query = query.orderBy("call_date", "desc").limit(requireMinDuration ? Math.min(limit * 3, 900) : limit);
+  query = query.orderBy("call_date", "desc").limit(requireMinDuration ? Math.min(limit * 3, 400) : limit);
   try {
     const snap = await query.get();
     let rows = snap.docs.map((d) => serializeDoc<CallDoc>(d.id, d.data()));
@@ -462,8 +472,9 @@ export async function listCalls(opts?: {
       rows = rows.filter((r) => isQaEligibleDuration(r.duration_seconds));
     }
     return rows.slice(0, limit);
-  } catch {
-    const snap = await getDb().collection("calls").limit(Math.max(limit * 3, 300)).get();
+  } catch (err) {
+    if (isFirestoreQuotaError(err)) throw err;
+    const snap = await getDb().collection("calls").limit(Math.min(limit * 2, 200)).get();
     let rows = snap.docs.map((d) => serializeDoc<CallDoc>(d.id, d.data()));
     if (opts?.agentEmail) {
       rows = rows.filter(
@@ -482,6 +493,71 @@ export async function listCalls(opts?: {
     rows.sort((a, b) => toMillis(b.call_date) - toMillis(a.call_date));
     return rows.slice(0, limit);
   }
+}
+
+export async function listCallLogs(opts?: {
+  limit?: number;
+  days?: number | null;
+  result?: string | null;
+  recorded?: boolean | null;
+  direction?: string | null;
+  missedOnly?: boolean;
+  unrecordedOnly?: boolean;
+}): Promise<CallLogDoc[]> {
+  // Keep reads small — Ops loads this on every refresh.
+  const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 1000);
+  const days = opts?.days && opts.days > 0 ? opts.days : null;
+  const cutoff = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+
+  let rows: CallLogDoc[] = [];
+  try {
+    let query: Query = getDb().collection("call_logs");
+    if (cutoff) {
+      query = query.where("start", ">=", cutoff);
+    }
+    query = query.orderBy("start", "desc").limit(limit);
+    const snap = await query.get();
+    rows = snap.docs.map((d) => serializeDoc<CallLogDoc>(d.id, d.data()));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Avoid a second huge scan when quota is already exhausted.
+    if (isFirestoreQuotaError(err) || /RESOURCE_EXHAUSTED|Quota exceeded/i.test(message)) {
+      throw err;
+    }
+    // Fallback: recent docs only (no orderBy), then sort in memory.
+    const snap = await getDb()
+      .collection("call_logs")
+      .limit(Math.min(limit, 300))
+      .get();
+    rows = snap.docs.map((d) => serializeDoc<CallLogDoc>(d.id, d.data()));
+    rows.sort((a, b) => toMillis(b.start) - toMillis(a.start));
+    if (cutoff) {
+      const cutoffMs = cutoff.getTime();
+      rows = rows.filter((r) => {
+        const ms = toMillis(r.start);
+        return !ms || ms >= cutoffMs;
+      });
+    }
+  }
+
+  if (opts?.result) {
+    const needle = opts.result.trim().toLowerCase();
+    rows = rows.filter((r) => (r.result || "").trim().toLowerCase() === needle);
+  }
+  if (opts?.recorded !== undefined && opts?.recorded !== null) {
+    rows = rows.filter((r) => r.recorded === opts.recorded);
+  }
+  if (opts?.direction) {
+    const needle = opts.direction.trim().toLowerCase();
+    rows = rows.filter((r) => (r.direction || "").trim().toLowerCase() === needle);
+  }
+  if (opts?.missedOnly) {
+    rows = rows.filter((r) => r.is_missed || isMissedResult(r.result));
+  }
+  if (opts?.unrecordedOnly) {
+    rows = rows.filter((r) => r.recorded === false || r.is_unrecorded);
+  }
+  return rows.slice(0, limit);
 }
 
 export async function listUsers(): Promise<UserDoc[]> {

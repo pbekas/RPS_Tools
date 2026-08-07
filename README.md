@@ -33,7 +33,18 @@ Optional env:
 | `VBC_POLLER_ENABLED` | off | Autostart poller inside `webhook.py` |
 | `VBC_POLLER_INTERVAL_SECONDS` | `300` | Poll cadence (5 minutes) |
 | `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
-| `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap per cycle |
+| `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
+| `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
+
+Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
+so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
+the **Reports API** suite in [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
+(same OAuth credentials as Call Recording).
+
+```bash
+python scripts/sync_vonage_call_logs.py --test
+python scripts/sync_vonage_call_logs.py --minutes 60
+```
 
 **Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
 
@@ -50,11 +61,11 @@ On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/syn
 
 See [`docs/firestore_schema.json`](docs/firestore_schema.json).
 
-Collections: `users`, `calls`, `metrics`, `feedback`.
+Collections: `users`, `calls`, `call_logs`, `metrics`, `feedback`.
 
 | Role | Access |
 |------|--------|
-| **Admin** | Dashboard, upload, all calls, feedback hub, coaching, team setup |
+| **Admin** | Dashboard, Call ops, upload, all calls, feedback hub, coaching, team setup |
 | **Agent** | Own scores, own calls, own coaching report |
 
 ## Quick start

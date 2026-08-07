@@ -26,6 +26,14 @@ export function AppNav() {
             {(data.user.role || "").toLowerCase() === "admin" ? (
               <>
                 <Link
+                  href="/ops"
+                  className={
+                    pathname.startsWith("/ops") ? "text-accent" : "hover:text-ink"
+                  }
+                >
+                  Call ops
+                </Link>
+                <Link
                   href="/queue"
                   className={
                     pathname.startsWith("/queue") ? "text-accent" : "hover:text-ink"

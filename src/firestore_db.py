@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from google.cloud import firestore
@@ -411,3 +411,103 @@ def seed_call_flags(flagset: dict[str, Any], *, force: bool = False) -> str:
 def save_call_flags(flagset: dict[str, Any]) -> str:
     """Always overwrite call_flags/current (manager edits)."""
     return seed_call_flags(flagset, force=True)
+
+
+# ── Call Logs (VBC Reports CDRs) ───────────────────────────────────────
+
+
+def upsert_call_log(payload: dict[str, Any]) -> str:
+    """Upsert a CDR by Vonage call-log id (doc id = log id)."""
+    db = get_db()
+    log_id = str(payload.get("id") or "").strip()
+    if not log_id:
+        raise ValueError("call_log payload requires id")
+    now = _now()
+    data = {**payload, "synced_at": now, "updated_at": now, "created_at": now}
+    data.pop("id", None)
+    # Single write — avoid a read-before-write (quota-heavy during bulk sync).
+    # created_at is overwritten on re-sync; acceptable for CDR ops data.
+    db.collection("call_logs").document(log_id).set(data, merge=True)
+    return log_id
+
+
+def get_call_log(log_id: str) -> dict[str, Any] | None:
+    db = get_db()
+    return _serialize(db.collection("call_logs").document(log_id).get())
+
+
+def list_call_logs(
+    *,
+    limit: int = 200,
+    days: int | None = None,
+    result: str | None = None,
+    recorded: bool | None = None,
+    direction: str | None = None,
+    missed_only: bool = False,
+    unrecorded_only: bool = False,
+) -> list[dict[str, Any]]:
+    """List CDRs newest-first. Filters applied in memory for index flexibility."""
+    db = get_db()
+    fetch_limit = max(limit * 3, 100)
+    query: Any = db.collection("call_logs")
+    try:
+        query = query.order_by("start", direction=firestore.Query.DESCENDING).limit(
+            fetch_limit
+        )
+        rows = [d for d in (_serialize(doc) for doc in query.stream()) if d]
+    except Exception:
+        rows = [
+            d
+            for d in (
+                _serialize(doc) for doc in db.collection("call_logs").limit(fetch_limit).stream()
+            )
+            if d
+        ]
+
+        def _sort_key(r: dict[str, Any]) -> datetime:
+            v = r.get("start") or r.get("synced_at") or datetime.min.replace(
+                tzinfo=timezone.utc
+            )
+            if isinstance(v, datetime):
+                return v
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+        rows.sort(key=_sort_key, reverse=True)
+
+    if days is not None and days > 0:
+        cutoff = _now() - timedelta(days=days)
+        filtered: list[dict[str, Any]] = []
+        for r in rows:
+            start = r.get("start")
+            if isinstance(start, datetime):
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                if start >= cutoff:
+                    filtered.append(r)
+            else:
+                filtered.append(r)
+        rows = filtered
+
+    if result:
+        needle = result.strip().lower()
+        rows = [r for r in rows if (r.get("result") or "").strip().lower() == needle]
+    if recorded is not None:
+        rows = [r for r in rows if r.get("recorded") is recorded]
+    if direction:
+        needle = direction.strip().lower()
+        rows = [
+            r for r in rows if (r.get("direction") or "").strip().lower() == needle
+        ]
+    if missed_only:
+        rows = [r for r in rows if r.get("is_missed") or _is_missed_result(r.get("result"))]
+    if unrecorded_only:
+        rows = [r for r in rows if r.get("recorded") is False or r.get("is_unrecorded")]
+
+    return rows[:limit]
+
+
+def _is_missed_result(result: Any) -> bool:
+    text = (str(result) if result is not None else "").strip().lower()
+    if not text:
+        return False
+    return text not in {"answered", "connected"}

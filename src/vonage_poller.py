@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from src.cdr_sync import sync_call_logs
 from src.vonage_sync import sync_company_recordings
 
 logger = logging.getLogger(__name__)
@@ -25,9 +26,11 @@ _state: dict[str, Any] = {
     "interval_seconds": 300,
     "lookback_minutes": 30,
     "max_per_cycle": 25,
+    "max_call_logs_per_cycle": 200,
     "last_started_at": None,
     "last_finished_at": None,
     "last_summary": None,
+    "last_cdr_summary": None,
     "last_error": None,
     "cycles": 0,
 }
@@ -57,8 +60,32 @@ def run_sync_cycle(
             max_recordings=max_recs,
             process_now=process_now,
         )
+        cdr_summary: dict[str, Any] | None = None
+        try:
+            with _lock:
+                max_logs = int(_state["max_call_logs_per_cycle"])
+            cdr_summary = sync_call_logs(
+                minutes_back=minutes,
+                max_logs=max_logs,
+                match_calls=True,
+            )
+            logger.info(
+                "VBC CDR cycle: listed=%s upserted=%s matched=%s missed=%s unrecorded=%s errors=%s",
+                cdr_summary.get("listed"),
+                cdr_summary.get("upserted"),
+                cdr_summary.get("matched"),
+                cdr_summary.get("missed"),
+                cdr_summary.get("unrecorded"),
+                len(cdr_summary.get("errors") or []),
+            )
+        except Exception as cdr_exc:  # noqa: BLE001
+            # Recordings succeeded — keep going; surface CDR error separately.
+            logger.exception("VBC CDR sync failed (recordings OK)")
+            cdr_summary = {"error": str(cdr_exc)}
+
         with _lock:
             _state["last_summary"] = summary
+            _state["last_cdr_summary"] = cdr_summary
             _state["last_finished_at"] = datetime.now(timezone.utc).isoformat()
             _state["cycles"] = int(_state["cycles"]) + 1
         logger.info(
@@ -69,7 +96,7 @@ def run_sync_cycle(
             summary.get("skipped_short"),
             len(summary.get("errors") or []),
         )
-        return summary
+        return {**summary, "call_logs": cdr_summary}
     except Exception as exc:  # noqa: BLE001
         with _lock:
             _state["last_error"] = str(exc)
@@ -135,6 +162,9 @@ def autostart_from_env() -> dict[str, Any] | None:
     interval = int(os.getenv("VBC_POLLER_INTERVAL_SECONDS", "300"))
     lookback = int(os.getenv("VBC_POLLER_LOOKBACK_MINUTES", "30"))
     max_cycle = int(os.getenv("VBC_POLLER_MAX_PER_CYCLE", "25"))
+    max_logs = int(os.getenv("VBC_POLLER_MAX_CALL_LOGS", "200"))
+    with _lock:
+        _state["max_call_logs_per_cycle"] = max(1, max_logs)
     return start_poller(
         interval_seconds=interval,
         lookback_minutes=lookback,

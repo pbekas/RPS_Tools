@@ -72,10 +72,22 @@ Admin portal login ≠ API credentials. Use the UC API Manager:
 
 1. Open [https://apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
 2. Create an Application → Production Keys
-3. Subscribe to **Call Recording**
+3. Subscribe to **Call Recording** and **Reports** (same app / OAuth credentials)
 4. Put `VBC_*` into the Secrets Manager secret (via `push_aws_secret.sh`)
 
-Company recordings are pull-based. The poller service runs every 5 minutes.
+Company recordings are pull-based. The poller service runs every 5 minutes and also
+syncs Reports **call-logs** (CDRs) into Firestore `call_logs` for missed / unrecorded
+visibility on the admin **Call ops** page (`/ops`).
+
+Manual CDR sync:
+
+```bash
+python scripts/sync_vonage_call_logs.py --test          # verify Reports API access
+python scripts/sync_vonage_call_logs.py --minutes 60
+python scripts/sync_vonage_call_logs.py --days 7 --max 500
+```
+
+Optional env: `VBC_POLLER_MAX_CALL_LOGS` (default `200`) caps CDRs per poller cycle.
 
 ## Security (PHI)
 

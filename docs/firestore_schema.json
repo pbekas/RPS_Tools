@@ -103,6 +103,36 @@
         "agent_name + call_date"
       ]
     },
+    "call_logs": {
+      "doc_id": "Vonage Reports call-log id",
+      "description": "VBC Reports CDRs — missed/unrecorded/talk duration; linked to QA calls when a recording exists",
+      "fields": {
+        "direction": "Inbound | Outbound | string",
+        "from_number": "string | null",
+        "to_number": "string | null",
+        "result": "string — e.g. Answered, Missed, Voicemail",
+        "recorded": "boolean | null",
+        "length_seconds": "number — talk duration (not ring/ASA wait)",
+        "start": "timestamp | null",
+        "end": "timestamp | null",
+        "source_user": "string | null",
+        "source_user_full_name": "string | null",
+        "source_extension": "string | null",
+        "destination_user": "string | null",
+        "destination_user_full_name": "string | null",
+        "destination_extension": "string | null",
+        "custom_tag": "string | null",
+        "in_network": "boolean | null",
+        "international": "boolean | null",
+        "is_missed": "boolean — derived from result",
+        "is_unrecorded": "boolean — recorded === false",
+        "matched_call_id": "string | null — Firestore calls doc id when matched",
+        "synced_at": "timestamp",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      },
+      "indexes": ["start"]
+    },
     "metrics": {
       "doc_id": "{agent_email}_{YYYY}_W{WW}",
       "fields": {
