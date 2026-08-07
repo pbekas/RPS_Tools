@@ -32,6 +32,7 @@ from aws_cdk import (
     Stack,
     aws_certificatemanager as acm,
     aws_ec2 as ec2,
+    aws_ecr_assets as ecr_assets,
     aws_ecs as ecs,
     aws_ecs_patterns as ecs_patterns,
     aws_elasticloadbalancingv2 as elbv2,
@@ -111,6 +112,7 @@ class RpsCallQaStack(Stack):
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
                 image=ecs.ContainerImage.from_asset(
                     "../../web",
+                    platform=ecr_assets.Platform.LINUX_AMD64,
                 ),
                 container_port=3000,
                 log_driver=ecs.LogDrivers.aws_logs(
@@ -162,6 +164,7 @@ class RpsCallQaStack(Stack):
             image=ecs.ContainerImage.from_asset(
                 "../..",
                 file="Dockerfile.poller",
+                platform=ecr_assets.Platform.LINUX_AMD64,
             ),
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="poller",

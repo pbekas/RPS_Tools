@@ -39,6 +39,10 @@ load_dotenv "$ROOT/.env"
 load_dotenv "$ROOT/web/.env.local"
 
 FIREBASE_JSON="${FIREBASE_SERVICE_ACCOUNT:-}"
+# If FIREBASE_SERVICE_ACCOUNT is a filesystem path, read the JSON file.
+if [[ -n "$FIREBASE_JSON" && -f "$FIREBASE_JSON" ]]; then
+  FIREBASE_JSON="$(cat "$FIREBASE_JSON")"
+fi
 if [[ -z "$FIREBASE_JSON" && -n "${FIREBASE_SERVICE_ACCOUNT_PATH:-}" && -f "${FIREBASE_SERVICE_ACCOUNT_PATH}" ]]; then
   FIREBASE_JSON="$(cat "$FIREBASE_SERVICE_ACCOUNT_PATH")"
 fi
@@ -46,6 +50,16 @@ if [[ -z "$FIREBASE_JSON" && -f "$ROOT/secrets/firebase-service-account.json" ]]
   FIREBASE_JSON="$(cat "$ROOT/secrets/firebase-service-account.json")"
 fi
 export FIREBASE_JSON
+
+# Guard against accidentally storing a local path in Secrets Manager.
+if [[ -n "$FIREBASE_JSON" && -f "$FIREBASE_JSON" ]]; then
+  echo "FIREBASE_SERVICE_ACCOUNT still looks like a path after load: $FIREBASE_JSON" >&2
+  exit 1
+fi
+if [[ -n "$FIREBASE_JSON" && "$FIREBASE_JSON" != \{* ]]; then
+  echo "FIREBASE_SERVICE_ACCOUNT does not look like JSON (must start with '{')." >&2
+  exit 1
+fi
 
 missing=()
 for key in NEXTAUTH_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET; do
