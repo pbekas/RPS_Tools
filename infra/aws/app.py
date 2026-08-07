@@ -63,6 +63,9 @@ class RpsCallQaStack(Stack):
         bedrock_model = (
             self.node.try_get_context("bedrockModelId") or DEFAULT_BEDROCK
         )
+        coaching_model = (
+            self.node.try_get_context("bedrockCoachingModelId") or DEFAULT_COACHING
+        )
 
         vpc = ec2.Vpc(
             self,
@@ -128,6 +131,7 @@ class RpsCallQaStack(Stack):
                     "S3_BUCKET": bucket_name,
                     "ALLOWED_EMAIL_DOMAIN": "releviumpain.com",
                     "BEDROCK_MODEL_ID": bedrock_model,
+                    "BEDROCK_COACHING_MODEL_ID": coaching_model,
                 },
                 secrets={
                     "NEXTAUTH_SECRET": ecs.Secret.from_secrets_manager(
@@ -177,6 +181,7 @@ class RpsCallQaStack(Stack):
                 "AWS_DEFAULT_REGION": Stack.of(self).region,
                 "S3_BUCKET": bucket_name,
                 "BEDROCK_MODEL_ID": bedrock_model,
+                "BEDROCK_COACHING_MODEL_ID": coaching_model,
                 "VBC_POLLER_ENABLED": "1",
                 "VBC_POLLER_INTERVAL_SECONDS": "300",
                 "VBC_POLLER_LOOKBACK_MINUTES": "30",
