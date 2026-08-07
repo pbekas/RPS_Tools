@@ -35,3 +35,6 @@ uploads/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local secrets
+secrets/

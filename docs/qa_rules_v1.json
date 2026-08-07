@@ -1,0 +1,91 @@
+{
+  "version": "v1",
+  "name": "Relevium Phone QA Starter Rubric",
+  "description": "Starter audit rules for medical office phone quality. Edit qa_rules/current in Firestore to evolve without redeploying.",
+  "auto_fail_quality_cap": 4,
+  "empathy_pass_threshold": 7,
+  "transfer_soft_limit": 1,
+  "transfer_auto_fail_at": 3,
+  "rules": [
+    {
+      "id": "name_stated",
+      "label": "Agent stated their name",
+      "description": "The agent clearly introduces themselves by name during the call.",
+      "category": "Greeting",
+      "weight": 1.0,
+      "auto_fail": false,
+      "pass_criteria": "Agent says their first name (or full name) clearly enough that a caller would know who they are speaking with.",
+      "active": true
+    },
+    {
+      "id": "practice_greeting",
+      "label": "Practice greeting",
+      "description": "Agent greets with Relevium / practice identity.",
+      "category": "Greeting",
+      "weight": 1.0,
+      "auto_fail": false,
+      "pass_criteria": "Agent identifies the practice (e.g. Relevium Pain Specialists) or equivalent office identity in the greeting or early on the call.",
+      "active": true
+    },
+    {
+      "id": "empathy",
+      "label": "Empathy & tone",
+      "description": "Warm, patient-centered tone throughout the interaction.",
+      "category": "Empathy",
+      "weight": 2.0,
+      "auto_fail": false,
+      "pass_criteria": "Tone is warm and respectful; acknowledges caller concern; score_1_to_10 must be provided (pass if score >= 7).",
+      "active": true
+    },
+    {
+      "id": "excessive_transfers",
+      "label": "Transfers within limit",
+      "description": "Caller is not transferred excessively.",
+      "category": "Process",
+      "weight": 1.5,
+      "auto_fail": true,
+      "pass_criteria": "transfer_count is <= soft limit (1). Auto-fail the call if transfer_count >= 3. Pass if transfers are 0 or 1 and handled smoothly.",
+      "active": true
+    },
+    {
+      "id": "fcr",
+      "label": "First Call Resolution",
+      "description": "Caller's need is resolved on this call without requiring another call back for the same issue.",
+      "category": "Resolution",
+      "weight": 2.0,
+      "auto_fail": false,
+      "pass_criteria": "The caller's stated need is addressed to completion, or a clear owned next step is set that does not require the caller to re-explain from scratch on a new call.",
+      "active": true
+    },
+    {
+      "id": "ownership_next_steps",
+      "label": "Ownership & next steps",
+      "description": "Clear ownership and next steps for the caller.",
+      "category": "Resolution",
+      "weight": 1.5,
+      "auto_fail": false,
+      "pass_criteria": "Agent summarizes what will happen next, who owns it, and any timing the caller should expect.",
+      "active": true
+    },
+    {
+      "id": "no_talk_over",
+      "label": "Does not talk over / dismiss",
+      "description": "Agent does not talk over, interrupt harshly, or dismiss the caller.",
+      "category": "Empathy",
+      "weight": 1.0,
+      "auto_fail": false,
+      "pass_criteria": "Agent lets the caller finish key points; does not dismiss concerns; interruptions are rare and polite if present.",
+      "active": true
+    },
+    {
+      "id": "answer_promptness",
+      "label": "Prompt live engagement",
+      "description": "Live agent engages without a long unexplained delay when detectable.",
+      "category": "Process",
+      "weight": 1.0,
+      "auto_fail": false,
+      "pass_criteria": "When time-to-answer is detectable, a live agent greets within a reasonable window without long unexplained silence. If not detectable from transcript, mark passed=true with notes explaining uncertainty (do not fail solely for missing timing).",
+      "active": true
+    }
+  ]
+}

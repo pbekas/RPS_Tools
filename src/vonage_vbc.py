@@ -202,7 +202,7 @@ class VonageVBCClient:
         *,
         start_gte: datetime | None = None,
         start_lte: datetime | None = None,
-        page: int = 0,
+        page: int = 1,
         page_size: int = 50,
         extension: str | None = None,
         call_direction: str | None = None,
@@ -238,7 +238,7 @@ class VonageVBCClient:
         max_pages: int = 100,
         **kwargs: Any,
     ) -> Iterator[VBCRecording]:
-        for page in range(max_pages):
+        for page in range(1, max_pages + 1):
             rows, meta = self.list_company_recordings(
                 start_gte=start_gte,
                 start_lte=start_lte,
@@ -252,7 +252,6 @@ class VonageVBCClient:
             # Stop if fewer than a full page
             if len(rows) < page_size:
                 break
-            # Some responses use 1-based page; if page 0 returns same as page 1, break on id set
             _ = meta
 
     def get_company_recording(self, recording_id: str) -> VBCRecording:

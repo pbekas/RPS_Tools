@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "name": "Relevium Critical Call Flags",
+  "description": "Business-critical alerts detected on calls. These are not agent skill fails by default — they surface urgent follow-up situations.",
+  "flags": [
+    {
+      "id": "new_patient_no_attorney",
+      "label": "New patient — no attorney",
+      "severity": "critical",
+      "description": "Trigger when the caller is a new patient / establishing care and clearly states they do not have an attorney, lawyer, or legal representation. Do not trigger solely because attorney status was never mentioned.",
+      "active": true
+    },
+    {
+      "id": "procedure_declined",
+      "label": "Procedure declined",
+      "severity": "critical",
+      "description": "Trigger when the practice is calling about (or offering) a procedure/injection/surgery and the patient declines, refuses, postpones indefinitely, or cancels that procedure. Do not trigger for routine appointment cancelations unrelated to a procedure.",
+      "active": true
+    }
+  ]
+}

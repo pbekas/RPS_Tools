@@ -3,7 +3,7 @@
 Pipeline:
   1. Upload audio to S3 (required by Transcribe)
   2. Amazon Transcribe with speaker diarization
-  3. Amazon Bedrock (Claude) for structured QA JSON + coaching
+  3. Amazon Bedrock (Claude) scores against the active QA rule set
 """
 
 from __future__ import annotations
@@ -19,35 +19,100 @@ import boto3
 import httpx
 
 from src.config import get_settings
+from src.qa_rules import (
+    compute_scores,
+    get_active_ruleset,
+    normalize_rule_results,
+    rules_for_prompt,
+)
+from src.call_topics import (
+    get_active_topicset,
+    normalize_topic,
+    topics_for_prompt,
+)
+from src.call_flags import (
+    flags_for_prompt,
+    get_active_flagset,
+    normalize_critical_flags,
+    normalize_sentiment,
+)
 
-SYSTEM_INSTRUCTION = """You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
+BASE_SYSTEM = """You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
 You review phone call transcripts between front-desk/phone agents and patients or callers.
 
 Return ONLY valid JSON (no markdown fences) matching this schema:
 {
   "agent_name": "string — best guess of the staff member's name if stated or identifiable; else Unknown",
-  "topic": "string — short topic label (scheduling, billing, clinical question, insurance, referral, other)",
+  "patient_name": "string — caller's / patient's name if stated or clearly identifiable (including CNAM-style names); else Unknown",
+  "topic": "string — MUST be one topic id from the TOPIC CATALOG (e.g. scheduling), not a freeform phrase",
   "ai_summary": "string — 3-6 sentence neutral summary of the call",
-  "ai_empathy_score": 1-10 integer — empathy, warmth, and patient-centered tone,
-  "ai_name_stated": true/false — whether the agent clearly stated their name,
-  "quality_score": 1-10 integer — overall QA quality (greeting, name, empathy, clarity, ownership, FCR),
   "duration_seconds": integer — total call length in seconds (use provided duration if given),
-  "time_to_answer_seconds": integer or null — time before a live agent greets, if detectable from transcript timing,
+  "time_to_answer_seconds": integer or null — time before a live agent greets, if detectable,
   "transfer_count": integer — number of times the caller was transferred,
-  "fcr": true/false — First Call Resolution: was the caller's need resolved without needing another call/transfer chain,
+  "sentiment": {
+    "label": "positive | neutral | negative | mixed",
+    "score_1_to_10": "integer 1-10 — overall call tone (10 = very positive/warm)",
+    "notes": "1-2 sentences on patient and agent tone"
+  },
+  "critical_flags": [
+    {
+      "flag_id": "string — must match a CRITICAL FLAG CATALOG id",
+      "triggered": true,
+      "evidence": "short quote from the transcript",
+      "evidence_timestamp": "mm:ss",
+      "evidence_turn_index": "integer 0-based",
+      "notes": "brief rationale"
+    }
+  ],
   "transcript": [
     {"speaker": "Patient" | "Agent" | "System", "text": "exact words", "timestamp": "mm:ss"}
+  ],
+  "rule_results": [
+    {
+      "rule_id": "string — must match a rule id from the ruleset",
+      "passed": true/false,
+      "score_1_to_10": integer or null — required for empathy; optional otherwise,
+      "evidence": "short quote copied from the transcript when possible",
+      "evidence_timestamp": "mm:ss — timestamp of the most relevant transcript turn",
+      "evidence_turn_index": "integer 0-based index into the transcript array for that turn",
+      "notes": "brief rationale"
+    }
   ]
 }
 
-Scoring guidance:
-- Deduct for missing name introduction, cold tone, excessive transfers, talking over the caller, unclear next steps.
-- Reward clear name intro, empathy, accurate information, calm ownership, and FCR.
-- Map Transcribe speaker labels (spk_0, spk_1, …) to Patient / Agent / System using conversational role cues.
-  Typically the staff member greets with the practice name; the caller is the Patient.
-- Preserve wording from the transcript as faithfully as possible; you may lightly clean filler words.
-- Medical context: be factual; do not invent clinical details not present in the transcript.
+Rules:
+- Include exactly one rule_results entry for every active rule id provided.
+- For empathy, always set score_1_to_10 (1-10).
+- Always set evidence_timestamp and evidence_turn_index when you can identify a supporting turn.
+- Always extract patient_name when the caller states a name, the agent confirms a name, or the summary clearly names them.
+- topic MUST be exactly one id from the TOPIC CATALOG.
+- Always include sentiment for the overall call tone.
+- critical_flags: include ONLY flags that triggered (triggered=true). Omit non-triggered flags. These are business alerts, not agent QA fails.
+- Map Transcribe speaker labels to Patient / Agent / System using role cues.
+- Preserve wording; lightly clean filler words only.
+- Medical context: be factual; do not invent clinical details not in the transcript.
+- Do not invent transfers; count only clear transfer/handoff events.
+- Do not invent patient names; use Unknown when not stated.
 """
+
+# Back-compat alias for docs/imports
+SYSTEM_INSTRUCTION = BASE_SYSTEM
+
+
+def _system_with_rules(
+    ruleset: dict[str, Any] | None = None,
+    topicset: dict[str, Any] | None = None,
+    flagset: dict[str, Any] | None = None,
+) -> str:
+    return (
+        BASE_SYSTEM
+        + "\n\nTOPIC CATALOG\n"
+        + topics_for_prompt(topicset)
+        + "\n\nCRITICAL FLAG CATALOG\n"
+        + flags_for_prompt(flagset)
+        + "\n\nACTIVE RULESET\n"
+        + rules_for_prompt(ruleset)
+    )
 
 
 def analyze_call_audio(
@@ -56,7 +121,7 @@ def analyze_call_audio(
     *,
     s3_uri: str | None = None,
 ) -> dict[str, Any]:
-    """Transcribe a recording, then score/summarize with Bedrock."""
+    """Transcribe a recording, then score/summarize with Bedrock against QA rules."""
     settings = get_settings()
     if not settings.bedrock_configured:
         raise RuntimeError(
@@ -73,47 +138,99 @@ def analyze_call_audio(
     media_uri = s3_uri or _ensure_audio_on_s3(path)
 
     transcript_turns, duration_seconds = transcribe_audio(media_uri)
-    transcript_text = _format_turns_for_prompt(transcript_turns)
+    result = analyze_transcript(
+        transcript_turns,
+        duration_seconds=duration_seconds,
+        original_filename=original_filename or path.name,
+    )
+    result["recording_storage_uri"] = media_uri
+    return result
+
+
+def analyze_transcript(
+    transcript: list[dict[str, Any]] | str,
+    *,
+    duration_seconds: int | None = None,
+    original_filename: str | None = None,
+    transfer_count_hint: int | None = None,
+) -> dict[str, Any]:
+    """Score an existing transcript with Bedrock + active rules (no Transcribe)."""
+    ruleset = get_active_ruleset()
+    topicset = get_active_topicset()
+    flagset = get_active_flagset()
+    if isinstance(transcript, str):
+        transcript_text = transcript
+        seed_turns: list[dict[str, Any]] = []
+    else:
+        seed_turns = list(transcript)
+        transcript_text = _format_turns_for_prompt(seed_turns)
 
     user_prompt = (
-        "Analyze this medical office phone call transcript produced by Amazon Transcribe.\n"
-        f"Original filename (may contain hints): {original_filename or path.name}\n"
-        f"Known/estimated duration_seconds: {duration_seconds}\n"
-        f"S3 media: {media_uri}\n\n"
-        "TRANSCRIPT:\n"
+        "Analyze this medical office phone call transcript.\n"
+        f"Original filename (may contain hints): {original_filename or 'n/a'}\n"
+        f"Known/estimated duration_seconds: {duration_seconds if duration_seconds is not None else 'unknown'}\n"
+    )
+    if transfer_count_hint is not None:
+        user_prompt += f"Hint transfer_count from telephony metadata: {transfer_count_hint}\n"
+    user_prompt += (
+        "\nTRANSCRIPT:\n"
         f"{transcript_text}\n\n"
-        "Return the JSON object described in your system instructions. "
-        "Include a cleaned speaker-separated transcript in the JSON."
+        "Return the JSON object described in your system instructions, including rule_results "
+        "for every active rule id, topic as a catalog topic id, sentiment, and any triggered "
+        "critical_flags."
     )
 
     raw = bedrock_text(
-        system=SYSTEM_INSTRUCTION,
+        system=_system_with_rules(ruleset, topicset, flagset),
         user=user_prompt,
         temperature=0.2,
         max_tokens=8192,
     )
     data = _extract_json(raw)
 
-    transcript = data.get("transcript") or transcript_turns
-    normalized_transcript = _normalize_transcript(transcript)
+    normalized_transcript = _normalize_transcript(data.get("transcript") or seed_turns)
+    transfer_count = int(
+        data.get("transfer_count")
+        if data.get("transfer_count") is not None
+        else (transfer_count_hint or 0)
+    )
+
+    rule_results = normalize_rule_results(
+        data.get("rule_results"),
+        ruleset,
+        transcript=normalized_transcript,
+    )
+    scored = compute_scores(rule_results, ruleset, transfer_count=transfer_count)
+    topic_fields = normalize_topic(data.get("topic"), topicset)
+    critical_flags = normalize_critical_flags(
+        data.get("critical_flags"),
+        flagset,
+        transcript=normalized_transcript,
+    )
+    sentiment = normalize_sentiment(data.get("sentiment"))
 
     return {
         "agent_name": str(data.get("agent_name") or "Unknown").strip(),
-        "topic": str(data.get("topic") or "Other").strip(),
+        "patient_name": str(data.get("patient_name") or "Unknown").strip(),
+        **topic_fields,
         "ai_summary": str(data.get("ai_summary") or "").strip(),
-        "ai_empathy_score": _clamp_score(data.get("ai_empathy_score")),
-        "ai_name_stated": bool(data.get("ai_name_stated", False)),
-        "quality_score": _clamp_score(data.get("quality_score")),
-        "duration_seconds": int(data.get("duration_seconds") or duration_seconds or 0),
+        "duration_seconds": int(
+            data.get("duration_seconds")
+            if data.get("duration_seconds") is not None
+            else (duration_seconds or 0)
+        ),
         "time_to_answer_seconds": (
             int(data["time_to_answer_seconds"])
             if data.get("time_to_answer_seconds") is not None
             else None
         ),
-        "transfer_count": int(data.get("transfer_count") or 0),
-        "fcr": bool(data.get("fcr", False)),
+        "transfer_count": transfer_count,
         "transcript": normalized_transcript,
-        "recording_storage_uri": media_uri,
+        "critical_flags": critical_flags,
+        "has_critical_flags": bool(critical_flags),
+        "flagset_version": str(flagset.get("version") or "v1"),
+        **sentiment,
+        **scored,
     }
 
 
@@ -219,14 +336,20 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
     with httpx.Client(timeout=120.0) as http:
         payload = http.get(transcript_uri).json()
 
-    duration = int(round(float(payload.get("results", {}).get("audio_segments", [{}])[0].get("end_time", 0) or 0)))
-    # Prefer items-based rebuild with speaker labels
+    duration = int(
+        round(
+            float(
+                payload.get("results", {}).get("audio_segments", [{}])[0].get(
+                    "end_time", 0
+                )
+                or 0
+            )
+        )
+    )
     turns = _turns_from_transcribe_json(payload)
     if not duration and turns:
-        # last timestamp heuristic
         last = turns[-1].get("timestamp") or "0:00"
         duration = _mmss_to_seconds(last)
-    # Fallback duration from results.audio_segments or items
     if not duration:
         items = payload.get("results", {}).get("items") or []
         end_times = [float(i.get("end_time")) for i in items if i.get("end_time")]
@@ -276,7 +399,6 @@ def _turns_from_transcribe_json(payload: dict[str, Any]) -> list[dict[str, str]]
     speaker_labels = (results.get("speaker_labels") or {}).get("segments") or []
     items = results.get("items") or []
 
-    # Build word list with times
     words: list[dict[str, Any]] = []
     for item in items:
         if item.get("type") != "pronunciation":
@@ -300,7 +422,6 @@ def _turns_from_transcribe_json(payload: dict[str, Any]) -> list[dict[str, str]]
                 for w in words
                 if w["start"] >= start - 0.01 and w["end"] <= end + 0.01
             ]
-            # Also include punctuation items near the segment via raw items
             text = " ".join(text_parts).strip()
             if not text:
                 continue
@@ -313,7 +434,6 @@ def _turns_from_transcribe_json(payload: dict[str, Any]) -> list[dict[str, str]]
             )
         return turns
 
-    # No diarization — single block
     full = (results.get("transcripts") or [{}])[0].get("transcript") or ""
     if full:
         turns.append({"speaker": "spk_0", "text": full, "timestamp": "00:00"})
@@ -334,11 +454,8 @@ def _normalize_transcript(transcript: list[dict[str, Any]]) -> list[dict[str, st
         low = speaker.lower()
         if speaker in {"Patient", "Agent", "System"}:
             mapped = speaker
-        elif "patient" in low or "caller" in low or low in {"spk_0", "speaker 0", "speaker0"}:
-            # Heuristic: leave mapping to model when possible; fallback Patient for spk_0
-            mapped = "Patient" if "agent" not in low else "Agent"
-            if low.startswith("spk_"):
-                mapped = "Patient" if low.endswith("0") else "Agent"
+        elif "patient" in low or "caller" in low:
+            mapped = "Patient"
         elif "agent" in low or "staff" in low or "rep" in low:
             mapped = "Agent"
         elif "system" in low or "ivr" in low:
@@ -369,14 +486,6 @@ def _extract_json(text: str) -> dict[str, Any]:
         if not match:
             raise
         return json.loads(match.group(0))
-
-
-def _clamp_score(value: Any) -> int:
-    try:
-        n = int(round(float(value)))
-    except (TypeError, ValueError):
-        n = 5
-    return max(1, min(10, n))
 
 
 def _seconds_to_mmss(seconds: float) -> str:

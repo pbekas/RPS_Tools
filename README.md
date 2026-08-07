@@ -4,31 +4,47 @@ Phone call quality review for Relevium Pain Specialists. Batch-upload (or pull v
 
 ## Stack
 
-- **UI:** Streamlit (hosted on **AWS ECS Fargate**)
+- **Review UI:** Next.js (`web/`) — transcript-first call review + dashboard
+- **Ops UI:** Streamlit (`app.py`) — upload, Vonage sync, team setup, re-analyze
 - **Speech-to-text:** **Amazon Transcribe** (speaker diarization)
 - **AI QA / coaching:** **Amazon Bedrock** (Claude)
-- **DB:** Google Cloud Firestore (optional while migrating; DynamoDB later)
-- **Audio storage:** **AWS S3**
+- **DB:** Google Cloud Firestore
+- **Audio storage:** **AWS S3** (presigned playback URLs)
 - **Auth:** Google Workspace SSO (`@releviumpain.com` only)
 - **Phones:** **Vonage Business Communications** Call Recording API via [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
 
-## Vonage recordings
+## Near-real-time recording ingest
 
-This is **not** the classic Voice API key pair alone. Office phone recordings come from the **VBC Call Recording API**:
-
-1. Sign in at [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
-2. Create an application → Production Keys → subscribe to **Call Recording**
-3. Set `VBC_CLIENT_ID`, `VBC_CLIENT_SECRET`, `VBC_USERNAME`, `VBC_PASSWORD` in `.env`
-4. Sync:
+Vonage **VBC company call recordings are pull-based** (no “recording ready” push from
+the Call Recording API). To process calls as they finish:
 
 ```bash
-python scripts/sync_vonage_recordings.py --test
-python scripts/sync_vonage_recordings.py --days 7 --max 50
+# Continuous poller (every 5 minutes, last 30 minutes)
+python scripts/poll_vonage_recordings.py
+
+# Or webhook service with poller enabled
+VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
 ```
 
-Or use **Upload & process → Sync recordings** in the app.
+Optional env:
 
-Details: [`docs/AWS_HOSTING.md`](docs/AWS_HOSTING.md)
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `VBC_POLLER_ENABLED` | off | Autostart poller inside `webhook.py` |
+| `VBC_POLLER_INTERVAL_SECONDS` | `300` | Poll cadence (5 minutes) |
+| `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
+| `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap per cycle |
+
+**Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
+
+`http://localhost:8080/poller/sync-now`
+
+```bash
+# local cron example
+*/5 * * * * curl -s -X POST http://127.0.0.1:8080/poller/sync-now
+```
+
+On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task.
 
 ## Firestore schema
 
@@ -60,16 +76,29 @@ Fill in:
 5. `APP_URL` — must match your OAuth redirect
 6. `VBC_*` — Vonage UC API Manager credentials
 
-In Google Cloud Console → OAuth client, add authorized redirect URI:
+In Google Cloud Console → OAuth client, add authorized redirect URIs:
 
-`http://localhost:8501/`
+- Streamlit: `http://localhost:8501/`
+- Next.js review app: `http://localhost:3000/api/auth/callback/google`
 
 Promote your user to Admin once after first login (Team setup page), or set `role: "Admin"` on your `users/{email}` doc in Firestore.
+
+### Review app (Next.js)
+
+```bash
+cd web
+# web/.env.local is scaffolded from parent secrets (gitignored)
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Dashboard lists scored calls; **Review** opens the SMS-style transcript with audio scrubbing and rule deep-links. Admins can save manager notes/feedback.
+
+### Streamlit ops
 
 ```bash
 streamlit run app.py
 ```
-
 Vonage webhook (separate terminal):
 
 ```bash
@@ -91,9 +120,44 @@ python scripts/run_weekly_coaching.py --agent name@releviumpain.com
 3. **SSO** — Google OAuth; domain lock to `@releviumpain.com`; Admin vs Agent views
 4. **Rolling feedback** — aggregates manager notes + AI summaries → **Bedrock** coaching report on the user record
 
-## AI Studio prompt
+## QA rules
 
-Bedrock system instruction: [`docs/AI_ANALYST_SYSTEM_INSTRUCTION.md`](docs/AI_ANALYST_SYSTEM_INSTRUCTION.md)
+Starter rubric: [`docs/qa_rules_v1.json`](docs/qa_rules_v1.json). Seeded to Firestore as `qa_rules/current`.
+
+```bash
+python scripts/seed_qa_rules.py --force
+```
+
+Call review shows per-rule PASS/FAIL with evidence. Use **Re-analyze with current rules** to rescore existing transcripts after you edit the rubric.
+
+## Call topics
+
+Starter catalog: [`docs/call_topics_v1.json`](docs/call_topics_v1.json). Seeded to Firestore as `call_topics/current`.
+
+```bash
+python scripts/seed_call_topics.py --force
+```
+
+Each topic has an **id**, **label**, and **details** the AI uses to classify the call. Edit in Streamlit **Call topics**, or update Firestore / the JSON and re-seed.
+
+## Critical call flags & sentiment
+
+Starter catalog: [`docs/call_flags_v1.json`](docs/call_flags_v1.json). Seeded to Firestore as `call_flags/current`.
+
+```bash
+python scripts/seed_call_flags.py --force
+```
+
+Business alerts (not agent skill fails), currently:
+
+- **New patient — no attorney** — new patient says they don’t have an attorney
+- **Procedure declined** — patient declines a procedure the office called about
+
+Each analyzed call also stores **sentiment** (`sentiment_label`, `sentiment_score` 1–10, `sentiment_notes`). Re-analyze existing calls to backfill:
+
+```bash
+python scripts/reanalyze_calls.py --limit 20
+```
 
 ## Deploy (AWS)
 

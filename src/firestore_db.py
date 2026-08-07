@@ -8,6 +8,7 @@ from typing import Any
 from google.cloud import firestore
 from google.oauth2 import service_account
 
+from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
 
 _db: firestore.Client | None = None
@@ -50,6 +51,8 @@ def upsert_user(
     email: str,
     name: str,
     role: str | None = None,
+    *,
+    provisional: bool | None = None,
 ) -> dict[str, Any]:
     db = get_db()
     email_norm = email.strip().lower()
@@ -60,6 +63,8 @@ def upsert_user(
         updates: dict[str, Any] = {"name": name, "updated_at": now}
         if role:
             updates["role"] = role
+        if provisional is not None:
+            updates["provisional"] = provisional
         ref.update(updates)
     else:
         ref.set(
@@ -70,6 +75,7 @@ def upsert_user(
                 "rolling_ai_feedback": "",
                 "last_coaching_at": None,
                 "active": True,
+                "provisional": bool(provisional) if provisional is not None else False,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -135,8 +141,16 @@ def list_calls(
     agent_name: str | None = None,
     limit: int = 100,
     status: str | None = None,
+    require_min_duration: bool | None = None,
 ) -> list[dict[str, Any]]:
+    """
+    List calls. For status=\"complete\", short non-caller recordings (<=10s)
+    are excluded by default.
+    """
+    if require_min_duration is None:
+        require_min_duration = status == "complete"
     db = get_db()
+    fetch_limit = limit * 3 if require_min_duration else limit
     query: Any = db.collection("calls")
     if agent_email:
         query = query.where("agent_email", "==", agent_email.strip().lower())
@@ -144,12 +158,23 @@ def list_calls(
         query = query.where("agent_name", "==", agent_name)
     if status:
         query = query.where("status", "==", status)
-    query = query.order_by("call_date", direction=firestore.Query.DESCENDING).limit(limit)
+    query = query.order_by("call_date", direction=firestore.Query.DESCENDING).limit(
+        fetch_limit
+    )
+
+    def _filter(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if require_min_duration:
+            rows = [
+                r for r in rows if is_qa_eligible_duration(r.get("duration_seconds"))
+            ]
+        return rows[:limit]
+
     try:
-        return [d for d in (_serialize(doc) for doc in query.stream()) if d]
+        rows = [d for d in (_serialize(doc) for doc in query.stream()) if d]
+        return _filter(rows)
     except Exception:
         # Fallback if composite index missing — fetch and sort in memory
-        query = db.collection("calls").limit(limit * 3)
+        query = db.collection("calls").limit(max(fetch_limit, limit * 3))
         rows = [d for d in (_serialize(doc) for doc in query.stream()) if d]
         if agent_email:
             rows = [
@@ -171,7 +196,7 @@ def list_calls(
             return datetime.min.replace(tzinfo=timezone.utc)
 
         rows.sort(key=_sort_key, reverse=True)
-        return rows[:limit]
+        return _filter(rows)
 
 
 def save_manager_review(
@@ -292,3 +317,92 @@ def list_metrics(
             ]
         rows.sort(key=lambda r: r.get("week_start") or "", reverse=True)
         return rows[:limit]
+
+
+# ── QA Rules ───────────────────────────────────────────────────────────
+
+
+def get_qa_rules_current() -> dict[str, Any] | None:
+    db = get_db()
+    return _serialize(db.collection("qa_rules").document("current").get())
+
+
+def seed_qa_rules(ruleset: dict[str, Any], *, force: bool = False) -> str:
+    """Write ruleset to qa_rules/current and qa_rules/{version}."""
+    db = get_db()
+    version = str(ruleset.get("version") or "v1")
+    current_ref = db.collection("qa_rules").document("current")
+    if current_ref.get().exists and not force:
+        return "qa_rules/current (unchanged — exists; pass force=True to overwrite)"
+
+    payload = {
+        **ruleset,
+        "updated_at": _now(),
+    }
+    # Drop helper key if present
+    payload.pop("all_rules", None)
+    current_ref.set(payload)
+    db.collection("qa_rules").document(version).set(payload)
+    return f"qa_rules/current + qa_rules/{version}"
+
+
+# ── Call Topics ────────────────────────────────────────────────────────
+
+
+def get_call_topics_current() -> dict[str, Any] | None:
+    db = get_db()
+    return _serialize(db.collection("call_topics").document("current").get())
+
+
+def seed_call_topics(topicset: dict[str, Any], *, force: bool = False) -> str:
+    """Write topic catalog to call_topics/current and call_topics/{version}."""
+    db = get_db()
+    version = str(topicset.get("version") or "v1")
+    current_ref = db.collection("call_topics").document("current")
+    if current_ref.get().exists and not force:
+        return "call_topics/current (unchanged — exists; pass force=True to overwrite)"
+
+    payload = {
+        **topicset,
+        "updated_at": _now(),
+    }
+    payload.pop("all_topics", None)
+    current_ref.set(payload)
+    db.collection("call_topics").document(version).set(payload)
+    return f"call_topics/current + call_topics/{version}"
+
+
+def save_call_topics(topicset: dict[str, Any]) -> str:
+    """Always overwrite call_topics/current (manager edits)."""
+    return seed_call_topics(topicset, force=True)
+
+
+# ── Critical Call Flags ────────────────────────────────────────────────
+
+
+def get_call_flags_current() -> dict[str, Any] | None:
+    db = get_db()
+    return _serialize(db.collection("call_flags").document("current").get())
+
+
+def seed_call_flags(flagset: dict[str, Any], *, force: bool = False) -> str:
+    """Write flag catalog to call_flags/current and call_flags/{version}."""
+    db = get_db()
+    version = str(flagset.get("version") or "v1")
+    current_ref = db.collection("call_flags").document("current")
+    if current_ref.get().exists and not force:
+        return "call_flags/current (unchanged — exists; pass force=True to overwrite)"
+
+    payload = {
+        **flagset,
+        "updated_at": _now(),
+    }
+    payload.pop("all_flags", None)
+    current_ref.set(payload)
+    db.collection("call_flags").document(version).set(payload)
+    return f"call_flags/current + call_flags/{version}"
+
+
+def save_call_flags(flagset: dict[str, Any]) -> str:
+    """Always overwrite call_flags/current (manager edits)."""
+    return seed_call_flags(flagset, force=True)

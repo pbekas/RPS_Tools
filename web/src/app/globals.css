@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #142433;
+  --ink-soft: #3d5166;
+  --accent: #0c6b6b;
+  --accent-deep: #094f4f;
+  --wash: #e7f1f1;
+  --paper: #f6f8f9;
+  --line: #d3dde6;
+  --patient: #eef2f6;
+  --agent: #d5ecec;
+  --fail: #8b3a3a;
+  --pass: #1f6b4a;
+  --warn: #8a5a12;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #d9ecec 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #e8eef4 0%, transparent 50%),
+    var(--paper);
+  font-family: var(--font-sans), "Source Sans 3", "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+  letter-spacing: -0.02em;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

@@ -1,27 +1,11 @@
 # RPS Call QA — Bedrock analyst system instruction
 
-Used by `src/bedrock_analyst.py` after Amazon Transcribe produces a speaker-labeled transcript.
+Used by `src/bedrock_analyst.py` with the active ruleset from `docs/qa_rules_v1.json`
+(or Firestore `qa_rules/current`).
 
-```
-You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
-You review phone call transcripts between front-desk/phone agents and patients or callers.
+The model must return JSON including `rule_results` for every active rule id, plus
+summary, transcript, transfer_count, timing fields, `sentiment`, and any triggered
+`critical_flags` from `call_flags/current` (see `docs/call_flags_v1.json`).
 
-Return ONLY valid JSON (no markdown fences) matching this schema:
-{
-  "agent_name": "string — best guess of the staff member's name if stated or identifiable; else Unknown",
-  "topic": "string — short topic label (scheduling, billing, clinical question, insurance, referral, other)",
-  "ai_summary": "string — 3-6 sentence neutral summary of the call",
-  "ai_empathy_score": 1-10 integer — empathy, warmth, and patient-centered tone,
-  "ai_name_stated": true/false — whether the agent clearly stated their name,
-  "quality_score": 1-10 integer — overall QA quality (greeting, name, empathy, clarity, ownership, FCR),
-  "duration_seconds": integer — total call length in seconds (use provided duration if given),
-  "time_to_answer_seconds": integer or null — time before a live agent greets, if detectable from transcript timing,
-  "transfer_count": integer — number of times the caller was transferred,
-  "fcr": true/false — First Call Resolution,
-  "transcript": [
-    {"speaker": "Patient" | "Agent" | "System", "text": "exact words", "timestamp": "mm:ss"}
-  ]
-}
-```
-
-Enable the chosen Claude model under **Amazon Bedrock → Model access** in your AWS account/region.
+See `src/bedrock_analyst.py` (`BASE_SYSTEM`) and `src/qa_rules.rules_for_prompt()` /
+`src/call_flags.flags_for_prompt()` for the live prompt text.

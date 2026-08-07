@@ -70,6 +70,18 @@ python scripts/sync_vonage_recordings.py --days 3 --max 20
 
 Or use **Upload & process → Sync recordings** in the Streamlit UI.
 
+### Near-real-time
+
+Company recordings are **not** pushed by webhook. Run a poller (or EventBridge → `/poller/sync-now`):
+
+```bash
+python scripts/poll_vonage_recordings.py --interval 300 --minutes 30
+# or
+VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
+# or EventBridge / cron every 5 min:
+curl -X POST http://localhost:8080/poller/sync-now
+```
+
 API references:
 
 - [Call Recording overview](https://developer.vonage.com/en/vonage-business-cloud/call-recording/overview)
