@@ -439,7 +439,7 @@ export async function listCalls(opts?: {
   limit?: number;
   status?: string;
   sinceMs?: number | null;
-  /** Default true: only calls longer than 10 seconds. */
+  /** Default true: only calls longer than 30 seconds. */
   requireMinDuration?: boolean;
 }): Promise<CallDoc[]> {
   const limit = opts?.limit ?? 100;

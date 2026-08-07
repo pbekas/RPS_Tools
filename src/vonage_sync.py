@@ -123,7 +123,7 @@ def ingest_recording(
     if not is_qa_eligible_duration(rec.duration_seconds):
         raise VonageVBCError(
             f"Recording {rec.recording_id} is {rec.duration_seconds}s "
-            "(under 10s) — skipped as non-caller"
+            "(30s or under) — skipped as IVR-only / no live interaction"
         )
 
     audio = client.download_recording(rec)

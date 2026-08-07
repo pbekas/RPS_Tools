@@ -2,8 +2,8 @@ import type { CallDoc } from "@/lib/firestore";
 
 export const QUEUE_STORAGE_KEY = "rps_qa_queue_v1";
 
-/** Calls at or under this length are not treated as real callers. */
-export const MIN_CALL_DURATION_SECONDS = 10;
+/** Calls at or under this length are usually IVR-only / no live interaction. */
+export const MIN_CALL_DURATION_SECONDS = 30;
 
 export function isQaEligibleDuration(durationSeconds?: number | null): boolean {
   return (durationSeconds || 0) > MIN_CALL_DURATION_SECONDS;

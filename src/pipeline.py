@@ -87,8 +87,8 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
     if known_duration > 0 and not is_qa_eligible_duration(known_duration):
         updates = {
             "status": "skipped_short",
-            "error_message": "Call under 10s — not a real caller; skipped QA",
-            "ai_summary": "Skipped: recording shorter than 10 seconds.",
+            "error_message": "Call under 30s — likely IVR-only; skipped QA",
+            "ai_summary": "Skipped: recording 30 seconds or shorter (no live interaction).",
         }
         db.update_call(call_id, updates)
         return {"call_id": call_id, **existing, **updates}
@@ -130,8 +130,8 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
                 "recording_storage_uri": storage_uri or analysis.get("recording_storage_uri") or "",
                 "recording_url": recording_url,
                 "status": "skipped_short",
-                "error_message": "Call under 10s — not a real caller; skipped QA",
-                "ai_summary": "Skipped: recording shorter than 10 seconds.",
+                "error_message": "Call under 30s — likely IVR-only; skipped QA",
+                "ai_summary": "Skipped: recording 30 seconds or shorter (no live interaction).",
                 "transcript": analysis.get("transcript") or [],
                 "call_date": datetime.now(timezone.utc),
             }

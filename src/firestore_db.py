@@ -144,7 +144,7 @@ def list_calls(
     require_min_duration: bool | None = None,
 ) -> list[dict[str, Any]]:
     """
-    List calls. For status=\"complete\", short non-caller recordings (<=10s)
+    List calls. For status=\"complete\", short IVR-only recordings (<=30s)
     are excluded by default.
     """
     if require_min_duration is None:

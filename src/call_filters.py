@@ -1,7 +1,7 @@
 """Shared call eligibility rules for QA."""
 
-# Recordings at or under this length are not real caller conversations.
-MIN_CALL_DURATION_SECONDS = 10
+# Recordings at or under this length are usually IVR-only / no live interaction.
+MIN_CALL_DURATION_SECONDS = 30
 
 
 def is_qa_eligible_duration(duration_seconds: int | float | None) -> bool:
