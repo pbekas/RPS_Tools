@@ -70,7 +70,7 @@ cp .env.example .env   # if needed — secrets already scaffolded in .env (gitig
 Fill in:
 
 1. `AWS_REGION`, `S3_BUCKET` — recordings + Transcribe input
-2. `BEDROCK_MODEL_ID` — enable that model in the Bedrock console
+2. `BEDROCK_MODEL_ID` — Haiku for call audit (enable in Bedrock console); optional `BEDROCK_COACHING_MODEL_ID` for Sonnet coaching
 3. AWS credentials (CLI profile, env keys, or ECS task role)
 4. `FIREBASE_SERVICE_ACCOUNT` — until/unless you move metadata to DynamoDB
 5. `APP_URL` — must match your OAuth redirect
