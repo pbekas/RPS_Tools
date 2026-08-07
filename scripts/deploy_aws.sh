@@ -19,6 +19,12 @@ need docker
 need npm
 need python3
 
+# App .env files may set AWS_PROFILE=claude_account; prefer the active CLI identity.
+if [[ -n "${AWS_PROFILE:-}" ]] && ! aws configure list-profiles 2>/dev/null | grep -qx "$AWS_PROFILE"; then
+  echo "Ignoring missing AWS_PROFILE=$AWS_PROFILE"
+  unset AWS_PROFILE
+fi
+
 echo "==> AWS identity"
 aws sts get-caller-identity
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
@@ -56,10 +62,17 @@ fi
 echo "Using certificate: $CERT_ARN"
 
 echo "==> Installing CDK deps"
-python3 -m pip install -q -r "$ROOT/infra/aws/requirements.txt"
+ROOT_VENV="$ROOT/.venv/bin/python"
+if [[ ! -x "$ROOT_VENV" ]]; then
+  python3 -m venv "$ROOT/.venv"
+  ROOT_VENV="$ROOT/.venv/bin/python"
+fi
+"$ROOT_VENV" -m pip install -q -r "$ROOT/infra/aws/requirements.txt"
 if ! command -v cdk >/dev/null; then
   npm install -g aws-cdk
 fi
+
+export JSII_SILENCE_WARNING_UNTESTED_NODE_VERSION=1
 
 echo "==> CDK bootstrap (idempotent)"
 cd "$ROOT/infra/aws"

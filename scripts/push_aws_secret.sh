@@ -19,6 +19,13 @@ load_dotenv() {
     if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
       local key="${BASH_REMATCH[1]}"
       local val="${BASH_REMATCH[2]}"
+      # Do not override the shell's AWS auth from app .env files
+      # (web/.env.local often has AWS_PROFILE=claude_account).
+      case "$key" in
+        AWS_PROFILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_DEFAULT_PROFILE)
+          continue
+          ;;
+      esac
       val="${val%\"}"; val="${val#\"}"
       val="${val%\'}"; val="${val#\'}"
       if [[ -z "${!key:-}" ]]; then

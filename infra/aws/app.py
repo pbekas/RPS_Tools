@@ -110,8 +110,7 @@ class RpsCallQaStack(Stack):
             max_healthy_percent=200,
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
                 image=ecs.ContainerImage.from_asset(
-                    "../..",
-                    file="web/Dockerfile",
+                    "../../web",
                 ),
                 container_port=3000,
                 log_driver=ecs.LogDrivers.aws_logs(
