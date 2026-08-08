@@ -9,6 +9,7 @@ import {
 } from "@/lib/database";
 import { CallOps } from "@/components/CallOps";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { buildCoachingQueue } from "@/lib/coachingQueue";
 import { buildAgentScorecard, filterCallsSince } from "@/lib/scorecard";
 
 type Props = {
@@ -33,6 +34,10 @@ export default async function OpsPage({ searchParams }: Props) {
     ]);
     const calls = filterCallsSince(callsRaw, sinceMs);
     const scorecard = buildAgentScorecard({ logs, calls, users });
+    const coachingQueue = buildCoachingQueue({
+      rows: scorecard.rows,
+      calls,
+    });
 
     return (
       <CallOps
@@ -40,6 +45,7 @@ export default async function OpsPage({ searchParams }: Props) {
         days={days}
         scorecardRows={scorecard.rows}
         scorecardTeam={scorecard.team}
+        coachingQueue={coachingQueue}
       />
     );
   } catch (err) {

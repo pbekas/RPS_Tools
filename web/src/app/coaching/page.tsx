@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import {
   getUser,
+  listCalls,
   listMetricsForAgent,
   listUsers,
   upsertUser,
   isFirestoreQuotaError,
 } from "@/lib/database";
+import { pickReviewSampleIds } from "@/lib/coachingQueue";
 import { CoachingPanel } from "@/components/CoachingPanel";
 import { QuotaNotice } from "@/components/QuotaNotice";
 
@@ -52,7 +54,16 @@ export default async function CoachingPage({ searchParams }: Props) {
       }
     }
 
-    const metrics = await listMetricsForAgent(focusEmail, 8);
+    const [metrics, focusCalls] = await Promise.all([
+      listMetricsForAgent(focusEmail, 8),
+      listCalls({
+        agentEmail: focusEmail,
+        status: "complete",
+        limit: 40,
+        requireMinDuration: true,
+      }),
+    ]);
+    const sampleCallIds = pickReviewSampleIds(focusCalls, 3);
 
     return (
       <CoachingPanel
@@ -60,6 +71,7 @@ export default async function CoachingPage({ searchParams }: Props) {
         initialUser={user}
         initialMetrics={metrics}
         agents={agents}
+        sampleCallIds={sampleCallIds}
       />
     );
   } catch (err) {

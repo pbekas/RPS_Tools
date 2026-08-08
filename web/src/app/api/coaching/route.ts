@@ -2,11 +2,23 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { generateCoachingForAgent } from "@/lib/coaching";
+import { pickReviewSampleIds } from "@/lib/coachingQueue";
 import {
   getUser,
+  listCalls,
   listMetricsForAgent,
   listUsers,
 } from "@/lib/database";
+
+async function sampleForAgent(email: string): Promise<string[]> {
+  const calls = await listCalls({
+    agentEmail: email,
+    status: "complete",
+    limit: 40,
+    requireMinDuration: true,
+  });
+  return pickReviewSampleIds(calls, 3);
+}
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
@@ -26,11 +38,16 @@ export async function GET(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
-  const metrics = await listMetricsForAgent(email, 8);
-  const agents = isAdmin
-    ? (await listUsers()).filter((u) => (u.role || "").toLowerCase() !== "admin")
-    : [];
-  return NextResponse.json({ user, metrics, agents });
+  const [metrics, sampleCallIds, agents] = await Promise.all([
+    listMetricsForAgent(email, 8),
+    sampleForAgent(email),
+    isAdmin
+      ? listUsers().then((rows) =>
+          rows.filter((u) => (u.role || "").toLowerCase() !== "admin")
+        )
+      : Promise.resolve([]),
+  ]);
+  return NextResponse.json({ user, metrics, agents, sampleCallIds });
 }
 
 export async function POST(req: Request) {

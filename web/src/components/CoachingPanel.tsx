@@ -1,14 +1,19 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { MetricDoc, UserDoc } from "@/lib/database";
 import { formatCallDate, formatDuration } from "@/lib/format";
+import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 
 type Props = {
   isAdmin: boolean;
   initialUser: UserDoc;
   initialMetrics: MetricDoc[];
   agents: Array<{ email: string; name?: string }>;
+  /** Optional 3-call review sample seeded from Call Ops. */
+  sampleCallIds?: string[];
 };
 
 export function CoachingPanel({
@@ -16,10 +21,13 @@ export function CoachingPanel({
   initialUser,
   initialMetrics,
   agents,
+  sampleCallIds = [],
 }: Props) {
+  const router = useRouter();
   const [agentEmail, setAgentEmail] = useState(initialUser.email);
   const [user, setUser] = useState(initialUser);
   const [metrics, setMetrics] = useState(initialMetrics);
+  const [reviewIds, setReviewIds] = useState(sampleCallIds);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [msg, setMsg] = useState("");
@@ -44,6 +52,12 @@ export function CoachingPanel({
       setAgentEmail(email);
       setUser(data.user);
       setMetrics(data.metrics || []);
+      setReviewIds(
+        Array.isArray(data.sampleCallIds) ? data.sampleCallIds : []
+      );
+      router.replace(`/coaching?agent=${encodeURIComponent(email)}`, {
+        scroll: false,
+      });
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Load failed");
     } finally {
@@ -64,12 +78,23 @@ export function CoachingPanel({
       if (!res.ok) throw new Error(data.error || "Generate failed");
       setUser(data.user);
       setMetrics(data.metrics || []);
-      setMsg("Coaching report updated.");
+      setMsg("Coaching report updated from ops + QA signals.");
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Generate failed");
     } finally {
       setGenerating(false);
     }
+  }
+
+  function openSample() {
+    if (!reviewIds.length) return;
+    const queue: StoredQueue = {
+      createdAt: new Date().toISOString(),
+      ids: reviewIds,
+      cursor: 0,
+    };
+    sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
+    window.location.href = `/calls/${reviewIds[0]}?queue=1`;
   }
 
   return (
@@ -81,8 +106,18 @@ export function CoachingPanel({
           </p>
           <h1 className="font-display text-3xl text-ink">Coaching</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            Rolling AI coaching based on recent scored calls and manager feedback.
+            Rolling AI coaching grounded in CDR access, QA scores, critical flags,
+            and failed rules — not narrative alone.
           </p>
+          {isAdmin ? (
+            <p className="mt-2 text-xs text-ink-soft">
+              Tip: open agents from{" "}
+              <Link href="/ops" className="font-semibold text-accent hover:underline">
+                Call ops → Coaching queue
+              </Link>
+              .
+            </p>
+          ) : null}
         </div>
         {isAdmin ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -106,6 +141,15 @@ export function CoachingPanel({
             >
               {generating ? "Generating…" : "Generate report"}
             </button>
+            {reviewIds.length ? (
+              <button
+                type="button"
+                onClick={openSample}
+                className="rounded-lg border border-accent px-4 py-2 text-sm font-semibold text-accent hover:bg-wash"
+              >
+                Review {reviewIds.length} calls
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -127,7 +171,7 @@ export function CoachingPanel({
         </div>
         <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-ink">
           {user.rolling_ai_feedback?.trim() ||
-            "No coaching report yet. An admin can generate one from recent calls."}
+            "No coaching report yet. An admin can generate one from recent ops + QA signals."}
         </div>
       </div>
 
