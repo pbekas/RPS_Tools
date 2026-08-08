@@ -43,6 +43,8 @@ CALL_COLUMNS = (
     "agent_email", "agent_name", "patient_name", "doctor_name", "call_date",
     "duration_seconds", "time_to_answer_seconds", "topic", "topic_id",
     "ai_empathy_score", "ai_name_stated", "ai_summary", "transcript",
+    "transcript_original", "transcript_language", "transcript_translated",
+    "stt_language",
     "transfer_count", "fcr", "quality_score", "ruleset_version", "auto_failed",
     "auto_fail_rules", "flagset_version", "has_critical_flags",
     "sentiment_label", "sentiment_score", "sentiment_notes", "manager_feedback",

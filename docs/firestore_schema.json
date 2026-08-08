@@ -38,6 +38,16 @@
             "timestamp": "string — mm:ss or HH:MM:SS"
           }
         ],
+        "transcript_original": [
+          {
+            "speaker": "Patient | Agent | System",
+            "text": "string — source language (e.g. Spanish) when transcript was translated",
+            "timestamp": "string — mm:ss or HH:MM:SS"
+          }
+        ],
+        "transcript_language": "string — primary source language code (es, en, …)",
+        "transcript_translated": "boolean — true when transcript is an English translation",
+        "stt_language": "string — Amazon Transcribe LanguageCode when known",
         "transfer_count": "number",
         "fcr": "boolean — First Call Resolution",
         "quality_score": "number 1-10 — composite from rule weights",

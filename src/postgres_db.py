@@ -31,6 +31,10 @@ _CALL_COLUMNS = (
     "ai_name_stated",
     "ai_summary",
     "transcript",
+    "transcript_original",
+    "transcript_language",
+    "transcript_translated",
+    "stt_language",
     "transfer_count",
     "fcr",
     "quality_score",
@@ -62,7 +66,7 @@ _CALL_COLUMNS = (
     "vonage_direction",
     "critical_alert_sent_at",
 )
-_CALL_JSON_COLUMNS = {"transcript"}
+_CALL_JSON_COLUMNS = {"transcript", "transcript_original"}
 
 _CALL_LOG_COLUMN_MAP = {
     "direction": "direction",

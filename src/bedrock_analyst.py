@@ -36,6 +36,7 @@ from src.call_flags import (
     normalize_critical_flags,
     normalize_sentiment,
 )
+from src.transcript_i18n import ensure_english_transcript
 
 BASE_SYSTEM = """You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
 You review phone call transcripts between front-desk/phone agents and patients or callers.
@@ -147,13 +148,16 @@ def analyze_call_audio(
     path = Path(file_path)
     media_uri = s3_uri or _ensure_audio_on_s3(path)
 
-    transcript_turns, duration_seconds = transcribe_audio(media_uri)
+    transcript_turns, duration_seconds, stt_language = transcribe_audio(media_uri)
     result = analyze_transcript(
         transcript_turns,
         duration_seconds=duration_seconds,
         original_filename=original_filename or path.name,
+        stt_language=stt_language,
     )
     result["recording_storage_uri"] = media_uri
+    if stt_language:
+        result["stt_language"] = stt_language
     return result
 
 
@@ -163,17 +167,27 @@ def analyze_transcript(
     duration_seconds: int | None = None,
     original_filename: str | None = None,
     transfer_count_hint: int | None = None,
+    stt_language: str | None = None,
 ) -> dict[str, Any]:
-    """Score an existing transcript with Bedrock + active rules (no Transcribe)."""
+    """Score an existing transcript with Bedrock + active rules (no Transcribe).
+
+    Non-English transcripts (especially Spanish) are translated to English before
+    scoring. The original turns are returned as transcript_original when translation
+    runs so reviewers can still inspect the source language.
+    """
     ruleset = get_active_ruleset()
     topicset = get_active_topicset()
     flagset = get_active_flagset()
     if isinstance(transcript, str):
-        transcript_text = transcript
-        seed_turns: list[dict[str, Any]] = []
+        seed_turns: list[dict[str, Any]] = [
+            {"speaker": "spk_0", "text": transcript, "timestamp": "00:00"}
+        ] if transcript.strip() else []
     else:
         seed_turns = list(transcript)
-        transcript_text = _format_turns_for_prompt(seed_turns)
+
+    locale = ensure_english_transcript(seed_turns, hint_language=stt_language)
+    working_turns = locale.turns
+    transcript_text = _format_turns_for_prompt(working_turns)
 
     user_prompt = (
         "Score this medical office phone call. Use the PROVIDED transcript as-is — "
@@ -181,6 +195,11 @@ def analyze_transcript(
         f"Original filename (may contain hints): {original_filename or 'n/a'}\n"
         f"Known/estimated duration_seconds: {duration_seconds if duration_seconds is not None else 'unknown'}\n"
     )
+    if locale.translated:
+        user_prompt += (
+            f"Note: transcript was auto-translated to English from language "
+            f"'{locale.language}' for QA review.\n"
+        )
     if transfer_count_hint is not None:
         user_prompt += f"Hint transfer_count from telephony metadata: {transfer_count_hint}\n"
     user_prompt += (
@@ -200,10 +219,13 @@ def analyze_transcript(
     )
     data = _extract_json(raw)
 
-    # Always keep speech-to-text turns; only apply optional speaker role map from the model.
+    speaker_roles = (
+        data.get("speaker_roles") if isinstance(data.get("speaker_roles"), dict) else None
+    )
+    # Always keep STT/translated turns; only apply optional speaker role map from the model.
     normalized_transcript = _normalize_transcript(
-        seed_turns,
-        speaker_roles=data.get("speaker_roles") if isinstance(data.get("speaker_roles"), dict) else None,
+        working_turns,
+        speaker_roles=speaker_roles,
     )
     transfer_count = int(
         data.get("transfer_count")
@@ -229,7 +251,7 @@ def analyze_transcript(
     if doctor_name.lower() in {"unknown", "n/a", "none", "null"}:
         doctor_name = ""
 
-    return {
+    result: dict[str, Any] = {
         "agent_name": str(data.get("agent_name") or "Unknown").strip(),
         "patient_name": str(data.get("patient_name") or "Unknown").strip(),
         "doctor_name": doctor_name,
@@ -247,12 +269,22 @@ def analyze_transcript(
         ),
         "transfer_count": transfer_count,
         "transcript": normalized_transcript,
+        "transcript_language": locale.language or "en",
         "critical_flags": critical_flags,
         "has_critical_flags": bool(critical_flags),
         "flagset_version": str(flagset.get("version") or "v1"),
         **sentiment,
         **scored,
     }
+    if locale.translated and locale.original_turns is not None:
+        result["transcript_original"] = _normalize_transcript(
+            locale.original_turns,
+            speaker_roles=speaker_roles,
+        )
+        result["transcript_translated"] = True
+    else:
+        result["transcript_translated"] = False
+    return result
 
 
 def generate_coaching_report(
@@ -320,10 +352,10 @@ def bedrock_text(
     return "\n".join(texts).strip()
 
 
-def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
+def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int, str | None]:
     """
     Run Amazon Transcribe with speaker labels.
-    Returns (turns[{speaker,text,timestamp}], duration_seconds).
+    Returns (turns[{speaker,text,timestamp}], duration_seconds, language_code).
     """
     settings = get_settings()
     client = boto3.client("transcribe", region_name=settings.aws_region)
@@ -334,12 +366,20 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
         "TranscriptionJobName": job_name,
         "Media": {"MediaFileUri": s3_uri},
         "MediaFormat": media_format,
-        "LanguageCode": settings.transcribe_language_code,
         "Settings": {
             "ShowSpeakerLabels": True,
             "MaxSpeakerLabels": 4,
         },
     }
+    lang_options = settings.transcribe_language_options
+    if len(lang_options) >= 2:
+        # Auto-detect between clinic languages (English / Spanish).
+        kwargs["IdentifyLanguage"] = True
+        kwargs["LanguageOptions"] = lang_options
+    else:
+        kwargs["LanguageCode"] = (
+            lang_options[0] if lang_options else settings.transcribe_language_code
+        )
     client.start_transcription_job(**kwargs)
 
     while True:
@@ -355,6 +395,7 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
             )
         time.sleep(3)
 
+    language_code = job.get("LanguageCode") or None
     transcript_uri = job["Transcript"]["TranscriptFileUri"]
     with httpx.Client(timeout=120.0) as http:
         payload = http.get(transcript_uri).json()
@@ -379,7 +420,7 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
         if end_times:
             duration = int(round(max(end_times)))
 
-    return turns, duration
+    return turns, duration, language_code
 
 
 def _ensure_audio_on_s3(path: Path) -> str:

@@ -11,7 +11,12 @@ from src.pipeline import enqueue_bytes
 
 
 def reanalyze_call(call_id: str, *, send_alerts: bool = True) -> dict[str, Any]:
-    """Re-score a call from its stored transcript (no Transcribe)."""
+    """Re-score a call from its stored transcript (no Transcribe).
+
+    If the stored transcript is Spanish (or other non-English), analysis translates
+    it to English and stores transcript_original. Already-translated calls keep
+    their original language turns.
+    """
     call = db.get_call(call_id)
     if not call:
         raise LookupError(f"Call not found: {call_id}")
@@ -20,14 +25,29 @@ def reanalyze_call(call_id: str, *, send_alerts: bool = True) -> dict[str, Any]:
     if not transcript:
         raise ValueError("No transcript on this call to re-score")
 
+    # Prefer source-language turns when we already translated once, so re-runs
+    # can refresh the English transcript from the original Spanish.
+    source_transcript = call.get("transcript_original") or transcript
+    stt_language = call.get("stt_language") or call.get("transcript_language")
+
     scored = analyze_transcript(
-        transcript,
+        source_transcript,
         duration_seconds=call.get("duration_seconds"),
         original_filename=call.get("original_filename"),
         transfer_count_hint=call.get("transfer_count"),
+        stt_language=stt_language if stt_language and stt_language != "en" else None,
     )
     if not scored.get("transcript"):
         scored["transcript"] = transcript
+
+    # Preserve prior original/language metadata when this run did not re-translate.
+    if not scored.get("transcript_original") and call.get("transcript_original"):
+        scored["transcript_original"] = call.get("transcript_original")
+        scored["transcript_translated"] = True
+        if call.get("transcript_language"):
+            scored["transcript_language"] = call.get("transcript_language")
+    if call.get("stt_language") and not scored.get("stt_language"):
+        scored["stt_language"] = call.get("stt_language")
 
     existing_email = (call.get("agent_email") or "").strip().lower()
     updates = {k: v for k, v in scored.items() if k != "recording_storage_uri"}

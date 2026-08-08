@@ -42,8 +42,13 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
   const [assignMsg, setAssignMsg] = useState("");
   const [reanalyzing, setReanalyzing] = useState(false);
   const [reanalyzeMsg, setReanalyzeMsg] = useState("");
+  const [showOriginal, setShowOriginal] = useState(false);
 
-  const transcript = call.transcript || [];
+  const englishTranscript = call.transcript || [];
+  const originalTranscript = call.transcript_original || [];
+  const hasOriginal =
+    Boolean(call.transcript_translated) || originalTranscript.length > 0;
+  const transcript = showOriginal && hasOriginal ? originalTranscript : englishTranscript;
   const rules = call.rule_results || [];
   const failed = useMemo(() => rules.filter((r) => !r.passed), [rules]);
   const criticalFlags = call.critical_flags || [];
@@ -69,6 +74,7 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     setSavedMsg("");
     setAssignMsg("");
     setReanalyzeMsg("");
+    setShowOriginal(false);
   }, [call.id, call.manager_notes, call.manager_feedback, call.agent_email, call.agent_name]);
 
   function jumpToTurn(index: number | null | undefined, ts?: string | null) {
@@ -291,6 +297,22 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
             <div className="mx-auto flex max-w-3xl flex-col gap-3">
+              {hasOriginal ? (
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-ink-soft">
+                    {showOriginal
+                      ? `Showing original (${(call.transcript_language || "source").toUpperCase()})`
+                      : "Showing English translation"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowOriginal((v) => !v)}
+                    className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-wash"
+                  >
+                    {showOriginal ? "Show English" : "Show original"}
+                  </button>
+                </div>
+              ) : null}
               {transcript.length === 0 ? (
                 <p className="text-ink-soft">No transcript stored.</p>
               ) : (
@@ -358,7 +380,7 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                     </div>
                     <p className="mt-1 text-xs text-ink-soft">
                       Re-score with current QA rules and critical flags (uses stored
-                      transcript).
+                      transcript; translates Spanish to English when needed).
                     </p>
                   </div>
                   <button

@@ -407,6 +407,13 @@ export type CallDoc = {
   ai_name_stated?: boolean;
   ai_summary?: string;
   transcript?: Array<{ speaker?: string; text?: string; timestamp?: string }>;
+  /** Source-language turns when transcript was translated to English. */
+  transcript_original?: Array<{ speaker?: string; text?: string; timestamp?: string }>;
+  /** BCP-47-ish primary language of the source transcript (e.g. "es", "en"). */
+  transcript_language?: string | null;
+  transcript_translated?: boolean;
+  /** Amazon Transcribe LanguageCode when available (e.g. "es-US"). */
+  stt_language?: string | null;
   transfer_count?: number;
   fcr?: boolean;
   quality_score?: number;

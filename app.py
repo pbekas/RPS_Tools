@@ -551,7 +551,22 @@ def page_call_review(user: dict, *, force_agent_email: str | None = None) -> Non
 
     with right:
         st.subheader("Transcript")
-        _render_sms_transcript(call.get("transcript") or [])
+        original = call.get("transcript_original") or []
+        has_original = bool(call.get("transcript_translated") or original)
+        show_original = False
+        if has_original:
+            show_original = st.toggle(
+                "Show original language",
+                value=False,
+                help="English translation is shown by default for QA review.",
+            )
+            lang = (call.get("transcript_language") or "source").upper()
+            st.caption(
+                f"Showing original ({lang})" if show_original else "Showing English translation"
+            )
+        _render_sms_transcript(
+            original if show_original and original else (call.get("transcript") or [])
+        )
 
     if is_admin(user):
         st.subheader("Manager review")
