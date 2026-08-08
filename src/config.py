@@ -47,7 +47,9 @@ class Settings:
     webhook_port: int
     allowed_email_domain: str
     gchat_webhook_url: str
+    gchat_missed_calls_webhook_url: str
     alerts_enabled: bool
+    alerts_master_enabled: bool
     missed_alert_window_minutes: int
     missed_alert_threshold: int
     ops_internal_token: str
@@ -130,12 +132,17 @@ class Settings:
             os.getenv("GCHAT_WEBHOOK_URL", "").strip()
             or os.getenv("GOOGLE_CHAT_WEBHOOK_URL", "").strip()
         )
-        self.alerts_enabled = os.getenv("ALERTS_ENABLED", "1").strip().lower() in {
+        # Optional separate Space for per-call missed-call alerts; falls back to main webhook.
+        self.gchat_missed_calls_webhook_url = os.getenv(
+            "GCHAT_MISSED_CALLS_WEBHOOK_URL", ""
+        ).strip()
+        self.alerts_master_enabled = os.getenv("ALERTS_ENABLED", "1").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
-        } and bool(self.gchat_webhook_url)
+        }
+        self.alerts_enabled = self.alerts_master_enabled and bool(self.gchat_webhook_url)
         self.missed_alert_window_minutes = int(
             os.getenv("MISSED_ALERT_WINDOW_MINUTES", "30")
         )

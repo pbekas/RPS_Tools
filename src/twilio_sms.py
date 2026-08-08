@@ -10,8 +10,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MESSAGE = (
-    "Relevium Pain Specialists received your call and will call you back shortly. "
-    "If you need immediate assistance, please call our main line."
+    "Thanks for calling Relevium Pain Specialists! We're currently unavailable, "
+    "but if you're looking to schedule an appointment or have questions about your visit, "
+    "reply here and our team will follow up right away."
 )
 
 # Non-answered results we intentionally treat as patient follow-up SMS.

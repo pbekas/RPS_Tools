@@ -129,7 +129,8 @@ class RenderBodyTest(unittest.TestCase):
 
     def test_default_message(self) -> None:
         body = render_missed_sms_body(None)
-        self.assertIn("Relevium", body)
+        self.assertIn("Thanks for calling Relevium Pain Specialists", body)
+        self.assertIn("reply here", body)
 
 
 if __name__ == "__main__":

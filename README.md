@@ -66,8 +66,15 @@ python scripts/sync_vonage_call_logs.py --minutes 60
 the caller’s `from_number` when the log is **inbound** and the result is not
 answered/connected (missed, abandoned, voicemail, no-answer, busy, etc.).
 Off by default (`TWILIO_MISSED_SMS_ENABLED=0`). Dedup uses `alert_state` keyed by
-normalized phone. Copy is configurable via `TWILIO_MISSED_SMS_MESSAGE` (optional
-`{main_line}`). Optional delivery receipts: `POST /webhooks/twilio/sms-status`.
+normalized phone. Default copy invites the caller to reply for scheduling /
+visit questions; override with `TWILIO_MISSED_SMS_MESSAGE` (optional `{main_line}`).
+Optional delivery receipts: `POST /webhooks/twilio/sms-status`.
+
+**Missed-call Google Chat:** the same CDR path posts a Space alert with name
+(CNAM / matched patient when available), phone, caller ID, date/time (PT),
+result, dialed number, destination, and whether the patient SMS was sent.
+Set `GCHAT_MISSED_CALLS_WEBHOOK_URL` to a dedicated Space webhook (falls back to
+`GCHAT_WEBHOOK_URL`). Deduped per CDR id so re-syncs do not spam.
 
 **Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
 

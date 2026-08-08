@@ -54,6 +54,7 @@ def sync_call_logs(
         "missed": 0,
         "unrecorded": 0,
         "missed_sms_sent": 0,
+        "missed_gchat_sent": 0,
         "errors": [],
         "window_start": start_gte.isoformat(),
         "window_end": start_lte.isoformat(),
@@ -101,14 +102,28 @@ def sync_call_logs(
             logger.exception("Failed to upsert call log %s", log.log_id)
             continue
 
-        # Best-effort patient SMS — never fails the CDR sync cycle.
+        # Best-effort patient SMS + Google Chat — never fails the CDR sync cycle.
+        sms_sent = False
         try:
             from src.twilio_sms import maybe_notify_missed_inbound_call
 
-            if maybe_notify_missed_inbound_call(log):
+            sms_sent = bool(maybe_notify_missed_inbound_call(log))
+            if sms_sent:
                 summary["missed_sms_sent"] += 1
         except Exception:
             logger.exception("Missed-call SMS hook failed for %s", log.log_id)
+
+        try:
+            from src.notify import alert_missed_inbound_call
+
+            if alert_missed_inbound_call(
+                log,
+                matched_call_id=matched_call_id,
+                sms_sent=sms_sent,
+            ):
+                summary["missed_gchat_sent"] = int(summary.get("missed_gchat_sent") or 0) + 1
+        except Exception:
+            logger.exception("Missed-call Google Chat hook failed for %s", log.log_id)
 
     _maybe_alert_missed_spike(summary)
     return summary
