@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from src import firestore_db as db
+from src import database as db
+from src.agent_identity import resolve_or_create_agent
+from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
 from src.bedrock_analyst import analyze_call_audio
 from src.metrics import recompute_weekly_metrics_for_agent
@@ -52,6 +54,7 @@ def enqueue_bytes(
     source: str = "upload",
     vonage_call_id: str | None = None,
     call_date: datetime | None = None,
+    queue_background: bool = True,
 ) -> str:
     call_id = _create_pending(
         original_filename=original_filename,
@@ -61,7 +64,8 @@ def enqueue_bytes(
     )
     dest = _UPLOAD_ROOT / f"{call_id}_{original_filename}"
     dest.write_bytes(data)
-    _queue_job(call_id, dest)
+    if queue_background:
+        _queue_job(call_id, dest)
     return call_id
 
 
@@ -77,6 +81,18 @@ def enqueue_upload_file(
 def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
     """Run Transcribe + Bedrock analysis and storage update for one call."""
     settings = get_settings()
+    existing = db.get_call(call_id) or {}
+    known_duration = int(existing.get("duration_seconds") or 0)
+    # Only short-circuit when we already know a positive short duration (e.g. Vonage).
+    if known_duration > 0 and not is_qa_eligible_duration(known_duration):
+        updates = {
+            "status": "skipped_short",
+            "error_message": "Call under 30s — likely IVR-only; skipped QA",
+            "ai_summary": "Skipped: recording 30 seconds or shorter (no live interaction).",
+        }
+        db.update_call(call_id, updates)
+        return {"call_id": call_id, **existing, **updates}
+
     db.update_call(call_id, {"status": "processing"})
     try:
         storage_uri, recording_url = "", ""
@@ -106,8 +122,25 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
         if not recording_url:
             recording_url = str(audio_path.resolve())
 
+        duration_seconds = int(analysis.get("duration_seconds") or 0)
+        if not is_qa_eligible_duration(duration_seconds):
+            updates = {
+                "duration_seconds": duration_seconds,
+                "recording_gcs_path": storage_uri or analysis.get("recording_storage_uri") or "",
+                "recording_storage_uri": storage_uri or analysis.get("recording_storage_uri") or "",
+                "recording_url": recording_url,
+                "status": "skipped_short",
+                "error_message": "Call under 30s — likely IVR-only; skipped QA",
+                "ai_summary": "Skipped: recording 30 seconds or shorter (no live interaction).",
+                "transcript": analysis.get("transcript") or [],
+                "call_date": datetime.now(timezone.utc),
+            }
+            db.update_call(call_id, updates)
+            return {"call_id": call_id, **updates}
+
         agent_name = analysis["agent_name"]
-        agent_email = _match_agent_email(agent_name)
+        agent_email, agent_name = resolve_or_create_agent(agent_name)
+        analysis["agent_name"] = agent_name
 
         updates = {
             **{k: v for k, v in analysis.items() if k != "recording_storage_uri"},
@@ -121,6 +154,22 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
         }
         db.update_call(call_id, updates)
 
+        if updates.get("has_critical_flags"):
+            try:
+                from src.notify import alert_critical_flags
+
+                existing = db.get_call(call_id) or {}
+                alert_critical_flags(
+                    call_id=call_id,
+                    agent_name=updates.get("agent_name"),
+                    agent_email=agent_email,
+                    patient_name=updates.get("patient_name"),
+                    phone=existing.get("vonage_caller_id"),
+                    doctor_name=updates.get("doctor_name"),
+                    flags=list(updates.get("critical_flags") or []),
+                )
+            except Exception:
+                pass
         if agent_email:
             try:
                 recompute_weekly_metrics_for_agent(agent_email)
@@ -144,18 +193,20 @@ def _create_pending(
     call_date: datetime | None,
 ) -> str:
     settings = get_settings()
-    if not settings.firestore_configured:
-        # Local stub id when Firestore not ready — still process files
+    if not settings.database_configured:
+        # Local stub id when the selected database is not ready — still process files
         return f"local_{uuid.uuid4().hex[:12]}"
 
     return db.create_call(
         {
             "agent_name": "",
             "agent_email": None,
+            "patient_name": "",
             "call_date": call_date or datetime.now(timezone.utc),
             "duration_seconds": 0,
             "time_to_answer_seconds": None,
             "topic": "",
+            "topic_id": "",
             "ai_empathy_score": 0,
             "ai_name_stated": False,
             "ai_summary": "",
@@ -214,24 +265,6 @@ def _worker_loop() -> None:
         except Exception:
             # Errors already recorded on the call document when using Firestore
             pass
-
-
-def _match_agent_email(agent_name: str) -> str | None:
-    settings = get_settings()
-    if not settings.firestore_configured or not agent_name or agent_name == "Unknown":
-        return None
-    try:
-        users = db.list_users()
-    except Exception:
-        return None
-    needle = agent_name.strip().lower()
-    for u in users:
-        name = (u.get("name") or "").strip().lower()
-        if not name:
-            continue
-        if needle == name or needle in name or name in needle:
-            return u.get("email")
-    return None
 
 
 def save_upload_to_temp(uploaded_file: Any) -> Path:

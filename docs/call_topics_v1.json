@@ -1,0 +1,61 @@
+{
+  "version": "v1",
+  "name": "Relevium Call Topics",
+  "description": "Configurable call topic catalog. The AI must pick exactly one active topic id. Edit call_topics/current in Firestore (or this file + seed) to evolve labels and classification guidance.",
+  "topics": [
+    {
+      "id": "scheduling",
+      "label": "Scheduling",
+      "description": "Appointments: booking, rescheduling, canceling, confirming, waitlist, or arrival/check-in logistics.",
+      "active": true
+    },
+    {
+      "id": "billing",
+      "label": "Billing",
+      "description": "Patient balances, invoices, payment plans, statements, collections, or charges for services already rendered.",
+      "active": true
+    },
+    {
+      "id": "insurance",
+      "label": "Insurance",
+      "description": "Coverage verification, benefits, prior auth status, claim issues, referrals required by payer, or insurance card updates.",
+      "active": true
+    },
+    {
+      "id": "prescription_refill",
+      "label": "Prescription / refill",
+      "description": "Medication refill requests, pharmacy questions, controlled-substance refill process, or prescription pickup status.",
+      "active": true
+    },
+    {
+      "id": "clinical_question",
+      "label": "Clinical question",
+      "description": "Symptoms, treatment questions, procedure follow-up, pain concerns, or clinical advice triage (non-emergency).",
+      "active": true
+    },
+    {
+      "id": "referral",
+      "label": "Referral",
+      "description": "Incoming/outgoing specialist referrals, referral paperwork, or coordinating care with another provider.",
+      "active": true
+    },
+    {
+      "id": "records_forms",
+      "label": "Records & forms",
+      "description": "Medical records requests, forms, disability paperwork, imaging results pickup, or release-of-information.",
+      "active": true
+    },
+    {
+      "id": "new_patient",
+      "label": "New patient",
+      "description": "First-time callers establishing care, new-patient packets, or onboarding before a first appointment.",
+      "active": true
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "description": "Use only when the call does not clearly fit another active topic. Prefer a more specific topic when reasonable.",
+      "active": true
+    }
+  ]
+}

@@ -7,6 +7,7 @@
         "email": "string",
         "name": "string",
         "role": "Admin | Agent",
+        "provisional": "boolean — true when auto-created from call AI name before Workspace email is known",
         "rolling_ai_feedback": "string — latest coaching narrative",
         "last_coaching_at": "timestamp | null",
         "active": "boolean",
@@ -20,10 +21,13 @@
       "fields": {
         "agent_name": "string",
         "agent_email": "string | null — links to users",
+        "patient_name": "string — caller/patient name from AI or CNAM",
+        "doctor_name": "string — physician/provider name extracted from transcript when mentioned",
         "call_date": "timestamp",
         "duration_seconds": "number",
         "time_to_answer_seconds": "number | null",
-        "topic": "string",
+        "topic": "string — display label from call topic catalog",
+        "topic_id": "string — stable id from call_topics catalog",
         "ai_empathy_score": "number 1-10",
         "ai_name_stated": "boolean — agent stated their name",
         "ai_summary": "string",
@@ -36,7 +40,42 @@
         ],
         "transfer_count": "number",
         "fcr": "boolean — First Call Resolution",
-        "quality_score": "number 1-10 — composite AI QA score",
+        "quality_score": "number 1-10 — composite from rule weights",
+        "rule_results": [
+          {
+            "rule_id": "string",
+            "label": "string",
+            "category": "string",
+            "passed": "boolean",
+            "score_1_to_10": "number | null",
+            "evidence": "string",
+            "evidence_timestamp": "string mm:ss",
+            "evidence_turn_index": "number | null — index into transcript for deep-link",
+            "notes": "string",
+            "auto_fail": "boolean",
+            "weight": "number"
+          }
+        ],
+        "ruleset_version": "string e.g. v1",
+        "auto_failed": "boolean",
+        "auto_fail_rules": ["string rule ids"],
+        "critical_flags": [
+          {
+            "flag_id": "string",
+            "label": "string",
+            "severity": "critical | …",
+            "triggered": "boolean",
+            "evidence": "string",
+            "evidence_timestamp": "string mm:ss",
+            "evidence_turn_index": "number | null",
+            "notes": "string"
+          }
+        ],
+        "has_critical_flags": "boolean",
+        "flagset_version": "string e.g. v1",
+        "sentiment_label": "positive | neutral | negative | mixed",
+        "sentiment_score": "number 1-10",
+        "sentiment_notes": "string",
         "manager_feedback": "string",
         "manager_notes": "string",
         "recording_url": "string — signed or public listen URL",
@@ -64,6 +103,41 @@
         "status",
         "agent_name + call_date"
       ]
+    },
+    "call_logs": {
+      "doc_id": "Vonage Reports call-log id",
+      "description": "VBC Reports CDRs — missed/unrecorded/talk duration; linked to QA calls when a recording exists",
+      "fields": {
+        "direction": "Inbound | Outbound | string",
+        "from_number": "string | null",
+        "to_number": "string | null",
+        "result": "string — e.g. Answered, Missed, Voicemail",
+        "recorded": "boolean | null",
+        "length_seconds": "number — talk duration (not ring/ASA wait)",
+        "start": "timestamp | null",
+        "end": "timestamp | null",
+        "source_user": "string | null",
+        "source_user_full_name": "string | null",
+        "source_extension": "string | null",
+        "destination_user": "string | null",
+        "destination_user_full_name": "string | null",
+        "destination_extension": "string | null",
+        "custom_tag": "string | null",
+        "in_network": "boolean | null",
+        "international": "boolean | null",
+        "is_missed": "boolean — derived from result",
+        "is_unrecorded": "boolean — recorded === false",
+        "matched_call_id": "string | null — Firestore calls doc id when matched",
+        "ring_seconds": "number | null — stub; VBC Reports does not expose ring time today",
+        "wait_seconds": "number | null — stub for telephony ASA / speed of answer",
+        "queue_seconds": "number | null — stub for queue wait",
+        "answered_at": "timestamp | null — stub when answer timestamp is available",
+        "raw": "object — full Vonage call-log payload",
+        "synced_at": "timestamp",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      },
+      "indexes": ["start"]
     },
     "metrics": {
       "doc_id": "{agent_email}_{YYYY}_W{WW}",
@@ -100,10 +174,73 @@
         "created_at": "timestamp"
       },
       "indexes": ["agent_email + created_at", "created_at"]
+    },
+    "qa_rules": {
+      "doc_id": "current | v1 | v2 …",
+      "description": "Versioned phone QA rubric. App prefers qa_rules/current.",
+      "fields": {
+        "version": "string",
+        "name": "string",
+        "description": "string",
+        "auto_fail_quality_cap": "number",
+        "empathy_pass_threshold": "number",
+        "transfer_soft_limit": "number",
+        "transfer_auto_fail_at": "number",
+        "rules": [
+          {
+            "id": "string",
+            "label": "string",
+            "description": "string",
+            "category": "Greeting | Empathy | Process | Resolution",
+            "weight": "number",
+            "auto_fail": "boolean",
+            "pass_criteria": "string",
+            "active": "boolean"
+          }
+        ],
+        "updated_at": "timestamp"
+      }
+    },
+    "call_topics": {
+      "doc_id": "current | v1 | v2 …",
+      "description": "Configurable call topic catalog for AI classification. App prefers call_topics/current.",
+      "fields": {
+        "version": "string",
+        "name": "string",
+        "description": "string",
+        "topics": [
+          {
+            "id": "string — stable slug used by the model",
+            "label": "string — display name",
+            "description": "string — details so the AI can classify the call",
+            "active": "boolean"
+          }
+        ],
+        "updated_at": "timestamp"
+      }
+    },
+    "call_flags": {
+      "doc_id": "current | v1 | v2 …",
+      "description": "Business-critical call flag catalog (alerts, not agent skill fails). App prefers call_flags/current.",
+      "fields": {
+        "version": "string",
+        "name": "string",
+        "description": "string",
+        "flags": [
+          {
+            "id": "string — stable slug used by the model",
+            "label": "string — display name",
+            "severity": "critical | …",
+            "description": "string — when to trigger",
+            "active": "boolean"
+          }
+        ],
+        "updated_at": "timestamp"
+      }
     }
   },
   "access_model": {
-    "Admin": "Read/write all calls, users, metrics, feedback; agent picker on dashboard",
+    "Admin": "Read/write all calls, users, metrics, feedback, qa_rules, call_topics, call_flags; agent picker on dashboard",
     "Agent": "Read own calls (by agent_email), own metrics, own rolling_ai_feedback only"
   }
 }

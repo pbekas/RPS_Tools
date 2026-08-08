@@ -1,0 +1,63 @@
+{
+  "version": "v3",
+  "name": "Relevium Critical Call Flags",
+  "description": "Business-critical and clinical-risk alerts. Not agent skill fails by default — they surface urgent follow-up situations for managers.",
+  "flags": [
+    {
+      "id": "new_patient_no_attorney",
+      "label": "Unrepped case — accident, no attorney",
+      "severity": "critical",
+      "description": "Trigger when the caller was in an accident (MVA, fall, work injury, personal injury, or similar) and clearly states they do NOT have an attorney, lawyer, or legal representation (unrepped / unrepresented). Also trigger when they are establishing care after an accident and confirm they have no attorney. Do not trigger solely because attorney status was never mentioned, or when they say they already have an attorney.",
+      "active": true
+    },
+    {
+      "id": "procedure_declined",
+      "label": "Procedure declined",
+      "severity": "critical",
+      "description": "Trigger when the practice is calling about (or offering) a procedure/injection/surgery and the patient declines, refuses, postpones indefinitely, or cancels that procedure. Do not trigger for routine appointment cancelations unrelated to a procedure.",
+      "active": true
+    },
+    {
+      "id": "urgent_clinical_language",
+      "label": "Urgent clinical language",
+      "severity": "critical",
+      "description": "Trigger when the caller describes emergency or urgent clinical symptoms (e.g. chest pain, difficulty breathing, suicidal ideation, uncontrolled bleeding, sudden severe neurological symptoms, allergic reaction) and needs immediate clinical escalation or ER guidance. Do not trigger for routine pain complaints.",
+      "active": true
+    },
+    {
+      "id": "post_procedure_complication_not_escalated",
+      "label": "Post-procedure red flag — not escalated to physician",
+      "severity": "critical",
+      "description": "Trigger when the caller reports a major post-procedure / post-injection concern such as fever, redness, draining or discharge from the site, weakness, numbness that is new/worsening, or loss of bladder or bowel control, AND the agent does NOT address it with a physician or clinical provider (no warm transfer to nurse/provider, no commitment that a doctor will call back, no clinical triage escalation). Do not trigger if the agent appropriately escalates to clinical staff, or for routine expected post-procedure soreness already being managed.",
+      "active": true
+    },
+    {
+      "id": "phi_over_unverified_channel",
+      "label": "PHI risk — identity not verified",
+      "severity": "critical",
+      "description": "Trigger when the agent discloses protected health information (diagnosis, meds, procedures, account balances tied to care) before verifying patient identity (name + DOB or equivalent), or reads sensitive details to an unverified third party.",
+      "active": true
+    },
+    {
+      "id": "controlled_substance_request",
+      "label": "Controlled substance / early refill",
+      "severity": "critical",
+      "description": "Trigger when the caller requests opioids or other controlled substances, an early refill, lost/stolen prescription replacement, or pressures staff for pain meds outside protocol. Do not trigger for routine non-controlled refill requests handled normally.",
+      "active": true
+    },
+    {
+      "id": "insurance_auth_blocker",
+      "label": "Insurance / auth blocker",
+      "severity": "critical",
+      "description": "Trigger when care is blocked or delayed due to insurance denial, missing prior auth, inactive coverage, or the patient cannot proceed without auth resolution and no clear owned follow-up is set.",
+      "active": true
+    },
+    {
+      "id": "angry_escalation",
+      "label": "Angry / legal threat escalation",
+      "severity": "critical",
+      "description": "Trigger when the caller is highly escalated (yelling, threats to sue, board complaints, social media exposure, or demands a manager/supervisor) and the situation remains unresolved or poorly owned at call end.",
+      "active": true
+    }
+  ]
+}

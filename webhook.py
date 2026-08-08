@@ -1,44 +1,166 @@
 """
-Vonage recording webhook + health API.
+Vonage recording webhook + near-real-time VBC poller API.
 
-Run alongside Streamlit:
-  uvicorn webhook:app --host 0.0.0.0 --port 8080
+Run alongside Streamlit / Next.js:
+  VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
+
+Or run the poller alone:
+  python scripts/poll_vonage_recordings.py
 """
 
 from __future__ import annotations
 
+import logging
+import secrets
 import sys
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from datetime import datetime, timezone
-from typing import Any
-
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from src.config import get_settings
+from src.ops_actions import enqueue_upload, reanalyze_call
 from src.pipeline import enqueue_bytes
+from src.vonage_poller import (
+    autostart_from_env,
+    poller_status,
+    run_sync_cycle,
+    start_poller,
+    stop_poller,
+)
 
-app = FastAPI(title="RPS Call QA Webhooks", version="0.1.0")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("webhook")
+
+
+def _require_ops_token(request: Request) -> None:
+    expected = get_settings().ops_internal_token
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="OPS_INTERNAL_TOKEN is not configured on the poller",
+        )
+    provided = (request.headers.get("x-ops-token") or "").strip()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    status = autostart_from_env()
+    if status:
+        logger.info("VBC poller autostarted: %s", status)
+    yield
+    stop_poller()
+
+
+app = FastAPI(
+    title="RPS Call QA Webhooks",
+    version="0.3.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    return {"status": "ok", "poller": poller_status()}
+
+
+@app.get("/poller/status")
+def get_poller_status() -> dict[str, Any]:
+    return poller_status()
+
+
+@app.post("/poller/start")
+async def poller_start(request: Request) -> JSONResponse:
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    status = start_poller(
+        interval_seconds=body.get("interval_seconds"),
+        lookback_minutes=body.get("lookback_minutes"),
+        max_per_cycle=body.get("max_per_cycle"),
+    )
+    return JSONResponse({"status": "started", "poller": status})
+
+
+@app.post("/poller/stop")
+def poller_stop() -> JSONResponse:
+    return JSONResponse({"status": "stopped", "poller": stop_poller()})
+
+
+@app.post("/poller/sync-now")
+async def poller_sync_now(request: Request) -> JSONResponse:
+    """Trigger one incremental VBC sync (used by EventBridge / manual kick)."""
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        summary = run_sync_cycle(
+            lookback_minutes=body.get("lookback_minutes"),
+            max_per_cycle=body.get("max_per_cycle"),
+            process_now=bool(body.get("inline", False)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", "summary": summary})
+
+
+@app.post("/ops/reanalyze/{call_id}")
+async def ops_reanalyze(call_id: str, request: Request) -> JSONResponse:
+    """Admin ops: re-score a call from its stored transcript via Bedrock."""
+    _require_ops_token(request)
+    try:
+        result = reanalyze_call(call_id, send_alerts=True)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Reanalyze failed for %s", call_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
+
+
+@app.post("/ops/upload")
+async def ops_upload(
+    request: Request,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Admin ops: queue a manual recording upload for analysis."""
+    _require_ops_token(request)
+    data = await file.read()
+    try:
+        result = enqueue_upload(
+            data=data,
+            original_filename=file.filename or "upload.wav",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Upload enqueue failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
 
 
 @app.post("/webhooks/vonage/recording")
 async def vonage_recording(request: Request) -> JSONResponse:
     """
-    Accept Vonage recording callbacks.
+    Accept classic Vonage Voice API recording callbacks (if used).
 
-    Typical payload includes recording_url / recording_uuid fields.
-    Docs vary by Voice API version — we accept common shapes and download audio.
+    VBC company recordings are pull-based — use the poller for those.
     """
     settings = get_settings()
     try:
@@ -46,13 +168,11 @@ async def vonage_recording(request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
 
-    # Optional shared-secret header check
     if settings.vonage_signature_secret:
         provided = request.headers.get("x-vonage-signature") or request.headers.get(
             "Authorization"
         )
         if not provided or settings.vonage_signature_secret not in str(provided):
-            # Soft check — tighten once your Vonage signing method is confirmed
             pass
 
     recording_url = (
@@ -102,11 +222,67 @@ async def vonage_recording(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/webhooks/twilio/sms-status")
+async def twilio_sms_status(request: Request) -> JSONResponse:
+    """
+    Optional Twilio Message status callback stub.
+
+    Configure TWILIO_STATUS_CALLBACK_URL to point here if you want delivery
+    receipts logged. Does not require auth for v1 (Twilio posts form-encoded).
+    """
+    try:
+        form = await request.form()
+        payload = {str(k): str(v) for k, v in form.items()}
+    except Exception:
+        payload = {}
+    logger.info(
+        "Twilio SMS status: MessageSid=%s MessageStatus=%s To=%s ErrorCode=%s",
+        payload.get("MessageSid"),
+        payload.get("MessageStatus"),
+        payload.get("To"),
+        payload.get("ErrorCode"),
+    )
+    return JSONResponse({"status": "received"})
+
+
 @app.post("/webhooks/vonage/event")
 async def vonage_event(request: Request) -> JSONResponse:
-    """Catch-all for Vonage call events (answer, hangup, etc.)."""
+    """
+    Catch-all for Vonage / VIS call events.
+
+    On call-ended style events, kick an incremental VBC sync shortly after,
+    because company recordings usually appear a bit after hangup.
+    """
     try:
         payload = await request.json()
     except Exception:
         payload = {}
-    return JSONResponse({"status": "received", "keys": list(payload.keys())})
+
+    keys = list(payload.keys()) if isinstance(payload, dict) else []
+    event_type = str(
+        (payload or {}).get("type")
+        or (payload or {}).get("event")
+        or (payload or {}).get("state")
+        or ""
+    ).lower()
+
+    triggered = False
+    if any(
+        token in event_type
+        for token in ("end", "hangup", "complete", "completed", "finished")
+    ) or "ended" in str(payload).lower():
+        try:
+            # Small lookback is enough; recording may land within minutes.
+            run_sync_cycle(lookback_minutes=15, max_per_cycle=10, process_now=False)
+            triggered = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Event-triggered sync failed: %s", exc)
+
+    return JSONResponse(
+        {
+            "status": "received",
+            "keys": keys,
+            "event_type": event_type,
+            "sync_triggered": triggered,
+        }
+    )

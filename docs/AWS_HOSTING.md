@@ -1,123 +1,98 @@
 # Hosting RPS Call QA on AWS
 
-Target architecture for Relevium’s AWS account.
+Production target: **https://tool.releviumpain.com**
+
+- **Review UI:** Next.js (`web/`) on ECS Fargate behind an HTTPS ALB
+- **Ingest:** Vonage poller (`Dockerfile.poller` → `webhook.py`) as a private Fargate service
+- **Audio:** existing S3 bucket `rps-call-qa-recordings-013908492747`
+- **DNS:** Cloudflare zone `releviumpain.com` (not Route 53)
 
 ## Architecture
 
 ```
-                    ┌──────────────────────┐
-  Managers/Agents → │ CloudFront (optional)│
-                    └──────────┬───────────┘
-                               ▼
-                    ┌──────────────────────┐
-                    │ ALB (HTTPS + sticky) │
-                    └──────────┬───────────┘
-                               ▼
-                    ┌──────────────────────┐
-                    │ ECS Fargate service  │
-                    │  Streamlit (app.py)  │
-                    └──────────┬───────────┘
-           ┌───────────────────┼───────────────────┐
-           ▼                   ▼                   ▼
-    ┌─────────────┐    ┌──────────────┐    ┌────────────────┐
-    │ S3 recordings│    │ Secrets Mgr  │    │ EventBridge    │
-    │ (PHI audio)  │    │ env secrets  │    │ schedule       │
-    └─────────────┘    └──────────────┘    └───────┬────────┘
-                                                   ▼
-                                          ┌────────────────┐
-                                          │ ECS scheduled  │
-                                          │ sync task OR   │
-                                          │ Lambda runner  │
-                                          │ vonage sync    │
-                                          └────────────────┘
-                               ▲
-                               │ HTTPS
-                    ┌──────────┴───────────┐
-                    │ Vonage VBC APIs      │
-                    │ api.vonage.com       │
-                    │ Call Recording suite │
-                    └──────────────────────┘
+  Managers  →  Cloudflare (tool.releviumpain.com)
+                     ↓
+              ALB HTTPS (ACM)
+                     ↓
+              ECS Fargate  Next.js :3000
+                     
+  ECS Fargate poller  →  Vonage VBC → S3 → Transcribe → Bedrock → Firestore
 ```
 
-AI analysis uses **Amazon Transcribe → Amazon Bedrock (Claude)** inside your AWS account. Firestore can remain on Google temporarily for metadata, or move to DynamoDB later.
+## One-command deploy (from a machine with AWS + Docker + local secrets)
 
-## Vonage setup (required for pull sync)
+```bash
+# Requires .env + web/.env.local (OAuth, VBC, Firebase JSON) and AWS credentials
+chmod +x scripts/push_aws_secret.sh scripts/deploy_aws.sh
+AWS_PROFILE=claude_account ./scripts/deploy_aws.sh
+```
+
+First run may **exit after requesting an ACM certificate**. Add the printed DNS CNAMEs in Cloudflare (DNS-only), wait until ACM status is `ISSUED`, then re-run with:
+
+```bash
+CERT_ARN=arn:aws:acm:us-east-1:ACCOUNT:certificate/ID AWS_PROFILE=claude_account ./scripts/deploy_aws.sh
+```
+
+After deploy:
+
+1. Cloudflare: `CNAME tool → <LoadBalancerDNS>` (SSL mode Full/Strict if proxied)
+2. Google Cloud OAuth client: add  
+   `https://tool.releviumpain.com/api/auth/callback/google`  
+   and JS origin `https://tool.releviumpain.com`
+3. Open https://tool.releviumpain.com
+
+## CDK (manual)
+
+```bash
+cd infra/aws
+pip install -r requirements.txt
+npm i -g aws-cdk
+cdk bootstrap
+cdk deploy \
+  -c account=013908492747 \
+  -c region=us-east-1 \
+  -c domainName=tool.releviumpain.com \
+  -c recordingsBucketName=rps-call-qa-recordings-013908492747 \
+  -c certificateArn=arn:aws:acm:us-east-1:...:certificate/...
+```
+
+Secret name: `rps-call-qa/app` (JSON keys listed in `scripts/push_aws_secret.sh`).
+
+## Images
+
+| File | Role |
+|------|------|
+| [`web/Dockerfile`](../web/Dockerfile) | Next.js standalone |
+| [`Dockerfile.poller`](../Dockerfile.poller) | Uvicorn + VBC poller |
+| [`Dockerfile`](../Dockerfile) | Streamlit ops (optional / local) |
+
+## Vonage setup
 
 Admin portal login ≠ API credentials. Use the UC API Manager:
 
-1. Open [https://apimanager.uc.vonage.com](https://apimanager.uc.vonage.com) and sign in with your VBC admin/user.
-2. Create an **Application**.
-3. Generate **Production Keys** (Consumer Key / Consumer Secret).
-4. Subscribe the app to the **Call Recording** API suite (and any other suites you need).
-5. For production OAuth, prefer **Authorization Code** + refresh tokens. For a trusted server sync job, **Password grant** is simpler (use your VBC *user* password, username sent as `user@vbc.prod` — not the `*.api` developer login).
+1. Open [https://apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
+2. Create an Application → Production Keys
+3. Subscribe to **Call Recording** and **Reports** (same app / OAuth credentials)
+4. Put `VBC_*` into the Secrets Manager secret (via `push_aws_secret.sh`)
 
-Put into Secrets Manager / `.env`:
+Company recordings are pull-based. The poller service runs every 5 minutes and also
+syncs Reports **call-logs** (CDRs) into Firestore `call_logs` for missed / unrecorded
+visibility on the admin **Call ops** page (`/ops`).
 
-| Secret | Purpose |
-|--------|---------|
-| `VBC_CLIENT_ID` | Consumer Key |
-| `VBC_CLIENT_SECRET` | Consumer Secret |
-| `VBC_USERNAME` | VBC user (office admin) |
-| `VBC_PASSWORD` | That user’s password |
-| `VBC_ACCOUNT_ID` | `self` or numeric account id |
-
-Test:
+Manual CDR sync:
 
 ```bash
-python scripts/sync_vonage_recordings.py --test
-python scripts/sync_vonage_recordings.py --days 3 --max 20
+python scripts/sync_vonage_call_logs.py --test          # verify Reports API access
+python scripts/sync_vonage_call_logs.py --minutes 60
+python scripts/sync_vonage_call_logs.py --days 7 --max 500
 ```
 
-Or use **Upload & process → Sync recordings** in the Streamlit UI.
-
-API references:
-
-- [Call Recording overview](https://developer.vonage.com/en/vonage-business-cloud/call-recording/overview)
-- [Create access token](https://developer.vonage.com/en/vonage-business-cloud/getting-started/create-an-access-token)
-- List: `GET /t/vbc.prod/call_recording/api/accounts/{account_id}/company_call_recordings`
-- Download: `GET /t/vbc.prod/call_recording/api/audio/recording/{recording_id}`
-
-## AWS resources (minimum viable)
-
-| Resource | Use |
-|----------|-----|
-| ECR | Docker image for Streamlit |
-| ECS Fargate + ALB | Run `streamlit run app.py` (enable target-group stickiness) |
-| S3 bucket (private) | Call recordings + Transcribe input; app uses presigned URLs |
-| Bedrock | Claude model for QA + coaching (enable model access) |
-| Transcribe | Speech-to-text with speaker labels |
-| Secrets Manager | All `.env` secrets |
-| EventBridge rule | Hourly/daily: run `scripts/sync_vonage_recordings.py` |
-| IAM task role | `s3:*` on recordings bucket; `transcribe:*`; `bedrock:InvokeModel` / `Converse`; read secrets |
-
-Optional: ACM certificate + Route 53 for `callqa.releviumpain.com`.
-
-## Deploy steps (high level)
-
-```bash
-# 1. Build & push
-aws ecr create-repository --repository-name rps-call-qa --region us-west-2
-docker build -t rps-call-qa .
-docker tag rps-call-qa:latest <account>.dkr.ecr.us-west-2.amazonaws.com/rps-call-qa:latest
-aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.us-west-2.amazonaws.com
-docker push <account>.dkr.ecr.us-west-2.amazonaws.com/rps-call-qa:latest
-
-# 2. Create S3 bucket (block public access)
-aws s3 mb s3://rps-call-qa-recordings-<account> --region us-west-2
-
-# 3. Create secret with JSON of env vars, wire ECS task definition
-# 4. Create ALB + Fargate service (sticky sessions ON)
-# 5. Set APP_URL to https://your-alb-or-domain/
-# 6. Add Google OAuth redirect URI for that APP_URL
-```
-
-A starter CDK stack lives in [`infra/aws/`](../infra/aws/).
+Optional env: `VBC_POLLER_MAX_CALL_LOGS` (default `200`) caps CDRs per poller cycle.
 
 ## Security (PHI)
 
-- Private S3, encryption (SSE-S3 or KMS), no public ACLs
-- ALB HTTPS only; restrict SSO to `@releviumpain.com`
-- Secrets never in the image — inject from Secrets Manager
-- VPC: Fargate in private subnets with egress for Vonage + Bedrock + Transcribe (+ Firestore if still used)
-- Enable Bedrock model access for `BEDROCK_MODEL_ID` in the target region
-- Rotate any credentials pasted into chat history
+- Private S3, encryption, no public ACLs
+- ALB HTTPS only; Workspace SSO `@releviumpain.com`
+- Secrets never in the image — Secrets Manager injection
+- Fargate tasks in private subnets with NAT egress
+- Enable Bedrock model access for `BEDROCK_MODEL_ID` in `us-east-1`
