@@ -38,16 +38,36 @@ Optional env:
 | `GCHAT_WEBHOOK_URL` | empty | Google Chat incoming webhook for critical-flag + missed-call alerts |
 | `MISSED_ALERT_THRESHOLD` | `8` | Missed/non-answered CDRs in window before G Chat alert |
 | `MISSED_ALERT_WINDOW_MINUTES` | `30` | Rolling window for missed-call spike alerts |
+| `TWILIO_MISSED_SMS_ENABLED` | off | SMS the caller on missed **inbound** CDRs (needs Twilio creds) |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | empty | Twilio REST credentials + From number (E.164) |
+| `TWILIO_MISSED_SMS_COOLDOWN_MINUTES` | `90` | Per-number dedup window (`alert_state`) |
+| `TWILIO_MISSED_SMS_MAX_AGE_MINUTES` | `120` | Ignore older CDRs (avoids SMS on backfill) |
 
 Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
 so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
 the **Reports API** suite in [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
 (same OAuth credentials as Call Recording).
 
+**SLA / ASA note:** VBC Reports CDRs expose direction, result, talk `length`, and
+start/end — **not** ring time, queue wait, or answered-at. Classic ASA and
+service level (e.g. 80/20) are blocked until telephony provides wait timing.
+`/ops` shows inbound offered/answered/abandon proxies plus an optional
+AI-estimated speed-to-answer from matched QA (`time_to_answer_seconds`), labeled
+as a proxy — never as telephony ASA. Sync persists nullable
+`ring_seconds` / `wait_seconds` / `queue_seconds` / `answered_at` stubs for when
+Vonage or an ACD adds those fields.
+
 ```bash
 python scripts/sync_vonage_call_logs.py --test
 python scripts/sync_vonage_call_logs.py --minutes 60
 ```
+
+**Missed-call patient SMS (Twilio):** after each CDR upsert, the poller may text
+the caller’s `from_number` when the log is **inbound** and the result is not
+answered/connected (missed, abandoned, voicemail, no-answer, busy, etc.).
+Off by default (`TWILIO_MISSED_SMS_ENABLED=0`). Dedup uses `alert_state` keyed by
+normalized phone. Copy is configurable via `TWILIO_MISSED_SMS_MESSAGE` (optional
+`{main_line}`). Optional delivery receipts: `POST /webhooks/twilio/sms-status`.
 
 **Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
 

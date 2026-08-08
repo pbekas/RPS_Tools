@@ -53,6 +53,7 @@ def sync_call_logs(
         "matched": 0,
         "missed": 0,
         "unrecorded": 0,
+        "missed_sms_sent": 0,
         "errors": [],
         "window_start": start_gte.isoformat(),
         "window_end": start_lte.isoformat(),
@@ -98,6 +99,16 @@ def sync_call_logs(
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append({"log_id": log.log_id, "error": str(exc)})
             logger.exception("Failed to upsert call log %s", log.log_id)
+            continue
+
+        # Best-effort patient SMS — never fails the CDR sync cycle.
+        try:
+            from src.twilio_sms import maybe_notify_missed_inbound_call
+
+            if maybe_notify_missed_inbound_call(log):
+                summary["missed_sms_sent"] += 1
+        except Exception:
+            logger.exception("Missed-call SMS hook failed for %s", log.log_id)
 
     _maybe_alert_missed_spike(summary)
     return summary
@@ -166,6 +177,8 @@ def _call_log_payload(
     log: VBCCallLog,
     matched_call_id: str | None,
 ) -> dict[str, Any]:
+    # Timing stubs stay null until VBC/ACD exposes ring/queue wait.
+    # Do not invent ASA from QA time_to_answer_seconds.
     return {
         "id": log.log_id,
         "direction": log.direction,
@@ -188,6 +201,10 @@ def _call_log_payload(
         "is_missed": log.is_missed,
         "is_unrecorded": log.is_unrecorded,
         "matched_call_id": matched_call_id,
+        "ring_seconds": log.ring_seconds,
+        "wait_seconds": log.wait_seconds,
+        "queue_seconds": log.queue_seconds,
+        "answered_at": log.answered_at,
         "raw": log.raw,
     }
 

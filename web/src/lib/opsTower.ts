@@ -6,6 +6,9 @@ import { toMillis } from "@/lib/format";
 
 export const OPS_TIMEZONE = "America/Los_Angeles";
 
+/** Default service-level threshold (seconds) once telephony wait exists. */
+export const DEFAULT_SERVICE_LEVEL_SECONDS = 20;
+
 export type OutcomeBucket =
   | "answered"
   | "abandoned"
@@ -40,6 +43,22 @@ export type OutcomeRow = {
   share: number;
 };
 
+export type SlaProxies = {
+  /** True when any CDR has telephony ring/wait/queue (enables real ASA). */
+  trueAsaAvailable: boolean;
+  telephonyWaitSampleSize: number;
+  /** Average telephony wait/ring when present; null if unavailable. */
+  asaSeconds: number | null;
+  /** % of inbound answered with wait <= threshold; null if no wait data. */
+  serviceLevelRate: number | null;
+  serviceLevelThresholdSeconds: number;
+  /** AI-estimated speed-to-answer from matched QA calls only. */
+  qaSpeedToAnswerSeconds: number | null;
+  qaSpeedToAnswerSampleSize: number;
+  qaSpeedToAnswerWithin20Rate: number | null;
+  qaSpeedToAnswerWithin30Rate: number | null;
+};
+
 export type OpsTower = {
   timezone: string;
   total: number;
@@ -47,16 +66,31 @@ export type OpsTower = {
   missed: number;
   answerRate: number;
   missedRate: number;
-  inboundTotal: number;
+  /** Inbound offered (contact-center framing). */
+  inboundOffered: number;
   inboundAnswered: number;
+  inboundAbandoned: number;
+  inboundNoAnswer: number;
+  inboundVoicemail: number;
+  /** Answered / offered inbound. */
   inboundAnswerRate: number;
+  /** Abandoned / offered inbound. */
+  inboundAbandonRate: number;
+  /** Non-answered share of offered inbound (abandon + no-answer + busy + vm + other). */
+  inboundMissedRate: number;
+  /** @deprecated alias — use inboundOffered */
+  inboundTotal: number;
   abandonCount: number;
+  /** Overall abandon % (all directions); prefer inboundAbandonRate for CC SLAs. */
   abandonRate: number;
+  /** Avg talk seconds for answered inbound (talk time, not full AHT). */
+  inboundAvgTalkSeconds: number;
   withQa: number;
   qaCoverage: number;
   qaCoverageOfAnswered: number;
   unrecorded: number;
   unrecordedRate: number;
+  sla: SlaProxies;
   byHour: TrendPoint[];
   byDow: TrendPoint[];
   byDay: TrendPoint[];
@@ -128,6 +162,22 @@ export function classifyOutcome(log: CallLogDoc): OutcomeBucket {
   return "answered";
 }
 
+export function telephonyWaitSeconds(log: CallLogDoc): number | null {
+  for (const value of [log.wait_seconds, log.queue_seconds, log.ring_seconds]) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+  }
+  if (log.answered_at && log.start) {
+    const startMs = toMillis(log.start);
+    const answeredMs = toMillis(log.answered_at);
+    if (startMs && answeredMs && answeredMs >= startMs) {
+      return Math.round((answeredMs - startMs) / 1000);
+    }
+  }
+  return null;
+}
+
 function emptyTrend(key: string, label: string): TrendPoint {
   return {
     key,
@@ -154,11 +204,21 @@ function bumpTrend(point: TrendPoint, log: CallLogDoc, answered: boolean) {
   point.talkSeconds += Math.max(0, Number(log.length_seconds || 0));
 }
 
+export type BuildOpsTowerOpts = {
+  timeZone?: string;
+  /** QA call_id → AI-estimated time_to_answer_seconds (matched CDRs only). */
+  qaAnswerSecondsByCallId?: Record<string, number | null | undefined>;
+  serviceLevelThresholdSeconds?: number;
+};
+
 export function buildOpsTower(
   logs: CallLogDoc[],
-  opts?: { timeZone?: string }
+  opts?: BuildOpsTowerOpts
 ): OpsTower {
   const timeZone = opts?.timeZone || OPS_TIMEZONE;
+  const qaMap = opts?.qaAnswerSecondsByCallId || {};
+  const slThreshold =
+    opts?.serviceLevelThresholdSeconds ?? DEFAULT_SERVICE_LEVEL_SECONDS;
 
   const byHour = new Map<string, TrendPoint>();
   for (let h = 0; h < 24; h += 1) {
@@ -185,11 +245,26 @@ export function buildOpsTower(
   let total = 0;
   let answered = 0;
   let missed = 0;
-  let inboundTotal = 0;
+  let inboundOffered = 0;
   let inboundAnswered = 0;
+  let inboundAbandoned = 0;
+  let inboundNoAnswer = 0;
+  let inboundVoicemail = 0;
   let abandonCount = 0;
   let withQa = 0;
   let unrecorded = 0;
+  let inboundTalkSum = 0;
+  let inboundTalkN = 0;
+
+  let telephonyWaitSum = 0;
+  let telephonyWaitN = 0;
+  let telephonySlOk = 0;
+  let telephonySlN = 0;
+
+  let qaSpeedSum = 0;
+  let qaSpeedN = 0;
+  let qaWithin20 = 0;
+  let qaWithin30 = 0;
 
   for (const log of logs) {
     total += 1;
@@ -220,9 +295,38 @@ export function buildOpsTower(
     dir.talkSeconds += Math.max(0, Number(log.length_seconds || 0));
     byDirection.set(dirKey, dir);
 
-    if (direction.toLowerCase() === "inbound") {
-      inboundTotal += 1;
-      if (isAnswered) inboundAnswered += 1;
+    const isInbound = direction.toLowerCase() === "inbound";
+    if (isInbound) {
+      inboundOffered += 1;
+      if (isAnswered) {
+        inboundAnswered += 1;
+        const len = Math.max(0, Number(log.length_seconds || 0));
+        if (len > 0) {
+          inboundTalkSum += len;
+          inboundTalkN += 1;
+        }
+      }
+      if (outcome === "abandoned") inboundAbandoned += 1;
+      if (outcome === "no_answer") inboundNoAnswer += 1;
+      if (outcome === "voicemail") inboundVoicemail += 1;
+
+      const wait = telephonyWaitSeconds(log);
+      if (wait !== null && isAnswered) {
+        telephonyWaitSum += wait;
+        telephonyWaitN += 1;
+        telephonySlN += 1;
+        if (wait <= slThreshold) telephonySlOk += 1;
+      }
+    }
+
+    if (log.matched_call_id) {
+      const qaSec = qaMap[log.matched_call_id];
+      if (typeof qaSec === "number" && Number.isFinite(qaSec) && qaSec >= 0) {
+        qaSpeedSum += qaSec;
+        qaSpeedN += 1;
+        if (qaSec <= 20) qaWithin20 += 1;
+        if (qaSec <= 30) qaWithin30 += 1;
+      }
     }
 
     const ms = toMillis(log.start);
@@ -259,6 +363,8 @@ export function buildOpsTower(
     }))
     .filter((r) => r.count > 0);
 
+  const trueAsaAvailable = telephonyWaitN > 0;
+
   return {
     timezone: timeZone,
     total,
@@ -266,16 +372,41 @@ export function buildOpsTower(
     missed,
     answerRate: total ? answered / total : 0,
     missedRate: total ? missed / total : 0,
-    inboundTotal,
+    inboundOffered,
     inboundAnswered,
-    inboundAnswerRate: inboundTotal ? inboundAnswered / inboundTotal : 0,
+    inboundAbandoned,
+    inboundNoAnswer,
+    inboundVoicemail,
+    inboundAnswerRate: inboundOffered ? inboundAnswered / inboundOffered : 0,
+    inboundAbandonRate: inboundOffered
+      ? inboundAbandoned / inboundOffered
+      : 0,
+    inboundMissedRate: inboundOffered
+      ? (inboundOffered - inboundAnswered) / inboundOffered
+      : 0,
+    inboundTotal: inboundOffered,
     abandonCount,
     abandonRate: total ? abandonCount / total : 0,
+    inboundAvgTalkSeconds: inboundTalkN ? inboundTalkSum / inboundTalkN : 0,
     withQa,
     qaCoverage: total ? withQa / total : 0,
     qaCoverageOfAnswered: answered ? withQa / answered : 0,
     unrecorded,
     unrecordedRate: total ? unrecorded / total : 0,
+    sla: {
+      trueAsaAvailable,
+      telephonyWaitSampleSize: telephonyWaitN,
+      asaSeconds: trueAsaAvailable ? telephonyWaitSum / telephonyWaitN : null,
+      serviceLevelRate:
+        trueAsaAvailable && telephonySlN
+          ? telephonySlOk / telephonySlN
+          : null,
+      serviceLevelThresholdSeconds: slThreshold,
+      qaSpeedToAnswerSeconds: qaSpeedN ? qaSpeedSum / qaSpeedN : null,
+      qaSpeedToAnswerSampleSize: qaSpeedN,
+      qaSpeedToAnswerWithin20Rate: qaSpeedN ? qaWithin20 / qaSpeedN : null,
+      qaSpeedToAnswerWithin30Rate: qaSpeedN ? qaWithin30 / qaSpeedN : null,
+    },
     byHour: [...byHour.values()].map(finalizeTrend),
     byDow: DOW_ORDER.map((d) => finalizeTrend(byDow.get(d) || emptyTrend(d, d))),
     byDay: [...byDay.entries()]

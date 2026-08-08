@@ -332,6 +332,9 @@ class RpsCallQaStack(Stack):
                 "ALERTS_ENABLED": "1",
                 "MISSED_ALERT_WINDOW_MINUTES": "30",
                 "MISSED_ALERT_THRESHOLD": "8",
+                # Missed-inbound patient SMS stays off until secret flag is enabled.
+                "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": "90",
+                "TWILIO_MISSED_SMS_MAX_AGE_MINUTES": "120",
                 # Defaults keep Firestore primary until shadow validation.
                 "DB_BACKEND": db_backend,
                 "DB_DUAL_WRITE": "1" if db_dual_write else "0",
@@ -360,6 +363,27 @@ class RpsCallQaStack(Stack):
                 ),
                 "OPS_INTERNAL_TOKEN": ecs.Secret.from_secrets_manager(
                     app_secret, "OPS_INTERNAL_TOKEN"
+                ),
+                "TWILIO_ACCOUNT_SID": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_ACCOUNT_SID"
+                ),
+                "TWILIO_AUTH_TOKEN": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_AUTH_TOKEN"
+                ),
+                "TWILIO_FROM_NUMBER": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_FROM_NUMBER"
+                ),
+                "TWILIO_MISSED_SMS_ENABLED": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_MISSED_SMS_ENABLED"
+                ),
+                "TWILIO_MISSED_SMS_MESSAGE": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_MISSED_SMS_MESSAGE"
+                ),
+                "TWILIO_MISSED_SMS_MAIN_LINE": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_MISSED_SMS_MAIN_LINE"
+                ),
+                "TWILIO_STATUS_CALLBACK_URL": ecs.Secret.from_secrets_manager(
+                    app_secret, "TWILIO_STATUS_CALLBACK_URL"
                 ),
                 **database_secrets,
             },

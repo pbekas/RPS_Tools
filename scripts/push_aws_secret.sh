@@ -116,6 +116,21 @@ payload = {
     "MISSED_ALERT_WINDOW_MINUTES": os.environ.get("MISSED_ALERT_WINDOW_MINUTES") or "30",
     "MISSED_ALERT_THRESHOLD": os.environ.get("MISSED_ALERT_THRESHOLD") or "8",
     "OPS_INTERNAL_TOKEN": os.environ.get("OPS_INTERNAL_TOKEN") or "",
+    "TWILIO_ACCOUNT_SID": os.environ.get("TWILIO_ACCOUNT_SID") or "",
+    "TWILIO_AUTH_TOKEN": os.environ.get("TWILIO_AUTH_TOKEN") or "",
+    "TWILIO_FROM_NUMBER": os.environ.get("TWILIO_FROM_NUMBER") or "",
+    "TWILIO_MISSED_SMS_ENABLED": os.environ.get("TWILIO_MISSED_SMS_ENABLED") or "0",
+    "TWILIO_MISSED_SMS_MESSAGE": os.environ.get("TWILIO_MISSED_SMS_MESSAGE") or "",
+    "TWILIO_MISSED_SMS_MAIN_LINE": os.environ.get("TWILIO_MISSED_SMS_MAIN_LINE") or "",
+    "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": os.environ.get(
+        "TWILIO_MISSED_SMS_COOLDOWN_MINUTES"
+    )
+    or "90",
+    "TWILIO_MISSED_SMS_MAX_AGE_MINUTES": os.environ.get(
+        "TWILIO_MISSED_SMS_MAX_AGE_MINUTES"
+    )
+    or "120",
+    "TWILIO_STATUS_CALLBACK_URL": os.environ.get("TWILIO_STATUS_CALLBACK_URL") or "",
 }
 print(json.dumps(payload))
 PY

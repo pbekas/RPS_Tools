@@ -39,6 +39,12 @@ class VBCCallLog:
     custom_tag: str | None
     in_network: bool | None
     international: bool | None
+    # Timing stubs — VBC Reports OpenAPI does not document ring/queue wait today.
+    # When Vonage (or ACD) adds them, extract via _extract_timing_seconds / answered_at.
+    ring_seconds: int | None
+    wait_seconds: int | None
+    queue_seconds: int | None
+    answered_at: datetime | None
     raw: dict[str, Any]
 
     @property
@@ -54,6 +60,16 @@ class VBCCallLog:
     @property
     def is_unrecorded(self) -> bool:
         return self.recorded is False
+
+    @property
+    def has_telephony_wait(self) -> bool:
+        """True when CDR includes ring/queue wait usable for ASA / service level."""
+        return (
+            self.wait_seconds is not None
+            or self.queue_seconds is not None
+            or self.ring_seconds is not None
+            or self.answered_at is not None
+        )
 
 
 class VonageReportsClient:
@@ -146,6 +162,49 @@ def _embedded_call_logs(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _parse_call_log(item: dict[str, Any]) -> VBCCallLog:
+    # TODO(telephony-asa): VBC Reports call-logs currently expose talk `length` +
+    # start/end only — not ring/queue wait. Persist stubs when/if raw keys appear
+    # (or when migrating to VCC interaction reports with Queue Duration).
+    ring_seconds = _extract_timing_seconds(
+        item,
+        (
+            "ring_seconds",
+            "ring",
+            "ring_time",
+            "ring_duration",
+            "ringing_duration",
+            "total_ring_duration",
+            "total_ring_seconds",
+        ),
+    )
+    wait_seconds = _extract_timing_seconds(
+        item,
+        (
+            "wait_seconds",
+            "wait",
+            "wait_time",
+            "wait_duration",
+            "speed_of_answer",
+            "asa",
+        ),
+    )
+    queue_seconds = _extract_timing_seconds(
+        item,
+        (
+            "queue_seconds",
+            "queue",
+            "queue_time",
+            "queue_duration",
+            "queue_wait",
+            "time_in_queue",
+        ),
+    )
+    answered_at = _parse_reports_dt(
+        item.get("answered_at")
+        or item.get("answer_time")
+        or item.get("answered_time")
+        or item.get("connect_time")
+    )
     return VBCCallLog(
         log_id=str(item.get("id") or "").strip(),
         direction=_str_or_none(item.get("direction")),
@@ -165,8 +224,24 @@ def _parse_call_log(item: dict[str, Any]) -> VBCCallLog:
         custom_tag=_str_or_none(item.get("custom_tag")),
         in_network=_bool_or_none(item.get("in_network")),
         international=_bool_or_none(item.get("international")),
+        ring_seconds=ring_seconds,
+        wait_seconds=wait_seconds,
+        queue_seconds=queue_seconds,
+        answered_at=answered_at,
         raw=item,
     )
+
+
+def _extract_timing_seconds(item: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+    """Pull the first present numeric timing field; None if absent (not zero-fill)."""
+    for key in keys:
+        if key not in item or item.get(key) is None or item.get(key) == "":
+            continue
+        try:
+            return max(0, int(round(float(item[key]))))
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _str_or_none(value: Any) -> str | None:

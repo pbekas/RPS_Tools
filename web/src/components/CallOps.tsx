@@ -28,6 +28,8 @@ type Props = {
     needsHelp: CoachingQueueEntry[];
     rockStars: CoachingQueueEntry[];
   };
+  /** QA call_id → AI-estimated time_to_answer_seconds for SLA proxy. */
+  qaAnswerSecondsByCallId?: Record<string, number | null>;
 };
 
 function openReviewSample(ids: string[]) {
@@ -47,6 +49,7 @@ export function CallOps({
   scorecardRows,
   scorecardTeam,
   coachingQueue,
+  qaAnswerSecondsByCallId,
 }: Props) {
   const [q, setQ] = useState("");
   const [missedOnly, setMissedOnly] = useState(false);
@@ -140,7 +143,13 @@ export function CallOps({
   }, [logs, direction]);
 
   const stats = useMemo(() => summarizeCallLogs(dashboardLogs), [dashboardLogs]);
-  const tower = useMemo(() => buildOpsTower(logs), [logs]);
+  const tower = useMemo(
+    () =>
+      buildOpsTower(logs, {
+        qaAnswerSecondsByCallId,
+      }),
+    [logs, qaAnswerSecondsByCallId]
+  );
   const byPerson = useMemo(() => talkTimeByPerson(dashboardLogs), [dashboardLogs]);
   const byResult = useMemo(() => resultBreakdown(dashboardLogs), [dashboardLogs]);
   const missedAbandoned = useMemo(
@@ -213,7 +222,8 @@ export function CallOps({
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
             Control tower, agent scorecard, coaching queue, and CDR detail for the
             last {days} days ({logs.length} CDRs loaded). Talk duration comes from
-            Vonage Reports (not ring/ASA wait).
+            Vonage Reports — true ASA needs ring/queue wait (not available on VBC
+            CDRs yet; see SLA proxies).
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">

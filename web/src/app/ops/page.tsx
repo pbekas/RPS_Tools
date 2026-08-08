@@ -28,7 +28,7 @@ export default async function OpsPage({ searchParams }: Props) {
 
   try {
     const [logs, callsRaw, users] = await Promise.all([
-      listCallLogs({ limit: 2000, days }),
+      listCallLogs({ limit: 15000, days }),
       listCalls({ status: "complete", limit: 800, sinceMs }),
       listUsers(),
     ]);
@@ -38,6 +38,13 @@ export default async function OpsPage({ searchParams }: Props) {
       rows: scorecard.rows,
       calls,
     });
+    const qaAnswerSecondsByCallId: Record<string, number | null> = {};
+    for (const call of calls) {
+      const sec = call.time_to_answer_seconds;
+      if (typeof sec === "number" && Number.isFinite(sec) && sec >= 0) {
+        qaAnswerSecondsByCallId[call.id] = sec;
+      }
+    }
 
     return (
       <CallOps
@@ -46,6 +53,7 @@ export default async function OpsPage({ searchParams }: Props) {
         scorecardRows={scorecard.rows}
         scorecardTeam={scorecard.team}
         coachingQueue={coachingQueue}
+        qaAnswerSecondsByCallId={qaAnswerSecondsByCallId}
       />
     );
   } catch (err) {

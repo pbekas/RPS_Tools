@@ -22,6 +22,14 @@ export type CallLogDoc = {
   is_missed?: boolean;
   is_unrecorded?: boolean;
   matched_call_id?: string | null;
+  /** Telephony ring time (seconds). Null until Vonage/ACD exposes it. */
+  ring_seconds?: number | null;
+  /** Telephony wait / speed-of-answer (seconds). Null until available. */
+  wait_seconds?: number | null;
+  /** Queue wait (seconds). Null until available. */
+  queue_seconds?: number | null;
+  answered_at?: string | null;
+  has_telephony_wait?: boolean | null;
   synced_at?: string | null;
 };
 

@@ -91,6 +91,11 @@ _CALL_LOG_COLUMN_MAP = {
     "is_missed": "is_missed",
     "is_unrecorded": "is_unrecorded",
     "matched_call_id": "matched_call_id",
+    # Telephony wait stubs (null until Vonage/ACD exposes ring/queue timing).
+    "ring_seconds": "ring_seconds",
+    "wait_seconds": "wait_seconds",
+    "queue_seconds": "queue_seconds",
+    "answered_at": "answered_at",
 }
 _CONFIG_KINDS = {"qa_rules", "call_topics", "call_flags"}
 _CONFIG_HELPER_KEYS = {

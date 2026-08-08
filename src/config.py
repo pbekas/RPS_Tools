@@ -51,6 +51,15 @@ class Settings:
     missed_alert_threshold: int
     ops_internal_token: str
     poller_internal_url: str
+    twilio_account_sid: str
+    twilio_auth_token: str
+    twilio_from_number: str
+    twilio_missed_sms_enabled: bool
+    twilio_missed_sms_message: str
+    twilio_missed_sms_main_line: str
+    twilio_missed_sms_cooldown_minutes: int
+    twilio_missed_sms_max_age_minutes: int
+    twilio_status_callback_url: str
 
     def __init__(self) -> None:
         self.database_backend = (
@@ -129,6 +138,26 @@ class Settings:
         self.poller_internal_url = os.getenv(
             "POLLER_INTERNAL_URL", "http://127.0.0.1:8080"
         ).strip().rstrip("/")
+        # Twilio — optional SMS to caller on missed inbound CDRs (poller / CDR sync)
+        self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+        self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+        self.twilio_from_number = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+        self.twilio_missed_sms_enabled = os.getenv(
+            "TWILIO_MISSED_SMS_ENABLED", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self.twilio_missed_sms_message = os.getenv("TWILIO_MISSED_SMS_MESSAGE", "").strip()
+        self.twilio_missed_sms_main_line = os.getenv(
+            "TWILIO_MISSED_SMS_MAIN_LINE", ""
+        ).strip()
+        self.twilio_missed_sms_cooldown_minutes = int(
+            os.getenv("TWILIO_MISSED_SMS_COOLDOWN_MINUTES", "90")
+        )
+        self.twilio_missed_sms_max_age_minutes = int(
+            os.getenv("TWILIO_MISSED_SMS_MAX_AGE_MINUTES", "120")
+        )
+        self.twilio_status_callback_url = os.getenv(
+            "TWILIO_STATUS_CALLBACK_URL", ""
+        ).strip()
 
     @staticmethod
     def _parse_service_account(raw: str) -> dict[str, Any] | None:
@@ -182,6 +211,14 @@ class Settings:
     @property
     def s3_configured(self) -> bool:
         return bool(self.s3_bucket)
+
+    @property
+    def twilio_configured(self) -> bool:
+        return bool(
+            self.twilio_account_sid
+            and self.twilio_auth_token
+            and self.twilio_from_number
+        )
 
 
 @lru_cache(maxsize=1)

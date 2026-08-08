@@ -128,6 +128,11 @@
         "is_missed": "boolean — derived from result",
         "is_unrecorded": "boolean — recorded === false",
         "matched_call_id": "string | null — Firestore calls doc id when matched",
+        "ring_seconds": "number | null — stub; VBC Reports does not expose ring time today",
+        "wait_seconds": "number | null — stub for telephony ASA / speed of answer",
+        "queue_seconds": "number | null — stub for queue wait",
+        "answered_at": "timestamp | null — stub when answer timestamp is available",
+        "raw": "object — full Vonage call-log payload",
         "synced_at": "timestamp",
         "created_at": "timestamp",
         "updated_at": "timestamp"

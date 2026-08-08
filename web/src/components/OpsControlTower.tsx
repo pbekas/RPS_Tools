@@ -1,6 +1,7 @@
 "use client";
 
 import type { OpsTower, TrendPoint } from "@/lib/opsTower";
+import { formatDuration } from "@/lib/format";
 
 type Props = {
   tower: OpsTower;
@@ -143,6 +144,7 @@ export function OpsControlTower({
   });
   const showDow = days >= 3;
   const showDaily = days >= 2 && tower.byDay.length > 1;
+  const { sla } = tower;
 
   const outcomeTone = (bucket: string) => {
     if (bucket === "answered") return "bg-[color:var(--pass)]";
@@ -159,7 +161,7 @@ export function OpsControlTower({
         <div>
           <h2 className="font-display text-xl text-ink">Ops control tower</h2>
           <p className="text-xs text-ink-soft">
-            Access trends, direction mix, abandon taxonomy, and QA coverage ·{" "}
+            Inbound offered framing, SLA proxies, direction mix, and QA coverage ·{" "}
             {tower.timezone} · last {days} days
           </p>
         </div>
@@ -167,34 +169,153 @@ export function OpsControlTower({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi
-          label="Inbound answer %"
+          label="Inbound offered"
+          value={String(tower.inboundOffered)}
+          hint="Contact-center offered calls"
+        />
+        <Kpi
+          label="Answered share"
           value={pct(tower.inboundAnswerRate)}
-          hint={`${tower.inboundAnswered}/${tower.inboundTotal} inbound`}
+          hint={`${tower.inboundAnswered}/${tower.inboundOffered} inbound answered`}
           tone="pass"
         />
         <Kpi
-          label="Missed %"
-          value={pct(tower.missedRate)}
-          hint={`${tower.missed}/${tower.total} non-answered`}
-          tone={tower.missedRate > 0.1 ? "fail" : "warn"}
+          label="Inbound abandon %"
+          value={pct(tower.inboundAbandonRate)}
+          hint={`${tower.inboundAbandoned} abandoned of offered`}
+          tone={tower.inboundAbandonRate > 0.08 ? "fail" : "warn"}
         />
         <Kpi
-          label="Abandon %"
-          value={pct(tower.abandonRate)}
-          hint={`${tower.abandonCount} abandoned`}
-          tone={tower.abandonRate > 0.08 ? "fail" : "warn"}
+          label="Inbound no-answer %"
+          value={
+            tower.inboundOffered
+              ? pct(tower.inboundNoAnswer / tower.inboundOffered)
+              : "—"
+          }
+          hint={`${tower.inboundNoAnswer} no-answer / missed`}
+          tone="warn"
         />
         <Kpi
-          label="QA coverage"
-          value={pct(tower.qaCoverage)}
-          hint={`${tower.withQa}/${tower.total} CDRs matched to QA`}
+          label="Avg talk (in)"
+          value={
+            tower.inboundAvgTalkSeconds
+              ? formatDuration(Math.round(tower.inboundAvgTalkSeconds))
+              : "—"
+          }
+          hint="Answered inbound talk time · not full AHT"
         />
-        <Kpi
-          label="QA of answered"
-          value={pct(tower.qaCoverageOfAnswered)}
-          hint="Answered CDRs with a scored recording"
-          tone="pass"
-        />
+      </div>
+
+      <div className="rounded-xl border border-line bg-white/80 p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="font-display text-lg text-ink">
+              {sla.trueAsaAvailable ? "Service level & ASA" : "SLA proxies"}
+            </h3>
+            <p className="mt-0.5 max-w-3xl text-xs text-ink-soft">
+              {sla.trueAsaAvailable
+                ? `Telephony wait present on ${sla.telephonyWaitSampleSize} answered inbound CDRs. ASA and ${sla.serviceLevelThresholdSeconds}s service level use ring/queue wait from Vonage.`
+                : "True ASA and classic service level need ring/queue wait from Vonage or ACD. VBC Reports CDRs only expose talk length + start/end today — these are proxies, not telephony ASA."}
+            </p>
+          </div>
+        </div>
+
+        {sla.trueAsaAvailable ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              label="ASA"
+              value={
+                sla.asaSeconds != null
+                  ? formatDuration(Math.round(sla.asaSeconds))
+                  : "—"
+              }
+              hint={`Avg wait · n=${sla.telephonyWaitSampleSize}`}
+              tone="pass"
+            />
+            <Kpi
+              label={`Service level (${sla.serviceLevelThresholdSeconds}s)`}
+              value={
+                sla.serviceLevelRate != null ? pct(sla.serviceLevelRate) : "—"
+              }
+              hint="% answered inbound within threshold"
+              tone="pass"
+            />
+            <Kpi
+              label="QA speed proxy"
+              value={
+                sla.qaSpeedToAnswerSeconds != null
+                  ? formatDuration(Math.round(sla.qaSpeedToAnswerSeconds))
+                  : "—"
+              }
+              hint="AI-estimated · not telephony ASA"
+            />
+            <Kpi
+              label="QA coverage"
+              value={pct(tower.qaCoverage)}
+              hint={`${tower.withQa}/${tower.total} CDRs matched to QA`}
+            />
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              label="ASA (telephony)"
+              value="Blocked"
+              hint="No ring/queue wait on CDRs"
+              tone="warn"
+            />
+            <Kpi
+              label="Speed-to-answer proxy"
+              value={
+                sla.qaSpeedToAnswerSeconds != null
+                  ? formatDuration(Math.round(sla.qaSpeedToAnswerSeconds))
+                  : "—"
+              }
+              hint={
+                sla.qaSpeedToAnswerSampleSize
+                  ? `AI-estimated / not telephony ASA · n=${sla.qaSpeedToAnswerSampleSize} matched QA`
+                  : "Needs matched_call_id + QA time_to_answer"
+              }
+            />
+            <Kpi
+              label="Proxy ≤20s"
+              value={
+                sla.qaSpeedToAnswerWithin20Rate != null
+                  ? pct(sla.qaSpeedToAnswerWithin20Rate)
+                  : "—"
+              }
+              hint="Share of QA estimates within 20s"
+            />
+            <Kpi
+              label="Proxy ≤30s"
+              value={
+                sla.qaSpeedToAnswerWithin30Rate != null
+                  ? pct(sla.qaSpeedToAnswerWithin30Rate)
+                  : "—"
+              }
+              hint="Share of QA estimates within 30s"
+            />
+          </div>
+        )}
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Kpi
+            label="QA of answered"
+            value={pct(tower.qaCoverageOfAnswered)}
+            hint="Answered CDRs with a scored recording"
+            tone="pass"
+          />
+          <Kpi
+            label="Missed % (all)"
+            value={pct(tower.missedRate)}
+            hint={`${tower.missed}/${tower.total} non-answered`}
+            tone={tower.missedRate > 0.1 ? "fail" : "warn"}
+          />
+          <Kpi
+            label="QA coverage"
+            value={pct(tower.qaCoverage)}
+            hint={`${tower.withQa}/${tower.total} CDRs matched`}
+          />
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

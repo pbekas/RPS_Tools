@@ -222,6 +222,29 @@ async def vonage_recording(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/webhooks/twilio/sms-status")
+async def twilio_sms_status(request: Request) -> JSONResponse:
+    """
+    Optional Twilio Message status callback stub.
+
+    Configure TWILIO_STATUS_CALLBACK_URL to point here if you want delivery
+    receipts logged. Does not require auth for v1 (Twilio posts form-encoded).
+    """
+    try:
+        form = await request.form()
+        payload = {str(k): str(v) for k, v in form.items()}
+    except Exception:
+        payload = {}
+    logger.info(
+        "Twilio SMS status: MessageSid=%s MessageStatus=%s To=%s ErrorCode=%s",
+        payload.get("MessageSid"),
+        payload.get("MessageStatus"),
+        payload.get("To"),
+        payload.get("ErrorCode"),
+    )
+    return JSONResponse({"status": "received"})
+
+
 @app.post("/webhooks/vonage/event")
 async def vonage_event(request: Request) -> JSONResponse:
     """
