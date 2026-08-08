@@ -49,6 +49,8 @@ class Settings:
     alerts_enabled: bool
     missed_alert_window_minutes: int
     missed_alert_threshold: int
+    ops_internal_token: str
+    poller_internal_url: str
 
     def __init__(self) -> None:
         self.database_backend = (
@@ -122,6 +124,11 @@ class Settings:
             os.getenv("MISSED_ALERT_WINDOW_MINUTES", "30")
         )
         self.missed_alert_threshold = int(os.getenv("MISSED_ALERT_THRESHOLD", "8"))
+        # Shared secret for Next.js → poller ops endpoints (reanalyze / upload)
+        self.ops_internal_token = os.getenv("OPS_INTERNAL_TOKEN", "").strip()
+        self.poller_internal_url = os.getenv(
+            "POLLER_INTERNAL_URL", "http://127.0.0.1:8080"
+        ).strip().rstrip("/")
 
     @staticmethod
     def _parse_service_account(raw: str) -> dict[str, Any] | None:

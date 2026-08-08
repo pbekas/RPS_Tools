@@ -22,6 +22,7 @@
         "agent_name": "string",
         "agent_email": "string | null — links to users",
         "patient_name": "string — caller/patient name from AI or CNAM",
+        "doctor_name": "string — physician/provider name extracted from transcript when mentioned",
         "call_date": "timestamp",
         "duration_seconds": "number",
         "time_to_answer_seconds": "number | null",

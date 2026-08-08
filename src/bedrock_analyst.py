@@ -47,6 +47,7 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
 {
   "agent_name": "string — best guess of the staff member's name if stated or identifiable; else Unknown",
   "patient_name": "string — caller's / patient's name if stated or clearly identifiable (including CNAM-style names); else Unknown",
+  "doctor_name": "string — treating / referred / mentioned physician or provider name if stated (e.g. Dr. Smith); else empty string",
   "topic": "string — MUST be one topic id from the TOPIC CATALOG (e.g. scheduling), not a freeform phrase",
   "ai_summary": "string — 3-6 sentence neutral summary of the call",
   "duration_seconds": integer — total call length in seconds (use provided duration if given),
@@ -91,6 +92,7 @@ Rules:
 - For empathy, always set score_1_to_10 (1-10).
 - Always set evidence_timestamp and evidence_turn_index when you can identify a supporting turn.
 - Always extract patient_name when the caller states a name, the agent confirms a name, or the summary clearly names them.
+- Extract doctor_name when a physician/provider is named (caller or agent); leave empty when none is mentioned. Do not invent names.
 - topic MUST be exactly one id from the TOPIC CATALOG.
 - Always include sentiment for the overall call tone.
 - critical_flags: include ONLY flags that triggered (triggered=true). Omit non-triggered flags. These are business alerts, not agent QA fails.
@@ -184,7 +186,7 @@ def analyze_transcript(
     user_prompt += (
         "\nPROVIDED TRANSCRIPT (numbered turns):\n"
         f"{transcript_text}\n\n"
-        "Return JSON with agent_name, patient_name, topic, ai_summary, duration_seconds, "
+        "Return JSON with agent_name, patient_name, doctor_name, topic, ai_summary, duration_seconds, "
         "time_to_answer_seconds, transfer_count, speaker_roles (if spk_* labels), sentiment, "
         "rule_results for every active rule id, and any triggered critical_flags. "
         "Do not return a transcript array."
@@ -223,9 +225,14 @@ def analyze_transcript(
     )
     sentiment = normalize_sentiment(data.get("sentiment"))
 
+    doctor_name = str(data.get("doctor_name") or "").strip()
+    if doctor_name.lower() in {"unknown", "n/a", "none", "null"}:
+        doctor_name = ""
+
     return {
         "agent_name": str(data.get("agent_name") or "Unknown").strip(),
         "patient_name": str(data.get("patient_name") or "Unknown").strip(),
+        "doctor_name": doctor_name,
         **topic_fields,
         "ai_summary": str(data.get("ai_summary") or "").strip(),
         "duration_seconds": int(

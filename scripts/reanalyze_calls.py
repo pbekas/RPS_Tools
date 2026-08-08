@@ -16,9 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.bedrock_analyst import analyze_transcript
 from src import database as db
-from src.agent_identity import resolve_or_create_agent
+from src.ops_actions import reanalyze_call
 from src.qa_rules import get_active_ruleset
 
 
@@ -56,39 +55,15 @@ def main() -> None:
                 f"{call.get('agent_name')} · {call.get('topic')} …",
                 flush=True,
             )
-            scored = analyze_transcript(
-                transcript,
-                duration_seconds=call.get("duration_seconds"),
-                original_filename=call.get("original_filename"),
-                transfer_count_hint=call.get("transfer_count"),
-            )
-            if not scored.get("transcript"):
-                scored["transcript"] = transcript
-
-            existing_email = (call.get("agent_email") or "").strip().lower()
-            updates = {
-                k: v for k, v in scored.items() if k != "recording_storage_uri"
-            }
-            if existing_email and not existing_email.startswith("unmapped."):
-                # Preserve manager-mapped Workspace identity
-                updates.pop("agent_email", None)
-                updates.pop("agent_name", None)
-            else:
-                email, name = resolve_or_create_agent(
-                    scored.get("agent_name") or call.get("agent_name") or ""
-                )
-                updates["agent_email"] = email
-                updates["agent_name"] = name
-
-            db.update_call(call_id, updates)
+            result = reanalyze_call(call_id, send_alerts=True)
             fails = [
                 r.get("rule_id")
-                for r in (scored.get("rule_results") or [])
-                if not r.get("passed")
+                for r in (result.get("critical_flags") or [])
+                if r.get("triggered") is not False
             ]
             print(
-                f"  → Q{scored.get('quality_score')} E{scored.get('ai_empathy_score')} "
-                f"auto={scored.get('auto_failed')} fails={fails}"
+                f"  → Q{result.get('quality_score')} E{result.get('ai_empathy_score')} "
+                f"auto={result.get('auto_failed')} critical={fails}"
             )
             ok += 1
         except Exception as exc:  # noqa: BLE001

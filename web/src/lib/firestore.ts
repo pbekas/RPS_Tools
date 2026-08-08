@@ -597,7 +597,7 @@ export async function listCallLogs(opts?: {
   unrecordedOnly?: boolean;
 }): Promise<CallLogDoc[]> {
   // Keep reads small — Ops loads this on every refresh.
-  const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 1000);
+  const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 2000);
   const days = opts?.days && opts.days > 0 ? opts.days : null;
   const cutoff = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
 

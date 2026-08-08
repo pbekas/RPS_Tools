@@ -43,6 +43,7 @@ from aws_cdk import (
     aws_rds as rds,
     aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
+    aws_servicediscovery as servicediscovery,
 )
 from constructs import Construct
 
@@ -220,6 +221,14 @@ class RpsCallQaStack(Stack):
 
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
+        namespace = servicediscovery.PrivateDnsNamespace(
+            self,
+            "ServiceDiscovery",
+            name="rps-call-qa.local",
+            vpc=vpc,
+            description="Internal DNS for web → poller ops",
+        )
+
         # ── Next.js review UI ───────────────────────────────────────────
         web = ecs_patterns.ApplicationLoadBalancedFargateService(
             self,
@@ -260,6 +269,7 @@ class RpsCallQaStack(Stack):
                     "DB_DUAL_WRITE": "1" if db_dual_write else "0",
                     "PGSSLMODE": "verify-full",
                     "PGSSLROOTCERT": "/etc/ssl/certs/aws-rds-global-bundle.pem",
+                    "POLLER_INTERNAL_URL": "http://poller.rps-call-qa.local:8080",
                 },
                 secrets={
                     "NEXTAUTH_SECRET": ecs.Secret.from_secrets_manager(
@@ -270,6 +280,9 @@ class RpsCallQaStack(Stack):
                     ),
                     "GOOGLE_CLIENT_SECRET": ecs.Secret.from_secrets_manager(
                         app_secret, "GOOGLE_CLIENT_SECRET"
+                    ),
+                    "OPS_INTERNAL_TOKEN": ecs.Secret.from_secrets_manager(
+                        app_secret, "OPS_INTERNAL_TOKEN"
                     ),
                     **firestore_secrets,
                     **database_secrets,
@@ -283,6 +296,7 @@ class RpsCallQaStack(Stack):
             interval=Duration.seconds(30),
             timeout=Duration.seconds(5),
         )
+        web.load_balancer.set_attribute("idle_timeout.timeout_seconds", "120")
 
         # ── Vonage poller (private) ─────────────────────────────────────
         poller_td = ecs.FargateTaskDefinition(
@@ -344,6 +358,9 @@ class RpsCallQaStack(Stack):
                 "GCHAT_WEBHOOK_URL": ecs.Secret.from_secrets_manager(
                     app_secret, "GCHAT_WEBHOOK_URL"
                 ),
+                "OPS_INTERNAL_TOKEN": ecs.Secret.from_secrets_manager(
+                    app_secret, "OPS_INTERNAL_TOKEN"
+                ),
                 **database_secrets,
             },
             health_check=ecs.HealthCheck(
@@ -371,6 +388,18 @@ class RpsCallQaStack(Stack):
             circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             min_healthy_percent=100,
             max_healthy_percent=200,
+            cloud_map_options=ecs.CloudMapOptions(
+                name="poller",
+                cloud_map_namespace=namespace,
+                dns_record_type=servicediscovery.DnsRecordType.A,
+                dns_ttl=Duration.seconds(15),
+            ),
+        )
+
+        poller.connections.allow_from(
+            web.service,
+            ec2.Port.tcp(8080),
+            "Web to poller ops API",
         )
 
         if database_secret is not None and database_key is not None:

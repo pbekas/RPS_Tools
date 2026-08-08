@@ -26,6 +26,25 @@ export function formatDuration(seconds?: number | null): string {
   return `${mm}m ${rem}s`;
 }
 
+/** Format a caller ID / E.164-ish phone for display. */
+export function formatPhone(phone?: string | null): string {
+  const raw = (phone || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  let d = digits;
+  if (d.length === 11 && d.startsWith("1")) d = d.slice(1);
+  if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  return raw;
+}
+
+export function resolveDoctorName(call: {
+  doctor_name?: string | null;
+}): string {
+  const name = (call.doctor_name || "").trim();
+  if (!name || /^unknown$/i.test(name) || /^n\/?a$/i.test(name)) return "";
+  return name;
+}
+
 export function toMillis(value: TimeLike): number {
   if (!value) return 0;
   if (typeof value === "string") return Date.parse(value) || 0;

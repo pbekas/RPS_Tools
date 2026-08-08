@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { CallDoc, UserDoc } from "@/lib/database";
-import { formatCallDate, formatDuration, resolveAgentLabel, resolvePatientName } from "@/lib/format";
+import { formatCallDate, formatDuration, formatPhone, resolveAgentLabel, resolveDoctorName, resolvePatientName } from "@/lib/format";
 import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 import { QueueNav } from "@/components/QueueNav";
 
@@ -40,6 +40,8 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
   const [createEmail, setCreateEmail] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignMsg, setAssignMsg] = useState("");
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [reanalyzeMsg, setReanalyzeMsg] = useState("");
 
   const transcript = call.transcript || [];
   const rules = call.rule_results || [];
@@ -66,6 +68,7 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     setActiveTurn(null);
     setSavedMsg("");
     setAssignMsg("");
+    setReanalyzeMsg("");
   }, [call.id, call.manager_notes, call.manager_feedback, call.agent_email, call.agent_name]);
 
   function jumpToTurn(index: number | null | undefined, ts?: string | null) {
@@ -146,7 +149,30 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     }
   }
 
+  async function reanalyzeCall() {
+    setReanalyzing(true);
+    setReanalyzeMsg("");
+    try {
+      const res = await fetch(`/api/calls/${call.id}/reanalyze`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Re-analyze failed");
+      const flags = Array.isArray(data.critical_flags) ? data.critical_flags.length : 0;
+      setReanalyzeMsg(
+        flags
+          ? `Re-scored · Q${data.quality_score ?? "—"} · ${flags} critical flag(s)`
+          : `Re-scored · Q${data.quality_score ?? "—"}`
+      );
+      router.refresh();
+    } catch (e) {
+      setReanalyzeMsg(e instanceof Error ? e.message : "Re-analyze failed");
+    } finally {
+      setReanalyzing(false);
+    }
+  }
+
   const patientName = resolvePatientName(call);
+  const doctorName = resolveDoctorName(call);
+  const callerPhone = formatPhone(call.vonage_caller_id);
   const agent = resolveAgentLabel({
     agent_name: agentName || call.agent_name,
     agent_email: agentEmail || call.agent_email,
@@ -167,7 +193,17 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                   Call review
                 </p>
                 <h1 className="mt-1 font-display text-3xl text-ink">{patientName}</h1>
-                <p className="mt-1 text-ink-soft">
+                {callerPhone || doctorName ? (
+                  <p className="mt-1 text-ink-soft">
+                    {[
+                      callerPhone ? `Phone · ${callerPhone}` : null,
+                      doctorName ? `Doctor · ${doctorName}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                ) : null}
+                <p className={`${callerPhone || doctorName ? "mt-0.5" : "mt-1"} text-ink-soft`}>
                   Agent · {agent.name}
                   {isProvisional || agent.unmapped ? " · needs Workspace email" : ""} ·{" "}
                   {call.topic || "General"} · {formatCallDate(call.call_date)} ·{" "}
@@ -313,6 +349,31 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
               <p className="text-sm text-ink-soft">
                 Confirm the agent, then capture coaching notes.
               </p>
+
+              <div className="mt-3 rounded-xl border border-line bg-wash/50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                      Re-analyze
+                    </div>
+                    <p className="mt-1 text-xs text-ink-soft">
+                      Re-score with current QA rules and critical flags (uses stored
+                      transcript).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={reanalyzing || !(call.transcript || []).length}
+                    onClick={() => void reanalyzeCall()}
+                    className="shrink-0 rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-white disabled:opacity-60"
+                  >
+                    {reanalyzing ? "Scoring…" : "Re-analyze"}
+                  </button>
+                </div>
+                {reanalyzeMsg ? (
+                  <p className="mt-2 text-xs text-ink-soft">{reanalyzeMsg}</p>
+                ) : null}
+              </div>
 
               <div className="mt-3 rounded-xl border border-line bg-wash/50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
@@ -461,7 +522,10 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
             {rules.length === 0 ? (
               <p className="text-sm text-ink-soft">
-                No rule results yet. Re-analyze from Streamlit ops if needed.
+                No rule results yet.
+                {isAdmin
+                  ? " Use Re-analyze above to score with the current rules."
+                  : ""}
               </p>
             ) : (
               rules.map((r) => {

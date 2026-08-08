@@ -11,6 +11,8 @@ import {
   failedRuleLabels,
   formatCallDate,
   formatDuration,
+  formatPhone,
+  resolveDoctorName,
   resolvePatientName,
   sentimentDisplay,
 } from "@/lib/format";
@@ -58,6 +60,8 @@ export function Dashboard({ calls, isAdmin, heatmap, heatmapDays = 14 }: Props) 
         c.agent_name,
         c.patient_name,
         c.vonage_cnam,
+        c.vonage_caller_id,
+        c.doctor_name,
         c.agent_email,
         c.topic,
         c.ai_summary,
@@ -206,6 +210,18 @@ export function Dashboard({ calls, isAdmin, heatmap, heatmapDays = 14 }: Props) 
                     </td>
                     <td className="px-4 py-3 align-top font-semibold text-ink">
                       {resolvePatientName(c)}
+                      {formatPhone(c.vonage_caller_id) || resolveDoctorName(c) ? (
+                        <div className="mt-0.5 text-xs font-normal text-ink-soft">
+                          {[
+                            formatPhone(c.vonage_caller_id) || null,
+                            resolveDoctorName(c)
+                              ? `Dr · ${resolveDoctorName(c)}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 align-top text-ink">
                       {c.agent_name || c.agent_email || "—"}

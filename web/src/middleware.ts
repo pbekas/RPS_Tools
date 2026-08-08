@@ -15,6 +15,7 @@ export const config = {
     "/api/calls/:path*",
     "/api/call-logs/:path*",
     "/api/coaching/:path*",
+    "/api/uploads",
     "/api/flags/:path*",
     "/api/qa/:path*",
     "/api/users/:path*",

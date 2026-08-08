@@ -1,9 +1,15 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { isFirestoreQuotaError, listCallLogs } from "@/lib/database";
+import {
+  isFirestoreQuotaError,
+  listCallLogs,
+  listCalls,
+  listUsers,
+} from "@/lib/database";
 import { CallOps } from "@/components/CallOps";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { buildAgentScorecard, filterCallsSince } from "@/lib/scorecard";
 
 type Props = {
   searchParams?: Promise<{ days?: string }> | { days?: string };
@@ -17,16 +23,29 @@ export default async function OpsPage({ searchParams }: Props) {
   const params = await Promise.resolve(searchParams || {});
   const daysRaw = Number(params.days || "7");
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 90) : 7;
+  const sinceMs = Date.now() - days * 86_400_000;
 
-  let logs;
   try {
-    logs = await listCallLogs({ limit: 400, days });
+    const [logs, callsRaw, users] = await Promise.all([
+      listCallLogs({ limit: 2000, days }),
+      listCalls({ status: "complete", limit: 800, sinceMs }),
+      listUsers(),
+    ]);
+    const calls = filterCallsSince(callsRaw, sinceMs);
+    const scorecard = buildAgentScorecard({ logs, calls, users });
+
+    return (
+      <CallOps
+        logs={logs}
+        days={days}
+        scorecardRows={scorecard.rows}
+        scorecardTeam={scorecard.team}
+      />
+    );
   } catch (err) {
     if (isFirestoreQuotaError(err)) {
       return <QuotaNotice detail={err instanceof Error ? err.message : undefined} />;
     }
     throw err;
   }
-
-  return <CallOps logs={logs} days={days} />;
 }

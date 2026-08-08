@@ -76,6 +76,23 @@ if ((${#missing[@]})); then
   exit 1
 fi
 
+if [[ -z "${OPS_INTERNAL_TOKEN:-}" ]]; then
+  if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$REGION" >/dev/null 2>&1; then
+    OPS_INTERNAL_TOKEN="$(
+      aws secretsmanager get-secret-value \
+        --secret-id "$SECRET_NAME" \
+        --region "$REGION" \
+        --query SecretString \
+        --output text |
+      python3 -c 'import json, sys; print(json.load(sys.stdin).get("OPS_INTERNAL_TOKEN", ""))'
+    )"
+  fi
+  if [[ -z "$OPS_INTERNAL_TOKEN" ]]; then
+    OPS_INTERNAL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+  fi
+  export OPS_INTERNAL_TOKEN
+fi
+
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
@@ -98,6 +115,7 @@ payload = {
     "ALERTS_ENABLED": os.environ.get("ALERTS_ENABLED") or "1",
     "MISSED_ALERT_WINDOW_MINUTES": os.environ.get("MISSED_ALERT_WINDOW_MINUTES") or "30",
     "MISSED_ALERT_THRESHOLD": os.environ.get("MISSED_ALERT_THRESHOLD") or "8",
+    "OPS_INTERNAL_TOKEN": os.environ.get("OPS_INTERNAL_TOKEN") or "",
 }
 print(json.dumps(payload))
 PY

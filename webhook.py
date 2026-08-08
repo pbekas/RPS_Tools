@@ -11,6 +11,7 @@ Or run the poller alone:
 from __future__ import annotations
 
 import logging
+import secrets
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -22,10 +23,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from src.config import get_settings
+from src.ops_actions import enqueue_upload, reanalyze_call
 from src.pipeline import enqueue_bytes
 from src.vonage_poller import (
     autostart_from_env,
@@ -39,6 +41,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("webhook")
 
 
+def _require_ops_token(request: Request) -> None:
+    expected = get_settings().ops_internal_token
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="OPS_INTERNAL_TOKEN is not configured on the poller",
+        )
+    provided = (request.headers.get("x-ops-token") or "").strip()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     status = autostart_from_env()
@@ -50,7 +64,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="RPS Call QA Webhooks",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -102,6 +116,43 @@ async def poller_sync_now(request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse({"status": "ok", "summary": summary})
+
+
+@app.post("/ops/reanalyze/{call_id}")
+async def ops_reanalyze(call_id: str, request: Request) -> JSONResponse:
+    """Admin ops: re-score a call from its stored transcript via Bedrock."""
+    _require_ops_token(request)
+    try:
+        result = reanalyze_call(call_id, send_alerts=True)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Reanalyze failed for %s", call_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
+
+
+@app.post("/ops/upload")
+async def ops_upload(
+    request: Request,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Admin ops: queue a manual recording upload for analysis."""
+    _require_ops_token(request)
+    data = await file.read()
+    try:
+        result = enqueue_upload(
+            data=data,
+            original_filename=file.filename or "upload.wav",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Upload enqueue failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
 
 
 @app.post("/webhooks/vonage/recording")

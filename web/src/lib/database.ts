@@ -530,7 +530,7 @@ export async function listCallLogs(opts?: {
   if (opts?.unrecordedOnly) {
     conditions.push("(recorded = false OR is_unrecorded = true)");
   }
-  values.push(Math.max(1, Math.min(opts?.limit ?? 200, 1000)));
+  values.push(Math.max(1, Math.min(opts?.limit ?? 200, 2000)));
   const rows = await query(
     `SELECT id, direction, from_number, to_number, result, recorded,
             length_seconds, start_at AS start, end_at AS "end",

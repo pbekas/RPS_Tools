@@ -537,26 +537,14 @@ def page_call_review(user: dict, *, force_agent_email: str | None = None) -> Non
                 else:
                     with st.spinner("Scoring with Bedrock against current rules…"):
                         try:
-                            from src.bedrock_analyst import analyze_transcript
+                            from src.ops_actions import reanalyze_call
 
-                            scored = analyze_transcript(
-                                transcript,
-                                duration_seconds=call.get("duration_seconds"),
-                                original_filename=call.get("original_filename"),
-                                transfer_count_hint=call.get("transfer_count"),
+                            result = reanalyze_call(selected_id, send_alerts=True)
+                            st.success(
+                                f"Re-scored and saved "
+                                f"(Q{result.get('quality_score')} · "
+                                f"E{result.get('ai_empathy_score')})."
                             )
-                            # Keep existing transcript if model returns empty
-                            if not scored.get("transcript"):
-                                scored["transcript"] = transcript
-                            db.update_call(
-                                selected_id,
-                                {
-                                    k: v
-                                    for k, v in scored.items()
-                                    if k != "recording_storage_uri"
-                                },
-                            )
-                            st.success("Re-scored and saved.")
                             st.rerun()
                         except Exception as exc:  # noqa: BLE001
                             st.error(str(exc))

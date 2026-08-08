@@ -11,25 +11,56 @@ import {
   summarizeCallLogs,
   talkTimeByPerson,
 } from "@/lib/callLogs";
+import type { AgentScorecardRow } from "@/lib/scorecard";
+import { buildOpsTower, classifyOutcome, type OutcomeBucket } from "@/lib/opsTower";
 import { formatCallDate, formatDuration } from "@/lib/format";
+import { AgentScorecard } from "@/components/AgentScorecard";
+import { OpsControlTower } from "@/components/OpsControlTower";
 
 type Props = {
   logs: CallLogDoc[];
   days: number;
+  scorecardRows: AgentScorecardRow[];
+  scorecardTeam: AgentScorecardRow;
 };
 
-export function CallOps({ logs, days }: Props) {
+export function CallOps({
+  logs,
+  days,
+  scorecardRows,
+  scorecardTeam,
+}: Props) {
   const [q, setQ] = useState("");
   const [missedOnly, setMissedOnly] = useState(false);
   const [unrecordedOnly, setUnrecordedOnly] = useState(false);
   const [direction, setDirection] = useState("");
   const [resultFilter, setResultFilter] = useState("");
   const [personFilter, setPersonFilter] = useState("");
+  const [scorecardKey, setScorecardKey] = useState("");
+  const [outcomeBucket, setOutcomeBucket] = useState<OutcomeBucket | "">("");
+
+  const selectedScorecard = useMemo(
+    () => scorecardRows.find((r) => r.key === scorecardKey) || null,
+    [scorecardRows, scorecardKey]
+  );
+
+  const OUTCOME_LABEL_TO_BUCKET: Record<string, OutcomeBucket> = {
+    Answered: "answered",
+    Abandoned: "abandoned",
+    Voicemail: "voicemail",
+    Busy: "busy",
+    "No answer / missed": "no_answer",
+    "Other non-answer": "other",
+  };
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const resultNeedle = resultFilter.trim().toLowerCase();
     const personNeedle = personFilter.trim().toLowerCase();
+    const scorecardPartyKeys = selectedScorecard
+      ? new Set(selectedScorecard.partyKeys)
+      : null;
+
     return logs.filter((log) => {
       const isMissed = !!log.is_missed || isMissedResult(log.result);
       if (missedOnly && !isMissed) return false;
@@ -44,7 +75,12 @@ export function CallOps({ logs, days }: Props) {
       if (resultNeedle) {
         if (normalizeResult(log.result).toLowerCase() !== resultNeedle) return false;
       }
-      if (personNeedle) {
+      if (outcomeBucket) {
+        if (classifyOutcome(log) !== outcomeBucket) return false;
+      }
+      if (scorecardPartyKeys) {
+        if (!scorecardPartyKeys.has(partyFromLog(log).key)) return false;
+      } else if (personNeedle) {
         if (partyFromLog(log).key !== personNeedle) return false;
       }
       if (!needle) return true;
@@ -66,10 +102,18 @@ export function CallOps({ logs, days }: Props) {
         .toLowerCase();
       return hay.includes(needle);
     });
-  }, [logs, q, missedOnly, unrecordedOnly, direction, resultFilter, personFilter]);
+  }, [
+    logs,
+    q,
+    missedOnly,
+    unrecordedOnly,
+    direction,
+    resultFilter,
+    personFilter,
+    selectedScorecard,
+    outcomeBucket,
+  ]);
 
-  // Dashboard aggregates use the day window (direction filter only), not table search,
-  // so the overview stays stable while browsing the CDR list.
   const dashboardLogs = useMemo(() => {
     if (!direction) return logs;
     return logs.filter(
@@ -78,6 +122,7 @@ export function CallOps({ logs, days }: Props) {
   }, [logs, direction]);
 
   const stats = useMemo(() => summarizeCallLogs(dashboardLogs), [dashboardLogs]);
+  const tower = useMemo(() => buildOpsTower(logs), [logs]);
   const byPerson = useMemo(() => talkTimeByPerson(dashboardLogs), [dashboardLogs]);
   const byResult = useMemo(() => resultBreakdown(dashboardLogs), [dashboardLogs]);
   const missedAbandoned = useMemo(
@@ -95,7 +140,6 @@ export function CallOps({ logs, days }: Props) {
       }),
     [byResult]
   );
-  const topTalkers = useMemo(() => byPerson.slice(0, 15), [byPerson]);
   const missedByPerson = useMemo(
     () =>
       [...byPerson]
@@ -114,7 +158,30 @@ export function CallOps({ logs, days }: Props) {
   function clearDashboardFilters() {
     setResultFilter("");
     setPersonFilter("");
+    setScorecardKey("");
+    setOutcomeBucket("");
+    setDirection("");
     setMissedOnly(false);
+  }
+
+  function selectScorecard(key: string) {
+    setScorecardKey(key);
+    setPersonFilter("");
+  }
+
+  function selectDirection(value: string) {
+    setDirection((cur) => (cur.toLowerCase() === value.toLowerCase() ? "" : value));
+  }
+
+  function selectOutcomeLabel(label: string) {
+    if (!label) {
+      setOutcomeBucket("");
+      return;
+    }
+    const bucket = OUTCOME_LABEL_TO_BUCKET[label];
+    if (!bucket) return;
+    setOutcomeBucket((cur) => (cur === bucket ? "" : bucket));
+    setResultFilter("");
   }
 
   return (
@@ -126,9 +193,9 @@ export function CallOps({ logs, days }: Props) {
           </p>
           <h1 className="font-display text-3xl text-ink">Call ops</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Talk time by person and missed / abandoned traffic for the last {days}{" "}
-            days (up to {logs.length} recent CDRs). Talk duration comes from Vonage
-            Reports (not ring/ASA wait).
+            Control tower trends, unified agent scorecard, and CDR detail for the
+            last {days} days ({logs.length} CDRs loaded). Talk duration comes from
+            Vonage Reports (not ring/ASA wait).
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">
@@ -168,72 +235,33 @@ export function CallOps({ logs, days }: Props) {
       </div>
       <p className="mb-6 text-xs text-ink-soft">
         *Missed includes non-answered results (missed, abandoned, voicemail, busy,
-        etc.).
+        etc.). Use the control tower outcome taxonomy for a cleaner split.
       </p>
 
-      <div className="mb-8 grid gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border border-line bg-white/80">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="font-display text-xl text-ink">Talk time by person</h2>
-            <p className="text-xs text-ink-soft">
-              Inbound attributed to destination; outbound to source. Click a row to
-              filter the log.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-line bg-wash/60 text-xs uppercase tracking-wide text-ink-soft">
-                <tr>
-                  <th className="px-3 py-2 font-semibold">Person</th>
-                  <th className="px-3 py-2 font-semibold">Calls</th>
-                  <th className="px-3 py-2 font-semibold">Talk</th>
-                  <th className="px-3 py-2 font-semibold">Ans</th>
-                  <th className="px-3 py-2 font-semibold">Miss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topTalkers.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-ink-soft">
-                      No CDR data in this window.
-                    </td>
-                  </tr>
-                ) : (
-                  topTalkers.map((row) => (
-                    <tr
-                      key={row.key}
-                      className={`cursor-pointer border-b border-line/70 last:border-0 hover:bg-wash/50 ${
-                        personFilter === row.key ? "bg-wash/70" : ""
-                      }`}
-                      onClick={() =>
-                        setPersonFilter((cur) => (cur === row.key ? "" : row.key))
-                      }
-                    >
-                      <td className="px-3 py-2">
-                        <div className="font-semibold text-ink">{row.name}</div>
-                        {row.user ? (
-                          <div className="text-xs text-ink-soft">{row.user}</div>
-                        ) : null}
-                        {row.extension ? (
-                          <div className="text-xs text-ink-soft">ext {row.extension}</div>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2">{row.calls}</td>
-                      <td className="px-3 py-2 font-semibold">
-                        {formatDuration(row.talkSeconds)}
-                      </td>
-                      <td className="px-3 py-2">{row.answered}</td>
-                      <td className="px-3 py-2 text-[color:var(--warn)]">
-                        {row.missed + row.abandoned + row.voicemail}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+      <OpsControlTower
+        tower={tower}
+        days={days}
+        selectedDirection={direction}
+        selectedOutcome={
+          outcomeBucket
+            ? Object.entries(OUTCOME_LABEL_TO_BUCKET).find(
+                ([, v]) => v === outcomeBucket
+              )?.[0]
+            : ""
+        }
+        onSelectDirection={selectDirection}
+        onSelectOutcome={selectOutcomeLabel}
+      />
 
+      <AgentScorecard
+        rows={scorecardRows}
+        team={scorecardTeam}
+        selectedKey={scorecardKey}
+        onSelect={selectScorecard}
+        days={days}
+      />
+
+      <div className="mb-8 grid gap-6 lg:grid-cols-2">
         <section className="rounded-xl border border-line bg-white/80">
           <div className="border-b border-line px-4 py-3">
             <h2 className="font-display text-xl text-ink">Missed / abandoned</h2>
@@ -285,9 +313,12 @@ export function CallOps({ logs, days }: Props) {
                     <li key={`m-${row.key}`}>
                       <button
                         type="button"
-                        onClick={() =>
-                          setPersonFilter((cur) => (cur === row.key ? "" : row.key))
-                        }
+                        onClick={() => {
+                          setScorecardKey("");
+                          setPersonFilter((cur) =>
+                            cur === row.key ? "" : row.key
+                          );
+                        }}
                         className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm ${
                           personFilter === row.key
                             ? "border-accent bg-wash"
@@ -307,6 +338,90 @@ export function CallOps({ logs, days }: Props) {
                       </button>
                     </li>
                   ))
+                )}
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-line bg-white/80">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="font-display text-xl text-ink">Scorecard focus</h2>
+            <p className="text-xs text-ink-soft">
+              Rock stars to recognize and agents who need coaching attention this
+              window.
+            </p>
+          </div>
+          <div className="grid gap-4 p-4 sm:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-pass">
+                Rock stars
+              </h3>
+              <ul className="space-y-1.5">
+                {scorecardRows.filter((r) => r.tier === "rock_star").length ===
+                0 ? (
+                  <li className="text-sm text-ink-soft">
+                    None yet — thresholds need a few CDRs + QA scores.
+                  </li>
+                ) : (
+                  scorecardRows
+                    .filter((r) => r.tier === "rock_star")
+                    .map((row) => (
+                      <li key={`rs-${row.key}`}>
+                        <button
+                          type="button"
+                          onClick={() => selectScorecard(row.key)}
+                          className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm ${
+                            scorecardKey === row.key
+                              ? "border-accent bg-wash"
+                              : "border-line hover:bg-wash/60"
+                          }`}
+                        >
+                          <span className="font-semibold text-ink">{row.name}</span>
+                          <span className="text-xs text-ink-soft">
+                            {Math.round(row.answerRate * 100)}% · Q{" "}
+                            {row.avgQuality?.toFixed(1) ?? "—"}
+                          </span>
+                        </button>
+                      </li>
+                    ))
+                )}
+              </ul>
+            </div>
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fail">
+                Needs coach
+              </h3>
+              <ul className="space-y-1.5">
+                {scorecardRows.filter((r) => r.tier === "coach").length === 0 ? (
+                  <li className="text-sm text-ink-soft">
+                    No coaching flags this window.
+                  </li>
+                ) : (
+                  scorecardRows
+                    .filter((r) => r.tier === "coach")
+                    .map((row) => (
+                      <li key={`c-${row.key}`}>
+                        <button
+                          type="button"
+                          onClick={() => selectScorecard(row.key)}
+                          className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm ${
+                            scorecardKey === row.key
+                              ? "border-accent bg-wash"
+                              : "border-line hover:bg-wash/60"
+                          }`}
+                        >
+                          <span className="font-semibold text-ink">{row.name}</span>
+                          <span className="text-xs text-ink-soft">
+                            miss{" "}
+                            {Math.round(
+                              (row.missedBucket / Math.max(row.cdrCalls, 1)) * 100
+                            )}
+                            % · flags {row.criticalFlags}
+                          </span>
+                        </button>
+                      </li>
+                    ))
                 )}
               </ul>
             </div>
@@ -348,7 +463,12 @@ export function CallOps({ logs, days }: Props) {
           <option value="Outbound">Outbound</option>
           <option value="Extension">Extension</option>
         </select>
-        {resultFilter || personFilter || missedOnly ? (
+        {resultFilter ||
+        personFilter ||
+        scorecardKey ||
+        missedOnly ||
+        outcomeBucket ||
+        direction ? (
           <button
             type="button"
             onClick={clearDashboardFilters}
@@ -356,7 +476,9 @@ export function CallOps({ logs, days }: Props) {
           >
             Clear filters
             {resultFilter ? ` · ${resultFilter}` : ""}
-            {personFilter ? ` · person` : ""}
+            {outcomeBucket ? ` · ${outcomeBucket}` : ""}
+            {personFilter || scorecardKey ? " · person" : ""}
+            {direction ? ` · ${direction}` : ""}
           </button>
         ) : null}
       </div>
@@ -385,7 +507,8 @@ export function CallOps({ logs, days }: Props) {
             ) : (
               filtered.map((log) => {
                 const isMissed = !!log.is_missed || isMissedResult(log.result);
-                const isUnrecorded = log.recorded === false || !!log.is_unrecorded;
+                const isUnrecorded =
+                  log.recorded === false || !!log.is_unrecorded;
                 const party = partyFromLog(log);
                 return (
                   <tr key={log.id} className="border-b border-line/70 last:border-0">
@@ -397,7 +520,9 @@ export function CallOps({ logs, days }: Props) {
                       {log.from_number || "?"} → {log.to_number || "?"}
                     </td>
                     <td className="px-3 py-2">
-                      {party.name !== "Unknown" || party.user || party.extension ? (
+                      {party.name !== "Unknown" ||
+                      party.user ||
+                      party.extension ? (
                         <div className="leading-snug">
                           <div className="font-semibold text-ink">{party.name}</div>
                           {party.user ? (
@@ -420,8 +545,12 @@ export function CallOps({ logs, days }: Props) {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
                         {isMissed ? <Badge tone="warn">Missed</Badge> : null}
-                        {isUnrecorded ? <Badge tone="fail">Unrecorded</Badge> : null}
-                        {log.matched_call_id ? <Badge tone="pass">Has QA</Badge> : null}
+                        {isUnrecorded ? (
+                          <Badge tone="fail">Unrecorded</Badge>
+                        ) : null}
+                        {log.matched_call_id ? (
+                          <Badge tone="pass">Has QA</Badge>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-3 py-2">
