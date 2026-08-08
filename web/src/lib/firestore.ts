@@ -541,6 +541,22 @@ export async function upsertUser(input: {
       updated_at: now,
     });
   }
+  const calls = await getDb()
+    .collection("calls")
+    .where("agent_email", "==", input.email.toLowerCase())
+    .limit(500)
+    .get();
+  if (!calls.empty) {
+    const batch = getDb().batch();
+    let pending = 0;
+    for (const doc of calls.docs) {
+      if (doc.get("agent_name") !== input.name) {
+        batch.update(doc.ref, { agent_name: input.name, updated_at: now });
+        pending += 1;
+      }
+    }
+    if (pending > 0) await batch.commit();
+  }
   const snap = await ref.get();
   return serializeDoc<UserDoc>(snap.id, snap.data());
 }

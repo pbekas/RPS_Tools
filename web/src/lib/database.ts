@@ -563,6 +563,7 @@ export async function upsertUser(input: {
   provisional?: boolean;
 }): Promise<UserDoc> {
   if (!usePostgres()) return firestore.upsertUser(input);
+  const email = input.email.trim().toLowerCase();
   const rows = await query(
     `INSERT INTO users (email, name, role, provisional)
      VALUES ($1, $2, $3, $4)
@@ -576,12 +577,17 @@ export async function upsertUser(input: {
        updated_at = now()
      RETURNING *`,
     [
-      input.email.trim().toLowerCase(),
+      email,
       input.name,
       input.role,
       input.provisional ?? false,
       input.provisional ?? null,
     ]
+  );
+  // Keep call list / QA labels in sync when a display name is corrected.
+  await query(
+    "UPDATE calls SET agent_name = $2, updated_at = now() WHERE agent_email = $1 AND agent_name IS DISTINCT FROM $2",
+    [email, input.name]
   );
   return serializeRow<UserDoc>(rows[0]);
 }

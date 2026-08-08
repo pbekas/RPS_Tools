@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UnmappedAgentRow, UserDoc, VonageExtensionDoc } from "@/lib/database";
 
 type Props = {
@@ -22,7 +22,10 @@ export function AgentSettings({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Agent");
+  const [editingEmail, setEditingEmail] = useState<string | null>(null);
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [extensionDrafts, setExtensionDrafts] = useState<Record<string, string>>({});
+  const [extMapDrafts, setExtMapDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
@@ -51,6 +54,12 @@ export function AgentSettings({
     [extensions]
   );
 
+  useEffect(() => {
+    void refresh();
+    // Load extension catalog on first paint (Settings may not pass it yet).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function refresh() {
     const res = await fetch("/api/users?unmapped=1&extensions=1");
     const data = await res.json();
@@ -75,16 +84,45 @@ export function AgentSettings({
       if (data.users) setUsers(data.users);
       if (data.extensions) setExtensions(data.extensions);
       const s = data.summary || {};
+      const nameMapped = Number(s.auto_mapped_by_name || 0);
       setMsg(
         `Synced extensions: ${s.upserted ?? 0} catalog · ${s.auto_mapped ?? 0} auto-mapped` +
+          (nameMapped ? ` (${nameMapped} by name)` : "") +
           (s.provisioning_ok
-            ? " (Vonage Provisioning)"
-            : s.provisioning_error
-              ? " (CDR harvest — enable Provisioning API for full directory)"
-              : " (CDR harvest)")
+            ? " · Vonage Provisioning (emails available)"
+            : " · CDR harvest only (no emails on extensions — map by name or pick a user below)")
       );
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function mapExtensionToUser(extension: string) {
+    const email = (extMapDrafts[extension] || "").trim().toLowerCase();
+    if (!email) {
+      setMsg("Pick a user email for that extension first");
+      return;
+    }
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_extension",
+          email,
+          extension,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Map failed");
+      setMsg(`Mapped ext ${extension} → ${email}`);
+      await refresh();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Map failed");
     } finally {
       setSaving(false);
     }
@@ -186,14 +224,56 @@ export function AgentSettings({
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "upsert", name, email, role }),
+        body: JSON.stringify({
+          action: "upsert",
+          name,
+          email: editingEmail || email,
+          role,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
-      setMsg(`Saved ${data.user.email}`);
-      setName("");
-      setEmail("");
-      setRole("Agent");
+      setMsg(
+        editingEmail
+          ? `Updated ${data.user.name} (${data.user.email})`
+          : `Saved ${data.user.email}`
+      );
+      clearEditForm();
+      await refresh();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveName(user: UserDoc) {
+    const nextName = (nameDrafts[user.email] ?? user.name ?? "").trim();
+    if (!nextName) {
+      setMsg("Name can’t be empty");
+      return;
+    }
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "upsert",
+          email: user.email,
+          name: nextName,
+          role: user.role || "Agent",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      setMsg(`Updated name → ${data.user.name}`);
+      setNameDrafts((prev) => {
+        const next = { ...prev };
+        delete next[user.email];
+        return next;
+      });
       await refresh();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
@@ -221,11 +301,22 @@ export function AgentSettings({
     await refresh();
   }
 
+  function clearEditForm() {
+    setEditingEmail(null);
+    setName("");
+    setEmail("");
+    setRole("Agent");
+  }
+
   function editUser(user: UserDoc) {
+    setEditingEmail(user.email);
     setName(user.name || "");
     setEmail(user.email);
     setRole(user.role || "Agent");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    document.getElementById("agent-edit-form")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
   }
 
   return (
@@ -277,15 +368,72 @@ export function AgentSettings({
           </button>
         </div>
         {unmappedExts.length > 0 ? (
-          <p className="mt-3 text-xs text-ink-soft">
-            {unmappedExts.length} extension{unmappedExts.length === 1 ? "" : "s"} in
-            catalog without a user map
-            {unmappedExts.slice(0, 8).map((e) => ` · ${e.extension}`).join("")}
-            {unmappedExts.length > 8 ? "…" : ""}
-          </p>
+          <div className="mt-4 overflow-hidden rounded-xl border border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
+                <tr>
+                  <th className="px-3 py-2">Ext</th>
+                  <th className="px-3 py-2">Name on CDRs</th>
+                  <th className="px-3 py-2">Map to user (email)</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {unmappedExts.slice(0, 40).map((e) => (
+                  <tr key={e.extension} className="border-b border-line/70 last:border-0">
+                    <td className="px-3 py-2 font-semibold text-ink">{e.extension}</td>
+                    <td className="px-3 py-2 text-ink-soft">
+                      {e.display_name || e.vbc_username || "—"}
+                      {e.vbc_email ? (
+                        <div className="text-[11px]">{e.vbc_email}</div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={extMapDrafts[e.extension] || ""}
+                        onChange={(ev) =>
+                          setExtMapDrafts((prev) => ({
+                            ...prev,
+                            [e.extension]: ev.target.value,
+                          }))
+                        }
+                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
+                      >
+                        <option value="">Select user…</option>
+                        {users
+                          .filter((u) => u.active !== false && !u.provisional)
+                          .map((u) => (
+                            <option key={u.email} value={u.email}>
+                              {(u.name || u.email) +
+                                (u.extension ? ` (ext ${u.extension})` : "") +
+                                ` · ${u.email}`}
+                            </option>
+                          ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => mapExtensionToUser(e.extension)}
+                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
+                      >
+                        Map
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {unmappedExts.length > 40 ? (
+              <p className="border-t border-line px-3 py-2 text-xs text-ink-soft">
+                Showing 40 of {unmappedExts.length} unmapped extensions
+              </p>
+            ) : null}
+          </div>
         ) : extensions.length > 0 ? (
           <p className="mt-3 text-xs text-ink-soft">
-            {extensions.length} extensions synced
+            {extensions.length} extensions synced — all mapped
           </p>
         ) : (
           <p className="mt-3 text-xs text-ink-soft">
@@ -298,7 +446,7 @@ export function AgentSettings({
         <div>
           <h2 className="font-display text-2xl text-ink">Team directory</h2>
           <p className="mt-1 text-sm text-ink-soft">
-            {users.length} people · set Ext to include them on the agent scorecard
+            {users.length} people · edit Name inline, set Ext for the scorecard
           </p>
         </div>
         <input
@@ -333,8 +481,28 @@ export function AgentSettings({
                 const active = u.active !== false;
                 return (
                   <tr key={u.email} className="border-b border-line/70 last:border-0">
-                    <td className="px-4 py-3 font-semibold text-ink">
-                      {u.name || "—"}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={nameDrafts[u.email] ?? u.name ?? ""}
+                          onChange={(e) =>
+                            setNameDrafts((prev) => ({
+                              ...prev,
+                              [u.email]: e.target.value,
+                            }))
+                          }
+                          placeholder="Display name"
+                          className="min-w-[8rem] flex-1 rounded-lg border border-line px-2 py-1 text-sm font-semibold text-ink"
+                        />
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => saveName(u)}
+                          className="text-xs font-semibold text-accent hover:underline disabled:opacity-60"
+                        >
+                          Save
+                        </button>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-ink-soft">{u.email}</td>
                     <td className="px-4 py-3">
@@ -404,13 +572,17 @@ export function AgentSettings({
       </div>
 
       <form
+        id="agent-edit-form"
         onSubmit={saveUser}
         className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
       >
-        <h2 className="font-display text-2xl text-ink">Add / update manually</h2>
+        <h2 className="font-display text-2xl text-ink">
+          {editingEmail ? "Edit agent" : "Add agent"}
+        </h2>
         <p className="mt-1 text-sm text-ink-soft">
-          Use this for people who haven&apos;t appeared on calls yet, or to set initials
-          emails (e.g. tr@{domain}).
+          {editingEmail
+            ? `Updating ${editingEmail}. Name and role can change; email stays the same.`
+            : `Add someone who hasn’t appeared on calls yet, or create a Workspace email (e.g. tr@${domain}).`}
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
@@ -434,7 +606,8 @@ export function AgentSettings({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2"
+              disabled={!!editingEmail}
+              className="w-full rounded-lg border border-line px-3 py-2 disabled:bg-wash disabled:text-ink-soft"
               placeholder={`diana@${domain}`}
             />
           </label>
@@ -452,13 +625,24 @@ export function AgentSettings({
             <option value="Admin">Admin</option>
           </select>
         </label>
-        <button
-          type="submit"
-          disabled={saving}
-          className="mt-4 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save agent"}
-        </button>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+          >
+            {saving ? "Saving…" : editingEmail ? "Update agent" : "Save agent"}
+          </button>
+          {editingEmail ? (
+            <button
+              type="button"
+              onClick={clearEditForm}
+              className="text-sm font-semibold text-ink-soft hover:underline"
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
       </form>
 
       <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
