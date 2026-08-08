@@ -19,6 +19,8 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 RUN apk add --no-cache wget \
+  && wget -qO /etc/ssl/certs/aws-rds-global-bundle.pem \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
   && addgroup -S app && adduser -S app -G app
 
 COPY --from=build /app/public ./public

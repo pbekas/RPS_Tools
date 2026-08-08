@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src import firestore_db as db
+from src import database as db
 from src.config import get_settings
 from src.vonage_reports import VBCCallLog, VonageReportsClient
 
@@ -32,8 +32,8 @@ def sync_call_logs(
     Optionally link each CDR to a QA `calls` doc when a recording exists.
     """
     settings = get_settings()
-    if not settings.firestore_configured:
-        raise RuntimeError("Firestore is not configured — cannot sync call logs")
+    if not settings.database_configured:
+        raise RuntimeError("Selected database is not configured — cannot sync call logs")
 
     client = VonageReportsClient()
     now = datetime.now(timezone.utc)
@@ -99,7 +99,48 @@ def sync_call_logs(
             summary["errors"].append({"log_id": log.log_id, "error": str(exc)})
             logger.exception("Failed to upsert call log %s", log.log_id)
 
+    _maybe_alert_missed_spike(summary)
     return summary
+
+
+def _maybe_alert_missed_spike(summary: dict[str, Any]) -> None:
+    """Notify when recent missed volume crosses threshold."""
+    try:
+        from src.config import get_settings
+        from src.notify import alert_missed_spike
+
+        settings = get_settings()
+        window = max(5, int(settings.missed_alert_window_minutes))
+        threshold = max(1, int(settings.missed_alert_threshold))
+        recent = db.list_call_logs(limit=500, days=1)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window)
+        missed = 0
+        answered = 0
+        for row in recent:
+            start = row.get("start")
+            if not isinstance(start, datetime):
+                continue
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if start < cutoff:
+                continue
+            result = (row.get("result") or "").strip().lower()
+            if row.get("is_missed") or (
+                result and result not in {"answered", "connected"}
+            ):
+                missed += 1
+            else:
+                answered += 1
+        summary["missed_window"] = missed
+        summary["answered_window"] = answered
+        alert_missed_spike(
+            window_minutes=window,
+            missed_count=missed,
+            threshold=threshold,
+            answered_count=answered,
+        )
+    except Exception:
+        logger.exception("Missed-spike alert check failed")
 
 
 def test_reports_connection() -> dict[str, Any]:
@@ -147,6 +188,7 @@ def _call_log_payload(
         "is_missed": log.is_missed,
         "is_unrecorded": log.is_unrecorded,
         "matched_call_id": matched_call_id,
+        "raw": log.raw,
     }
 
 

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { saveManagerReview } from "@/lib/firestore";
+import { saveManagerReview } from "@/lib/database";
 
 export async function POST(
   req: Request,

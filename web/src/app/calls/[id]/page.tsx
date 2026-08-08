@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getCall, listUsers } from "@/lib/firestore";
+import { getCall, listUsers } from "@/lib/database";
 import { resolveRecordingUrl } from "@/lib/s3";
 import { CallReview } from "@/components/CallReview";
 

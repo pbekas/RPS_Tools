@@ -162,6 +162,96 @@ export async function setCallTopicActive(
   return saveCallTopics({ ...current, topics });
 }
 
+export type CallFlag = {
+  id: string;
+  label: string;
+  description?: string;
+  severity?: string;
+  active?: boolean;
+};
+
+export type FlagSet = {
+  version: string;
+  name: string;
+  description?: string;
+  flags: CallFlag[];
+};
+
+export async function getCallFlags(): Promise<FlagSet> {
+  const snap = await getDb().collection("call_flags").doc("current").get();
+  if (!snap.exists) {
+    return {
+      version: "v1",
+      name: "Critical Call Flags",
+      description: "",
+      flags: [],
+    };
+  }
+  const data = serializeDoc<FlagSet & { id: string }>(snap.id, snap.data());
+  return {
+    version: String(data.version || "v1"),
+    name: String(data.name || "Critical Call Flags"),
+    description: String(data.description || ""),
+    flags: Array.isArray(data.flags) ? data.flags : [],
+  };
+}
+
+export async function saveCallFlags(flagset: FlagSet): Promise<FlagSet> {
+  const now = new Date();
+  const payload = {
+    version: flagset.version || "v1",
+    name: flagset.name || "Critical Call Flags",
+    description: flagset.description || "",
+    flags: flagset.flags,
+    updated_at: now,
+  };
+  await getDb().collection("call_flags").doc("current").set(payload, { merge: true });
+  await getDb()
+    .collection("call_flags")
+    .doc(payload.version)
+    .set(payload, { merge: true });
+  return getCallFlags();
+}
+
+export async function upsertCallFlag(input: {
+  id: string;
+  label: string;
+  description?: string;
+  severity?: string;
+  active?: boolean;
+}): Promise<FlagSet> {
+  const id = input.id.trim().toLowerCase();
+  if (!/^[a-z0-9_]+$/.test(id)) {
+    throw new Error("Flag id must be lowercase letters, numbers, underscores");
+  }
+  const label = input.label.trim();
+  if (!label) throw new Error("Label is required");
+
+  const current = await getCallFlags();
+  const flags = [...current.flags];
+  const idx = flags.findIndex((f) => f.id === id);
+  const row: CallFlag = {
+    id,
+    label,
+    description: (input.description || "").trim(),
+    severity: (input.severity || "critical").trim() || "critical",
+    active: input.active !== false,
+  };
+  if (idx >= 0) flags[idx] = { ...flags[idx], ...row };
+  else flags.push(row);
+
+  return saveCallFlags({ ...current, flags });
+}
+
+export async function setCallFlagActive(
+  id: string,
+  active: boolean
+): Promise<FlagSet> {
+  const current = await getCallFlags();
+  const flags = current.flags.map((f) => (f.id === id ? { ...f, active } : f));
+  return saveCallFlags({ ...current, flags });
+}
+
 export async function getQaRules(): Promise<QaRuleset> {
   const snap = await getDb().collection("qa_rules").doc("current").get();
   if (!snap.exists) {
@@ -307,6 +397,7 @@ export type CallDoc = {
   agent_name?: string;
   agent_email?: string | null;
   patient_name?: string | null;
+  doctor_name?: string | null;
   call_date?: string | null;
   duration_seconds?: number;
   time_to_answer_seconds?: number | null;
@@ -368,6 +459,7 @@ export type UserDoc = {
   name?: string;
   role?: string;
   rolling_ai_feedback?: string;
+  last_coaching_at?: string | null;
   provisional?: boolean;
   active?: boolean;
 };
@@ -899,4 +991,75 @@ export async function assignCallAgent(input: {
   const updated = await getCall(input.callId);
   if (!updated) throw new Error("Call update failed");
   return updated;
+}
+
+export type MetricDoc = {
+  id: string;
+  agent_email?: string;
+  agent_name?: string;
+  week_start?: string;
+  week_end?: string;
+  call_count?: number;
+  avg_empathy_score?: number;
+  avg_quality_score?: number;
+  fcr_rate?: number;
+  avg_transfers?: number;
+  total_talk_time_seconds?: number;
+};
+
+export async function setRollingFeedback(
+  email: string,
+  feedback: string
+): Promise<UserDoc> {
+  const ref = getDb().collection("users").doc(email.toLowerCase());
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("User not found");
+  await ref.update({
+    rolling_ai_feedback: feedback,
+    last_coaching_at: new Date(),
+    updated_at: new Date(),
+  });
+  const next = await ref.get();
+  return serializeDoc<UserDoc>(next.id, next.data());
+}
+
+export async function listMetricsForAgent(
+  agentEmail: string,
+  limit = 8
+): Promise<MetricDoc[]> {
+  try {
+    const snap = await getDb()
+      .collection("metrics")
+      .where("agent_email", "==", agentEmail.toLowerCase())
+      .orderBy("week_start", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((d) => serializeDoc<MetricDoc>(d.id, d.data()));
+  } catch {
+    const snap = await getDb().collection("metrics").limit(200).get();
+    return snap.docs
+      .map((d) => serializeDoc<MetricDoc>(d.id, d.data()))
+      .filter((m) => (m.agent_email || "").toLowerCase() === agentEmail.toLowerCase())
+      .sort((a, b) => String(b.week_start || "").localeCompare(String(a.week_start || "")))
+      .slice(0, limit);
+  }
+}
+
+export async function listFeedbackForAgent(
+  agentEmail: string,
+  limit = 40
+): Promise<Array<{ id: string; text?: string; created_at?: string }>> {
+  try {
+    const snap = await getDb()
+      .collection("feedback")
+      .where("agent_email", "==", agentEmail.toLowerCase())
+      .orderBy("created_at", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((d) =>
+      serializeDoc<{ id: string; text?: string; created_at?: string }>(d.id, d.data())
+    );
+  } catch {
+    return [];
+  }
 }

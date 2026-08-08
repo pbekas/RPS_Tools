@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { UnmappedAgentRow, UserDoc } from "@/lib/firestore";
+import type { UnmappedAgentRow, UserDoc } from "@/lib/database";
 
 type Props = {
   initialUsers: UserDoc[];

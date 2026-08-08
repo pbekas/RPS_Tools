@@ -91,6 +91,13 @@ payload = {
     "VBC_USERNAME": os.environ["VBC_USERNAME"],
     "VBC_PASSWORD": os.environ["VBC_PASSWORD"],
     "VBC_ACCOUNT_ID": os.environ.get("VBC_ACCOUNT_ID") or "self",
+    "APP_URL": os.environ.get("APP_URL") or "https://tool.releviumpain.com",
+    "GCHAT_WEBHOOK_URL": os.environ.get("GCHAT_WEBHOOK_URL")
+        or os.environ.get("GOOGLE_CHAT_WEBHOOK_URL")
+        or "",
+    "ALERTS_ENABLED": os.environ.get("ALERTS_ENABLED") or "1",
+    "MISSED_ALERT_WINDOW_MINUTES": os.environ.get("MISSED_ALERT_WINDOW_MINUTES") or "30",
+    "MISSED_ALERT_THRESHOLD": os.environ.get("MISSED_ALERT_THRESHOLD") or "8",
 }
 print(json.dumps(payload))
 PY

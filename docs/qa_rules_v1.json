@@ -1,7 +1,7 @@
 {
-  "version": "v1",
-  "name": "Relevium Phone QA Starter Rubric",
-  "description": "Starter audit rules for medical office phone quality. Edit qa_rules/current in Firestore to evolve without redeploying.",
+  "version": "v2",
+  "name": "Relevium Phone QA Medical Rubric",
+  "description": "Medical front-desk phone quality rubric for Relevium Pain Specialists. Edit qa_rules/current in Firestore to evolve without redeploying.",
   "auto_fail_quality_cap": 4,
   "empathy_pass_threshold": 7,
   "transfer_soft_limit": 1,
@@ -28,6 +28,26 @@
       "active": true
     },
     {
+      "id": "identity_verification",
+      "label": "Patient identity verification",
+      "description": "Agent verifies the patient before discussing protected details.",
+      "category": "Compliance",
+      "weight": 2.0,
+      "auto_fail": true,
+      "pass_criteria": "Before sharing clinical, billing, or appointment details tied to a specific patient, agent verifies identity (typically full name + DOB or another approved identifier). Pass if the call never reaches PHI disclosure and verification was not yet required. Auto-fail if PHI is disclosed without verification.",
+      "active": true
+    },
+    {
+      "id": "privacy_hipaa_hygiene",
+      "label": "Privacy / HIPAA hygiene",
+      "description": "Agent protects PHI and avoids discussing care with unverified parties.",
+      "category": "Compliance",
+      "weight": 2.0,
+      "auto_fail": true,
+      "pass_criteria": "Agent does not leave detailed clinical messages on unsecured voicemail, discuss care with unverified third parties, or overshare PHI. Pass if no PHI risk moments occur.",
+      "active": true
+    },
+    {
       "id": "empathy",
       "label": "Empathy & tone",
       "description": "Warm, patient-centered tone throughout the interaction.",
@@ -35,6 +55,46 @@
       "weight": 2.0,
       "auto_fail": false,
       "pass_criteria": "Tone is warm and respectful; acknowledges caller concern; score_1_to_10 must be provided (pass if score >= 7).",
+      "active": true
+    },
+    {
+      "id": "clinical_escalation",
+      "label": "Clinical escalation when needed",
+      "description": "Urgent clinical concerns are escalated appropriately.",
+      "category": "Process",
+      "weight": 2.0,
+      "auto_fail": true,
+      "pass_criteria": "If the caller reports urgent/emergent symptoms, agent follows escalation (nurse/provider/ER guidance) rather than treating it as routine scheduling only. Pass if no urgent clinical content is present.",
+      "active": true
+    },
+    {
+      "id": "scheduling_accuracy",
+      "label": "Scheduling accuracy",
+      "description": "Appointment details are confirmed clearly.",
+      "category": "Process",
+      "weight": 1.5,
+      "auto_fail": false,
+      "pass_criteria": "When scheduling or changing an appointment, agent confirms date, time, location/provider as applicable, and any prep instructions. Pass if the call is not about scheduling.",
+      "active": true
+    },
+    {
+      "id": "insurance_auth_clarity",
+      "label": "Insurance / auth clarity",
+      "description": "Coverage and authorization next steps are clear when relevant.",
+      "category": "Process",
+      "weight": 1.5,
+      "auto_fail": false,
+      "pass_criteria": "When insurance, referrals, or prior auth are discussed, agent explains status and owned next steps without leaving the caller confused. Pass if insurance/auth is not discussed.",
+      "active": true
+    },
+    {
+      "id": "medication_refill_process",
+      "label": "Medication refill process",
+      "description": "Refill requests follow office protocol and expectations.",
+      "category": "Process",
+      "weight": 1.5,
+      "auto_fail": false,
+      "pass_criteria": "For refill requests, agent follows process (portal/pharmacy/provider review), sets expectations on timing, and does not promise controlled substances outside protocol. Pass if no refill discussion.",
       "active": true
     },
     {

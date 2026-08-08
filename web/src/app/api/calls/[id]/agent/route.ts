@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { assignCallAgent } from "@/lib/firestore";
+import { assignCallAgent } from "@/lib/database";
 
 export async function POST(
   req: Request,

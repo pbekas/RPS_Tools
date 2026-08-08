@@ -20,7 +20,7 @@ import streamlit as st
 
 from src.auth import is_admin, logout, require_login
 from src.config import get_settings
-from src import firestore_db as db
+from src import database as db
 from src.pipeline import enqueue_bytes
 from src.qa_rules import get_active_ruleset, seed_firestore
 from src.call_topics import (

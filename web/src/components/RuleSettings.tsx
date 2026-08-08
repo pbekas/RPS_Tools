@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { QaRule, QaRuleset } from "@/lib/firestore";
+import type { QaRule, QaRuleset } from "@/lib/database";
 
 type Props = {
   initialRuleset: QaRuleset;

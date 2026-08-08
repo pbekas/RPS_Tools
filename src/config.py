@@ -15,6 +15,16 @@ load_dotenv(ROOT / ".env")
 
 
 class Settings:
+    database_backend: str
+    database_url: str
+    db_dual_write: bool
+    pg_host: str
+    pg_port: int
+    pg_database: str
+    pg_user: str
+    pg_password: str
+    pg_sslmode: str
+    pg_sslrootcert: str
     google_client_id: str
     google_client_secret: str
     session_secret: str
@@ -35,8 +45,31 @@ class Settings:
     vbc_account_id: str
     webhook_port: int
     allowed_email_domain: str
+    gchat_webhook_url: str
+    alerts_enabled: bool
+    missed_alert_window_minutes: int
+    missed_alert_threshold: int
 
     def __init__(self) -> None:
+        self.database_backend = (
+            os.getenv("DB_BACKEND", "firestore").strip().lower() or "firestore"
+        )
+        if self.database_backend not in {"firestore", "postgres"}:
+            raise ValueError("DB_BACKEND must be 'firestore' or 'postgres'")
+        self.database_url = os.getenv("DATABASE_URL", "").strip()
+        self.pg_host = os.getenv("PGHOST", "").strip()
+        self.pg_port = int(os.getenv("PGPORT", "5432"))
+        self.pg_database = os.getenv("PGDATABASE", "rps_call_qa").strip()
+        self.pg_user = os.getenv("PGUSER", "").strip()
+        self.pg_password = os.getenv("PGPASSWORD", "")
+        self.pg_sslmode = os.getenv("PGSSLMODE", "require").strip() or "require"
+        self.pg_sslrootcert = os.getenv("PGSSLROOTCERT", "").strip()
+        self.db_dual_write = os.getenv("DB_DUAL_WRITE", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
         self.google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
         self.session_secret = os.getenv("SESSION_SECRET", "dev-insecure-session").strip()
@@ -74,6 +107,21 @@ class Settings:
         self.firebase_service_account = self._parse_service_account(
             os.getenv("FIREBASE_SERVICE_ACCOUNT", "")
         )
+        # Outbound alerts (Google Chat incoming webhook)
+        self.gchat_webhook_url = (
+            os.getenv("GCHAT_WEBHOOK_URL", "").strip()
+            or os.getenv("GOOGLE_CHAT_WEBHOOK_URL", "").strip()
+        )
+        self.alerts_enabled = os.getenv("ALERTS_ENABLED", "1").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        } and bool(self.gchat_webhook_url)
+        self.missed_alert_window_minutes = int(
+            os.getenv("MISSED_ALERT_WINDOW_MINUTES", "30")
+        )
+        self.missed_alert_threshold = int(os.getenv("MISSED_ALERT_THRESHOLD", "8"))
 
     @staticmethod
     def _parse_service_account(raw: str) -> dict[str, Any] | None:
@@ -97,6 +145,19 @@ class Settings:
     @property
     def firestore_configured(self) -> bool:
         return self.firebase_service_account is not None
+
+    @property
+    def postgres_configured(self) -> bool:
+        return bool(
+            self.database_url
+            or (self.pg_host and self.pg_database and self.pg_user and self.pg_password)
+        )
+
+    @property
+    def database_configured(self) -> bool:
+        if self.database_backend == "postgres":
+            return self.postgres_configured
+        return self.firestore_configured
 
     @property
     def bedrock_configured(self) -> bool:

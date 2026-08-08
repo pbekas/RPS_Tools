@@ -5,7 +5,7 @@ import {
   getCallTopics,
   setCallTopicActive,
   upsertCallTopic,
-} from "@/lib/firestore";
+} from "@/lib/database";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {

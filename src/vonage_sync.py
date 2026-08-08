@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src import firestore_db as db
+from src import database as db
 from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
 from src.pipeline import enqueue_bytes
@@ -14,22 +14,10 @@ from src.vonage_vbc import VBCRecording, VonageVBCClient, VonageVBCError
 
 def find_existing_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | None:
     settings = get_settings()
-    if not settings.firestore_configured:
+    if not settings.database_configured:
         return None
-    # Prefer a field query; fall back to recent scan if index missing
     try:
-        from google.cloud import firestore
-
-        client = db.get_db()
-        q = (
-            client.collection("calls")
-            .where("vonage_recording_id", "==", str(recording_id))
-            .limit(1)
-        )
-        for doc in q.stream():
-            data = doc.to_dict() or {}
-            data["id"] = doc.id
-            return data
+        return db.find_call_by_vonage_recording_id(str(recording_id))
     except Exception:
         for call in db.list_calls(limit=200, require_min_duration=False):
             if str(call.get("vonage_recording_id") or "") == str(recording_id):
@@ -146,7 +134,7 @@ def ingest_recording(
 
     settings = get_settings()
     audio_path = _UPLOAD_ROOT / f"{call_id}_{filename}"
-    if settings.firestore_configured and not str(call_id).startswith("local_"):
+    if settings.database_configured and not str(call_id).startswith("local_"):
         db.update_call(
             call_id,
             {
@@ -162,7 +150,7 @@ def ingest_recording(
             },
         )
 
-    if process_now and settings.firestore_configured and not str(call_id).startswith("local_"):
+    if process_now and settings.database_configured and not str(call_id).startswith("local_"):
         process_call_sync(call_id, audio_path)
     else:
         _queue_job(call_id, audio_path)

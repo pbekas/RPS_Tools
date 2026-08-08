@@ -1,4 +1,4 @@
-import type { CallDoc } from "@/lib/firestore";
+import type { CallDoc } from "@/lib/database";
 
 export const QUEUE_STORAGE_KEY = "rps_qa_queue_v1";
 

@@ -3,10 +3,11 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import {
   discoverUnmappedAgents,
+  getCallFlags,
   getCallTopics,
   getQaRules,
   listUsers,
-} from "@/lib/firestore";
+} from "@/lib/database";
 import { SettingsShell } from "@/components/SettingsShell";
 
 export default async function SettingsPage() {
@@ -14,11 +15,12 @@ export default async function SettingsPage() {
   if (!session?.user?.email) redirect("/login");
   if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
 
-  const [users, unmapped, topicset, ruleset] = await Promise.all([
+  const [users, unmapped, topicset, ruleset, flagset] = await Promise.all([
     listUsers(),
     discoverUnmappedAgents(),
     getCallTopics(),
     getQaRules(),
+    getCallFlags(),
   ]);
   const domain = process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com";
 
@@ -28,6 +30,7 @@ export default async function SettingsPage() {
       initialUnmapped={unmapped}
       initialTopicset={topicset}
       initialRuleset={ruleset}
+      initialFlagset={flagset}
       domain={domain}
     />
   );

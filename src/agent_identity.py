@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src import firestore_db as db
+from src import database as db
 from src.config import get_settings
 
 
@@ -48,7 +48,7 @@ def names_match(a: str, b: str) -> bool:
 
 def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
     """
-    Match an AI-detected agent name to a users doc, or create Agent as {name}@domain.
+    Match an AI-detected agent name to a user, or create Agent as {name}@domain.
 
     Returns (agent_email, agent_name). email may be None only when name is Unknown.
     """
@@ -57,7 +57,7 @@ def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
         return None, "Unknown"
 
     settings = get_settings()
-    if not settings.firestore_configured:
+    if not settings.database_configured:
         return None, cleaned
 
     try:

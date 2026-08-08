@@ -135,6 +135,18 @@ def get_call(call_id: str) -> dict[str, Any] | None:
     return _serialize(db.collection("calls").document(call_id).get())
 
 
+def find_call_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | None:
+    db = get_db()
+    query = (
+        db.collection("calls")
+        .where("vonage_recording_id", "==", str(recording_id))
+        .limit(1)
+    )
+    for doc in query.stream():
+        return _serialize(doc)
+    return None
+
+
 def list_calls(
     *,
     agent_email: str | None = None,
@@ -411,6 +423,32 @@ def seed_call_flags(flagset: dict[str, Any], *, force: bool = False) -> str:
 def save_call_flags(flagset: dict[str, Any]) -> str:
     """Always overwrite call_flags/current (manager edits)."""
     return seed_call_flags(flagset, force=True)
+
+
+# ── Alert dedup ────────────────────────────────────────────────────────
+
+
+def alert_recently_sent(alert_key: str, *, cooldown_minutes: int) -> bool:
+    db = get_db()
+    snap = db.collection("alert_state").document(alert_key).get()
+    if not snap.exists:
+        return False
+    data = snap.to_dict() or {}
+    sent_at = data.get("sent_at")
+    if not isinstance(sent_at, datetime):
+        return False
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    age = (_now() - sent_at).total_seconds() / 60.0
+    return age < max(1, cooldown_minutes)
+
+
+def mark_alert_sent(alert_key: str) -> None:
+    db = get_db()
+    db.collection("alert_state").document(alert_key).set(
+        {"sent_at": _now(), "updated_at": _now()},
+        merge=True,
+    )
 
 
 # ── Call Logs (VBC Reports CDRs) ───────────────────────────────────────

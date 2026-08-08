@@ -40,9 +40,9 @@ def get_active_flagset(*, prefer_firestore: bool = True) -> dict[str, Any]:
     if prefer_firestore:
         try:
             from src.config import get_settings
-            from src import firestore_db as db
+            from src import database as db
 
-            if get_settings().firestore_configured:
+            if get_settings().database_configured:
                 remote = db.get_call_flags_current()
                 if remote and remote.get("flags"):
                     return _normalize_flagset(remote)
@@ -142,7 +142,7 @@ def normalize_sentiment(raw: Any) -> dict[str, Any]:
 
 
 def seed_firestore(flagset: dict[str, Any] | None = None, *, force: bool = False) -> str:
-    from src import firestore_db as db
+    from src import database as db
 
     fs = flagset or load_flags_from_file()
     return db.seed_call_flags(fs, force=force)

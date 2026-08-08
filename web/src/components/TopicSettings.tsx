@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { CallTopic, TopicSet } from "@/lib/firestore";
+import type { CallTopic, TopicSet } from "@/lib/database";
 
 type Props = {
   initialTopicset: TopicSet;

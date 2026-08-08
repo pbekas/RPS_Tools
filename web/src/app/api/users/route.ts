@@ -8,7 +8,7 @@ import {
   listUsers,
   setUserActive,
   upsertUser,
-} from "@/lib/firestore";
+} from "@/lib/database";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { listCallLogs, summarizeCallLogs } from "@/lib/firestore";
+import { listCallLogs, summarizeCallLogs } from "@/lib/database";
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);

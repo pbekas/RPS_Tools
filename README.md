@@ -35,6 +35,9 @@ Optional env:
 | `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
 | `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
 | `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
+| `GCHAT_WEBHOOK_URL` | empty | Google Chat incoming webhook for critical-flag + missed-call alerts |
+| `MISSED_ALERT_THRESHOLD` | `8` | Missed/non-answered CDRs in window before G Chat alert |
+| `MISSED_ALERT_WINDOW_MINUTES` | `30` | Rolling window for missed-call spike alerts |
 
 Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
 so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
@@ -60,6 +63,10 @@ On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/syn
 ## Firestore schema
 
 See [`docs/firestore_schema.json`](docs/firestore_schema.json).
+
+The application is beginning a phased move to private RDS PostgreSQL. Firestore
+remains the production source of truth until backfill and reconciliation are
+complete. See [`docs/RDS_POSTGRES_MIGRATION.md`](docs/RDS_POSTGRES_MIGRATION.md).
 
 Collections: `users`, `calls`, `call_logs`, `metrics`, `feedback`.
 

@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src import firestore_db as db
+from src import database as db
 from src.bedrock_analyst import generate_coaching_report
 
 

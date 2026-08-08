@@ -10,7 +10,7 @@ import streamlit as st
 from authlib.integrations.requests_client import OAuth2Session
 
 from src.config import get_settings
-from src import firestore_db as db
+from src import database as db
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -108,9 +108,9 @@ def handle_oauth_callback() -> dict[str, Any] | None:
 
 
 def _resolve_app_user(*, email: str, name: str) -> dict[str, Any]:
-    """Load role from Firestore Users; bootstrap Agent if missing."""
+    """Load the user role from the selected database; bootstrap Agent if missing."""
     settings = get_settings()
-    if settings.firestore_configured:
+    if settings.database_configured:
         try:
             existing = db.get_user(email)
             if existing:
@@ -120,7 +120,7 @@ def _resolve_app_user(*, email: str, name: str) -> dict[str, Any]:
                     "role": existing.get("role") or "Agent",
                     "rolling_ai_feedback": existing.get("rolling_ai_feedback") or "",
                 }
-            # First login: create as Agent (promote first Admin manually in Firestore)
+            # First login: create as Agent (promote the first Admin manually).
             created = db.upsert_user(email=email, name=name, role="Agent")
             return {
                 "email": created["email"],
@@ -129,9 +129,9 @@ def _resolve_app_user(*, email: str, name: str) -> dict[str, Any]:
                 "rolling_ai_feedback": "",
             }
         except Exception as exc:  # noqa: BLE001
-            st.warning(f"Firestore user lookup failed ({exc}). Using session-only role.")
+            st.warning(f"Database user lookup failed ({exc}). Using session-only role.")
 
-    # Dev fallback when Firestore is not ready
+    # Dev fallback when the selected database is not ready
     return {
         "email": email,
         "name": name,

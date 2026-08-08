@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { listCalls, listUsers } from "@/lib/firestore";
+import { listCalls, listUsers } from "@/lib/database";
 import { SampleQueue } from "@/components/SampleQueue";
 
 export default async function QueuePage() {

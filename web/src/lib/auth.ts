@@ -1,6 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
-import { getUser, upsertUser } from "@/lib/firestore";
+import { getUser, upsertUser } from "@/lib/database";
 
 const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase();
 

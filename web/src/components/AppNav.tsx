@@ -23,6 +23,14 @@ export function AppNav() {
             >
               Dashboard
             </Link>
+            <Link
+              href="/coaching"
+              className={
+                pathname.startsWith("/coaching") ? "text-accent" : "hover:text-ink"
+              }
+            >
+              Coaching
+            </Link>
             {(data.user.role || "").toLowerCase() === "admin" ? (
               <>
                 <Link

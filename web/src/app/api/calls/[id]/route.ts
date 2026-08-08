@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getCall } from "@/lib/firestore";
+import { getCall } from "@/lib/database";
 import { resolveRecordingUrl } from "@/lib/s3";
 
 export async function GET(

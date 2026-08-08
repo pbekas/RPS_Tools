@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import type {
+  FlagSet,
   QaRuleset,
   TopicSet,
   UnmappedAgentRow,
   UserDoc,
-} from "@/lib/firestore";
+} from "@/lib/database";
 import { AgentSettings } from "@/components/AgentSettings";
+import { FlagSettings } from "@/components/FlagSettings";
 import { RuleSettings } from "@/components/RuleSettings";
 import { TopicSettings } from "@/components/TopicSettings";
 
@@ -16,6 +18,7 @@ type Props = {
   initialUnmapped: UnmappedAgentRow[];
   initialTopicset: TopicSet;
   initialRuleset: QaRuleset;
+  initialFlagset: FlagSet;
   domain: string;
 };
 
@@ -24,9 +27,12 @@ export function SettingsShell({
   initialUnmapped,
   initialTopicset,
   initialRuleset,
+  initialFlagset,
   domain,
 }: Props) {
-  const [tab, setTab] = useState<"agents" | "topics" | "rules">("agents");
+  const [tab, setTab] = useState<"agents" | "topics" | "rules" | "flags">(
+    "agents"
+  );
 
   return (
     <div>
@@ -41,6 +47,7 @@ export function SettingsShell({
               ["agents", "Agents"],
               ["topics", "Topics"],
               ["rules", "Audit rules"],
+              ["flags", "Critical flags"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -70,8 +77,10 @@ export function SettingsShell({
         <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
           {tab === "topics" ? (
             <TopicSettings initialTopicset={initialTopicset} />
-          ) : (
+          ) : tab === "rules" ? (
             <RuleSettings initialRuleset={initialRuleset} />
+          ) : (
+            <FlagSettings initialFlagset={initialFlagset} />
           )}
         </div>
       )}

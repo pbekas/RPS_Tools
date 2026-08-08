@@ -45,9 +45,9 @@ def get_active_ruleset(*, prefer_firestore: bool = True) -> dict[str, Any]:
     if prefer_firestore:
         try:
             from src.config import get_settings
-            from src import firestore_db as db
+            from src import database as db
 
-            if get_settings().firestore_configured:
+            if get_settings().database_configured:
                 remote = db.get_qa_rules_current()
                 if remote and remote.get("rules"):
                     return _normalize_ruleset(remote)
@@ -294,7 +294,7 @@ def compute_scores(
 
 def seed_firestore(ruleset: dict[str, Any] | None = None, *, force: bool = False) -> str:
     """Write ruleset to qa_rules/current (and versioned doc). Returns doc path."""
-    from src import firestore_db as db
+    from src import database as db
 
     rs = ruleset or load_rules_from_file()
     return db.seed_qa_rules(rs, force=force)

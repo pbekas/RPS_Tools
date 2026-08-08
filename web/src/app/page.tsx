@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { authOptions } from "@/lib/auth";
-import { isFirestoreQuotaError, listCalls } from "@/lib/firestore";
+import { isFirestoreQuotaError, listCalls } from "@/lib/database";
 import { buildIssueHeatmap } from "@/lib/qa";
 import { Dashboard } from "@/components/Dashboard";
 import { QuotaNotice } from "@/components/QuotaNotice";

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from src import firestore_db as db
+from src import database as db
 from src.agent_identity import resolve_or_create_agent
 from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
@@ -154,6 +154,22 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
         }
         db.update_call(call_id, updates)
 
+        if updates.get("has_critical_flags"):
+            try:
+                from src.notify import alert_critical_flags
+
+                existing = db.get_call(call_id) or {}
+                alert_critical_flags(
+                    call_id=call_id,
+                    agent_name=updates.get("agent_name"),
+                    agent_email=agent_email,
+                    patient_name=updates.get("patient_name"),
+                    phone=existing.get("vonage_caller_id"),
+                    doctor_name=updates.get("doctor_name"),
+                    flags=list(updates.get("critical_flags") or []),
+                )
+            except Exception:
+                pass
         if agent_email:
             try:
                 recompute_weekly_metrics_for_agent(agent_email)
@@ -177,8 +193,8 @@ def _create_pending(
     call_date: datetime | None,
 ) -> str:
     settings = get_settings()
-    if not settings.firestore_configured:
-        # Local stub id when Firestore not ready — still process files
+    if not settings.database_configured:
+        # Local stub id when the selected database is not ready — still process files
         return f"local_{uuid.uuid4().hex[:12]}"
 
     return db.create_call(

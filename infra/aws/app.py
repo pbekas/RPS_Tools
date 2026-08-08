@@ -29,6 +29,7 @@ from aws_cdk import (
     App,
     CfnOutput,
     Duration,
+    RemovalPolicy,
     Stack,
     aws_certificatemanager as acm,
     aws_ec2 as ec2,
@@ -37,7 +38,9 @@ from aws_cdk import (
     aws_ecs_patterns as ecs_patterns,
     aws_elasticloadbalancingv2 as elbv2,
     aws_iam as iam,
+    aws_kms as kms,
     aws_logs as logs,
+    aws_rds as rds,
     aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
 )
@@ -66,6 +69,41 @@ class RpsCallQaStack(Stack):
         coaching_model = (
             self.node.try_get_context("bedrockCoachingModelId") or DEFAULT_COACHING
         )
+        enable_rds = str(
+            self.node.try_get_context("enableRds") or "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        rds_multi_az = str(
+            self.node.try_get_context("rdsMultiAz") or "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        db_backend = str(
+            self.node.try_get_context("dbBackend") or "firestore"
+        ).lower()
+        database_secret_arn = str(
+            self.node.try_get_context("databaseSecretArn") or ""
+        ).strip()
+        database_key_arn = str(
+            self.node.try_get_context("databaseKeyArn") or ""
+        ).strip()
+        if db_backend not in {"firestore", "postgres"}:
+            raise ValueError("dbBackend must be firestore or postgres")
+        db_dual_write = str(
+            self.node.try_get_context("dbDualWrite") or "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        if db_dual_write:
+            raise ValueError(
+                "dbDualWrite is reserved for migration phase 3 and is not "
+                "implemented yet"
+            )
+        if db_backend == "postgres" and not (enable_rds or database_secret_arn):
+            raise ValueError(
+                "enableRds=true or databaseSecretArn is required "
+                "when dbBackend=postgres"
+            )
+        if database_secret_arn and not database_key_arn:
+            raise ValueError(
+                "databaseKeyArn is required with databaseSecretArn "
+                "so ECS can decrypt database credentials"
+            )
 
         vpc = ec2.Vpc(
             self,
@@ -80,6 +118,91 @@ class RpsCallQaStack(Stack):
 
         app_secret = secretsmanager.Secret.from_secret_name_v2(
             self, "AppSecret", SECRET_NAME
+        )
+
+        database: rds.DatabaseInstance | None = None
+        database_key: kms.IKey | None = None
+        database_secret: secretsmanager.ISecret | None = None
+        database_secrets: dict[str, ecs.Secret] = {}
+        if enable_rds:
+            database_key = kms.Key(
+                self,
+                "DatabaseKey",
+                enable_key_rotation=True,
+                removal_policy=RemovalPolicy.RETAIN,
+                description="RPS Call QA PostgreSQL encryption key",
+            )
+            database = rds.DatabaseInstance(
+                self,
+                "Database",
+                engine=rds.DatabaseInstanceEngine.postgres(
+                    version=rds.PostgresEngineVersion.VER_16_13
+                ),
+                credentials=rds.Credentials.from_generated_secret("rps_app"),
+                database_name="rps_call_qa",
+                instance_type=ec2.InstanceType.of(
+                    ec2.InstanceClass.BURSTABLE4_GRAVITON,
+                    ec2.InstanceSize.MICRO,
+                ),
+                vpc=vpc,
+                vpc_subnets=ec2.SubnetSelection(
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
+                ),
+                publicly_accessible=False,
+                multi_az=rds_multi_az,
+                storage_encrypted=True,
+                storage_encryption_key=database_key,
+                allocated_storage=20,
+                max_allocated_storage=100,
+                storage_type=rds.StorageType.GP3,
+                backup_retention=Duration.days(14),
+                delete_automated_backups=False,
+                deletion_protection=True,
+                cloudwatch_logs_exports=["postgresql"],
+                cloudwatch_logs_retention=logs.RetentionDays.ONE_MONTH,
+                performance_insight_retention=rds.PerformanceInsightRetention.DEFAULT,
+                enable_performance_insights=True,
+                auto_minor_version_upgrade=True,
+                removal_policy=RemovalPolicy.SNAPSHOT,
+            )
+            if database.secret is None:
+                raise ValueError("RDS generated secret was not created")
+            database_secret = database.secret
+        elif database_secret_arn:
+            database_key = kms.Key.from_key_arn(
+                self,
+                "ImportedDatabaseKey",
+                database_key_arn,
+            )
+            database_secret = secretsmanager.Secret.from_secret_attributes(
+                self,
+                "DatabaseSecret",
+                secret_complete_arn=database_secret_arn,
+                encryption_key=database_key,
+            )
+
+        if database_secret is not None:
+            database_secrets = {
+                "PGHOST": ecs.Secret.from_secrets_manager(database_secret, "host"),
+                "PGPORT": ecs.Secret.from_secrets_manager(database_secret, "port"),
+                "PGDATABASE": ecs.Secret.from_secrets_manager(
+                    database_secret, "dbname"
+                ),
+                "PGUSER": ecs.Secret.from_secrets_manager(
+                    database_secret, "username"
+                ),
+                "PGPASSWORD": ecs.Secret.from_secrets_manager(
+                    database_secret, "password"
+                ),
+            }
+        firestore_secrets = (
+            {
+                "FIREBASE_SERVICE_ACCOUNT": ecs.Secret.from_secrets_manager(
+                    app_secret, "FIREBASE_SERVICE_ACCOUNT"
+                )
+            }
+            if db_backend == "firestore"
+            else {}
         )
 
         if cert_arn:
@@ -132,6 +255,11 @@ class RpsCallQaStack(Stack):
                     "ALLOWED_EMAIL_DOMAIN": "releviumpain.com",
                     "BEDROCK_MODEL_ID": bedrock_model,
                     "BEDROCK_COACHING_MODEL_ID": coaching_model,
+                    # Defaults keep Firestore primary until shadow validation.
+                    "DB_BACKEND": db_backend,
+                    "DB_DUAL_WRITE": "1" if db_dual_write else "0",
+                    "PGSSLMODE": "verify-full",
+                    "PGSSLROOTCERT": "/etc/ssl/certs/aws-rds-global-bundle.pem",
                 },
                 secrets={
                     "NEXTAUTH_SECRET": ecs.Secret.from_secrets_manager(
@@ -143,9 +271,8 @@ class RpsCallQaStack(Stack):
                     "GOOGLE_CLIENT_SECRET": ecs.Secret.from_secrets_manager(
                         app_secret, "GOOGLE_CLIENT_SECRET"
                     ),
-                    "FIREBASE_SERVICE_ACCOUNT": ecs.Secret.from_secrets_manager(
-                        app_secret, "FIREBASE_SERVICE_ACCOUNT"
-                    ),
+                    **firestore_secrets,
+                    **database_secrets,
                 },
             ),
             health_check_grace_period=Duration.seconds(120),
@@ -187,11 +314,18 @@ class RpsCallQaStack(Stack):
                 "VBC_POLLER_LOOKBACK_MINUTES": "30",
                 "VBC_POLLER_MAX_PER_CYCLE": "25",
                 "ALLOWED_EMAIL_DOMAIN": "releviumpain.com",
+                "APP_URL": f"https://{domain}",
+                "ALERTS_ENABLED": "1",
+                "MISSED_ALERT_WINDOW_MINUTES": "30",
+                "MISSED_ALERT_THRESHOLD": "8",
+                # Defaults keep Firestore primary until shadow validation.
+                "DB_BACKEND": db_backend,
+                "DB_DUAL_WRITE": "1" if db_dual_write else "0",
+                "PGSSLMODE": "verify-full",
+                "PGSSLROOTCERT": "/etc/ssl/certs/aws-rds-global-bundle.pem",
             },
             secrets={
-                "FIREBASE_SERVICE_ACCOUNT": ecs.Secret.from_secrets_manager(
-                    app_secret, "FIREBASE_SERVICE_ACCOUNT"
-                ),
+                **firestore_secrets,
                 "VBC_CLIENT_ID": ecs.Secret.from_secrets_manager(
                     app_secret, "VBC_CLIENT_ID"
                 ),
@@ -207,6 +341,10 @@ class RpsCallQaStack(Stack):
                 "VBC_ACCOUNT_ID": ecs.Secret.from_secrets_manager(
                     app_secret, "VBC_ACCOUNT_ID"
                 ),
+                "GCHAT_WEBHOOK_URL": ecs.Secret.from_secrets_manager(
+                    app_secret, "GCHAT_WEBHOOK_URL"
+                ),
+                **database_secrets,
             },
             health_check=ecs.HealthCheck(
                 command=[
@@ -234,6 +372,22 @@ class RpsCallQaStack(Stack):
             min_healthy_percent=100,
             max_healthy_percent=200,
         )
+
+        if database_secret is not None and database_key is not None:
+            for execution_role in (
+                web.task_definition.execution_role,
+                poller_td.execution_role,
+            ):
+                database_secret.grant_read(execution_role)
+                database_key.grant_decrypt(execution_role)
+
+        if database is not None:
+            database.connections.allow_default_port_from(
+                web.service, "PostgreSQL from web service"
+            )
+            database.connections.allow_default_port_from(
+                poller, "PostgreSQL from poller service"
+            )
 
         for role in (
             web.task_definition.task_role,
@@ -271,6 +425,11 @@ class RpsCallQaStack(Stack):
         CfnOutput(self, "SecretName", value=SECRET_NAME)
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
         CfnOutput(self, "PollerServiceName", value=poller.service_name)
+        if database is not None:
+            CfnOutput(self, "DatabaseEndpoint", value=database.db_instance_endpoint_address)
+            CfnOutput(self, "DatabaseName", value="rps_call_qa")
+            if database.secret is not None:
+                CfnOutput(self, "DatabaseSecretArn", value=database.secret.secret_arn)
         CfnOutput(
             self,
             "CloudflareDNSHint",

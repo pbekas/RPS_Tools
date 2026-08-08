@@ -41,9 +41,9 @@ def get_active_topicset(*, prefer_firestore: bool = True) -> dict[str, Any]:
     if prefer_firestore:
         try:
             from src.config import get_settings
-            from src import firestore_db as db
+            from src import database as db
 
-            if get_settings().firestore_configured:
+            if get_settings().database_configured:
                 remote = db.get_call_topics_current()
                 if remote and remote.get("topics"):
                     return _normalize_topicset(remote)
@@ -118,7 +118,7 @@ def normalize_topic(
 
 
 def seed_firestore(topicset: dict[str, Any] | None = None, *, force: bool = False) -> str:
-    from src import firestore_db as db
+    from src import database as db
 
     ts = topicset or load_topics_from_file()
     return db.seed_call_topics(ts, force=force)
