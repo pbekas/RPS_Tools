@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
 import threading
@@ -17,6 +18,8 @@ from src.config import get_settings
 from src.bedrock_analyst import analyze_call_audio
 from src.metrics import recompute_weekly_metrics_for_agent
 from src.storage import upload_recording
+
+logger = logging.getLogger(__name__)
 
 _UPLOAD_ROOT = Path(__file__).resolve().parent.parent / "uploads"
 _UPLOAD_ROOT.mkdir(exist_ok=True)
@@ -78,13 +81,22 @@ def enqueue_upload_file(
     return enqueue_bytes(data=data, original_filename=original_filename, source="upload")
 
 
-def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
+def process_call_sync(
+    call_id: str,
+    audio_path: Path,
+    *,
+    transcribe_even_if_short: bool = False,
+) -> dict[str, Any]:
     """Run Transcribe + Bedrock analysis and storage update for one call."""
     settings = get_settings()
     existing = db.get_call(call_id) or {}
     known_duration = int(existing.get("duration_seconds") or 0)
     # Only short-circuit when we already know a positive short duration (e.g. Vonage).
-    if known_duration > 0 and not is_qa_eligible_duration(known_duration):
+    if (
+        known_duration > 0
+        and not is_qa_eligible_duration(known_duration)
+        and not transcribe_even_if_short
+    ):
         updates = {
             "status": "skipped_short",
             "error_message": "Call under 30s — likely IVR-only; skipped QA",
@@ -108,6 +120,34 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
                 local_path=audio_path,
                 destination_blob=blob,
             )
+
+        # Short voicemail path: Transcribe only (skip Bedrock QA scoring).
+        if (
+            transcribe_even_if_short
+            and known_duration > 0
+            and not is_qa_eligible_duration(known_duration)
+        ):
+            from src.bedrock_analyst import transcribe_audio
+
+            media_uri = storage_uri if storage_uri.startswith("s3://") else None
+            if not media_uri:
+                raise RuntimeError("S3 recording URI required to transcribe short voicemail")
+            turns, duration_seconds, stt_language = transcribe_audio(media_uri)
+            updates = {
+                "duration_seconds": duration_seconds or known_duration,
+                "recording_gcs_path": storage_uri,
+                "recording_storage_uri": storage_uri,
+                "recording_url": recording_url or str(audio_path.resolve()),
+                "status": "skipped_short",
+                "error_message": "Voicemail / short recording — transcribed for alerts, skipped QA",
+                "ai_summary": "Short recording transcribed for voicemail alert (QA scoring skipped).",
+                "transcript": turns or [],
+                "stt_language": stt_language,
+                "call_date": existing.get("call_date") or datetime.now(timezone.utc),
+            }
+            db.update_call(call_id, updates)
+            _maybe_alert_missed_after_transcript(call_id)
+            return {"call_id": call_id, **updates}
 
         analysis = analyze_call_audio(
             audio_path,
@@ -136,6 +176,7 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
                 "call_date": datetime.now(timezone.utc),
             }
             db.update_call(call_id, updates)
+            _maybe_alert_missed_after_transcript(call_id)
             return {"call_id": call_id, **updates}
 
         agent_name = analysis["agent_name"]
@@ -176,6 +217,7 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
             except Exception:
                 pass
 
+        _maybe_alert_missed_after_transcript(call_id)
         return {"call_id": call_id, **updates}
     except Exception as exc:  # noqa: BLE001
         db.update_call(
@@ -184,6 +226,17 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
         )
         raise
 
+
+def _maybe_alert_missed_after_transcript(call_id: str) -> None:
+    try:
+        from src.notify import maybe_alert_missed_call_for_processed_call
+
+        call = db.get_call(call_id) or {}
+        maybe_alert_missed_call_for_processed_call(call)
+    except Exception:
+        logger.exception(
+            "Post-transcript missed-call alert failed for %s", call_id
+        )
 
 def _create_pending(
     *,

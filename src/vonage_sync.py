@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -10,6 +12,8 @@ from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
 from src.pipeline import enqueue_bytes
 from src.vonage_vbc import VBCRecording, VonageVBCClient, VonageVBCError
+
+logger = logging.getLogger(__name__)
 
 
 def find_existing_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | None:
@@ -23,6 +27,51 @@ def find_existing_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | 
             if str(call.get("vonage_recording_id") or "") == str(recording_id):
                 return call
     return None
+
+
+def _digits(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\D", "", str(value))
+
+
+def _phones_match(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 10 and len(b) >= 10:
+        return a[-10:] == b[-10:]
+    return a.endswith(b) or b.endswith(a)
+
+
+def recording_matches_voicemail_cdr(rec: VBCRecording) -> bool:
+    """True when a nearby inbound CDR has result Voicemail for this caller."""
+    if rec.start is None:
+        return False
+    caller = _digits(rec.caller_id)
+    if not caller:
+        return False
+    try:
+        logs = db.list_call_logs(limit=300, days=2, missed_only=True)
+    except Exception:
+        logger.exception("Failed listing call logs for short-VM match")
+        return False
+    start = rec.start if rec.start.tzinfo else rec.start.replace(tzinfo=timezone.utc)
+    for row in logs:
+        result = (row.get("result") or "").strip().lower()
+        if "voicemail" not in result and "voice mail" not in result:
+            continue
+        cdr_start = row.get("start") or row.get("start_at")
+        if not isinstance(cdr_start, datetime):
+            continue
+        if cdr_start.tzinfo is None:
+            cdr_start = cdr_start.replace(tzinfo=timezone.utc)
+        if abs((cdr_start - start).total_seconds()) > 180:
+            continue
+        if _phones_match(caller, _digits(row.get("from_number"))):
+            return True
+    return False
 
 
 def sync_company_recordings(
@@ -59,6 +108,7 @@ def sync_company_recordings(
         "queued": 0,
         "skipped_existing": 0,
         "skipped_short": 0,
+        "queued_voicemail_short": 0,
         "errors": [],
         "call_ids": [],
         "window_start": start_gte.isoformat(),
@@ -83,16 +133,27 @@ def sync_company_recordings(
             summary["skipped_existing"] += 1
             continue
 
+        transcript_only = False
         if not is_qa_eligible_duration(rec.duration_seconds):
-            summary["skipped_short"] += 1
-            continue
+            if recording_matches_voicemail_cdr(rec):
+                transcript_only = True
+            else:
+                summary["skipped_short"] += 1
+                continue
 
         if not enqueue_for_qa:
             continue
 
         try:
-            call_id = ingest_recording(client, rec, process_now=process_now)
+            call_id = ingest_recording(
+                client,
+                rec,
+                process_now=process_now,
+                transcript_only=transcript_only,
+            )
             summary["queued"] += 1
+            if transcript_only:
+                summary["queued_voicemail_short"] += 1
             summary["call_ids"].append(call_id)
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(
@@ -107,8 +168,9 @@ def ingest_recording(
     rec: VBCRecording,
     *,
     process_now: bool = True,
+    transcript_only: bool = False,
 ) -> str:
-    if not is_qa_eligible_duration(rec.duration_seconds):
+    if not is_qa_eligible_duration(rec.duration_seconds) and not transcript_only:
         raise VonageVBCError(
             f"Recording {rec.recording_id} is {rec.duration_seconds}s "
             "(30s or under) — skipped as IVR-only / no live interaction"
@@ -151,7 +213,11 @@ def ingest_recording(
         )
 
     if process_now and settings.database_configured and not str(call_id).startswith("local_"):
-        process_call_sync(call_id, audio_path)
+        process_call_sync(
+            call_id,
+            audio_path,
+            transcribe_even_if_short=transcript_only,
+        )
     else:
         _queue_job(call_id, audio_path)
     return call_id

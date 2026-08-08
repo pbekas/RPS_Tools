@@ -179,6 +179,52 @@ def _caller_name_from_missed_log(
     return name
 
 
+def is_voicemail_result(result: str | None) -> bool:
+    text = (result or "").strip().lower()
+    return "voicemail" in text or "voice mail" in text
+
+
+def transcript_to_plain_text(
+    transcript: Any,
+    *,
+    max_chars: int = 1400,
+) -> str:
+    """Flatten stored transcript turns into Chat-friendly plain text."""
+    if transcript is None:
+        return ""
+    if isinstance(transcript, str):
+        return transcript.strip()[:max_chars]
+
+    turns: list[dict[str, Any]] = []
+    if isinstance(transcript, list):
+        turns = [t for t in transcript if isinstance(t, dict)]
+    if not turns:
+        return ""
+
+    # Drop IVR/system prompts when other speech is present.
+    preferred = [
+        t
+        for t in turns
+        if str(t.get("speaker") or "").strip().lower() not in {"system", "ivr"}
+    ]
+    use = preferred if preferred else turns
+
+    lines: list[str] = []
+    for turn in use:
+        text = str(turn.get("text") or "").strip()
+        if not text:
+            continue
+        speaker = str(turn.get("speaker") or "").strip()
+        if speaker and speaker.lower() not in {"system", "ivr"}:
+            lines.append(f"{speaker}: {text}")
+        else:
+            lines.append(text)
+    flat = "\n".join(lines).strip()
+    if len(flat) <= max_chars:
+        return flat
+    return flat[: max_chars - 1].rstrip() + "…"
+
+
 def format_missed_call_gchat_text(
     *,
     from_number: str | None,
@@ -193,8 +239,16 @@ def format_missed_call_gchat_text(
     log_id: str | None = None,
     matched_call_id: str | None = None,
     sms_sent: bool | None = None,
+    voicemail_transcript: str | None = None,
+    voicemail_status: str = "none",
 ) -> str:
-    """Build the Google Chat body for a single missed inbound call."""
+    """Build the Google Chat body for a single missed inbound call.
+
+    voicemail_status:
+      - none: not a voicemail CDR → "No VM Detected"
+      - transcript: include voicemail_transcript
+      - unavailable: VM CDR but no transcript could be obtained
+    """
     phone = _format_phone(from_number)
     cid = _first_nonempty(caller_id, from_number) or "Unknown"
     name = _first_nonempty(caller_name) or "Unknown"
@@ -215,6 +269,16 @@ def format_missed_call_gchat_text(
         lines.append(f"Destination: {' / '.join(dest_bits)}")
     if length_seconds is not None and length_seconds > 0:
         lines.append(f"Duration: {length_seconds}s")
+
+    status = (voicemail_status or "none").strip().lower()
+    if status == "transcript" and (voicemail_transcript or "").strip():
+        lines.append("Voicemail transcript:")
+        lines.append((voicemail_transcript or "").strip())
+    elif status == "unavailable":
+        lines.append("Voicemail: detected, but no transcript available")
+    else:
+        lines.append("Voicemail: No VM Detected")
+
     if sms_sent is True:
         lines.append("Patient SMS: sent")
     elif sms_sent is False:
@@ -237,6 +301,10 @@ def alert_missed_inbound_call(
     Post one Google Chat alert for a missed inbound CDR.
 
     Dedups per CDR id so re-syncs do not spam the Space. Independent of Twilio SMS.
+
+    Voicemail CDRs wait briefly (up to 10 minutes) for a transcript before sending;
+    after that we alert without transcript so staff can call back sooner.
+    Non-voicemail misses get "No VM Detected".
     """
     settings = get_settings()
     if not settings.alerts_master_enabled:
@@ -252,7 +320,7 @@ def alert_missed_inbound_call(
         result = log.get("result")
         from_number = log.get("from_number")
         to_number = log.get("to_number")
-        start = log.get("start")
+        start = log.get("start") or log.get("start_at")
         is_missed = log.get("is_missed")
         log_id = str(log.get("log_id") or log.get("id") or "").strip()
         destination_user = log.get("destination_user_full_name") or log.get(
@@ -260,6 +328,8 @@ def alert_missed_inbound_call(
         )
         destination_extension = log.get("destination_extension")
         length_seconds = log.get("length_seconds")
+        if not matched_call_id:
+            matched_call_id = log.get("matched_call_id")
     else:
         direction = getattr(log, "direction", None)
         result = getattr(log, "result", None)
@@ -313,6 +383,36 @@ def alert_missed_inbound_call(
         except Exception:
             matched_call = None
 
+    if matched_call is None:
+        matched_call = _find_call_for_missed_log(
+            from_number=from_number,
+            start=start if isinstance(start, datetime) else None,
+        )
+        if matched_call and not matched_call_id:
+            matched_call_id = str(matched_call.get("id") or "") or None
+
+    voicemail = is_voicemail_result(result)
+    transcript_text = ""
+    if matched_call:
+        transcript_text = transcript_to_plain_text(matched_call.get("transcript"))
+
+    # Prefer a quick call-back alert over waiting long for VM audio/transcript.
+    _VM_TRANSCRIPT_WAIT_MINUTES = 10
+    if voicemail:
+        if transcript_text:
+            voicemail_status = "transcript"
+        elif isinstance(start, datetime) and call_is_recent_enough(
+            start, max_age_minutes=_VM_TRANSCRIPT_WAIT_MINUTES
+        ):
+            # Recording/transcript often arrives after the CDR — retry next cycle.
+            return False
+        else:
+            voicemail_status = "unavailable"
+            transcript_text = ""
+    else:
+        voicemail_status = "none"
+        transcript_text = ""
+
     caller_name = _caller_name_from_missed_log(log, matched_call=matched_call)
     text = format_missed_call_gchat_text(
         from_number=from_number,
@@ -327,6 +427,8 @@ def alert_missed_inbound_call(
         log_id=log_id,
         matched_call_id=matched_call_id,
         sms_sent=sms_sent,
+        voicemail_transcript=transcript_text or None,
+        voicemail_status=voicemail_status,
     )
     sent = notify_gchat(text, webhook_url=webhook)
     if sent and key:
@@ -337,6 +439,96 @@ def alert_missed_inbound_call(
         except Exception:
             logger.exception("Failed to stamp missed-call GChat alert_state")
     return sent
+
+
+def _find_call_for_missed_log(
+    *,
+    from_number: str | None,
+    start: datetime | None,
+) -> dict[str, Any] | None:
+    """Best-effort QA call match by caller + time when CDR matched_call_id is empty."""
+    if start is None:
+        return None
+    try:
+        from src import database as db
+        from src.cdr_sync import _digits, _phones_match
+    except Exception:
+        return None
+
+    needle = _digits(from_number)
+    if not needle:
+        return None
+    try:
+        calls = db.list_calls(limit=200, require_min_duration=False)
+    except Exception:
+        logger.exception("Failed listing calls for missed-call VM match")
+        return None
+
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    for call in calls:
+        caller = _digits(call.get("vonage_caller_id"))
+        if not caller or not _phones_match(needle, caller):
+            continue
+        call_dt = call.get("call_date") or call.get("created_at")
+        if not isinstance(call_dt, datetime):
+            continue
+        if call_dt.tzinfo is None:
+            call_dt = call_dt.replace(tzinfo=timezone.utc)
+        start_aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        delta = abs((call_dt - start_aware).total_seconds())
+        if delta > 180:
+            continue
+        has_tx = 1.0 if transcript_to_plain_text(call.get("transcript")) else 0.0
+        score = has_tx * 1000.0 - delta
+        if score > best_score:
+            best_score = score
+            best = call
+    return best
+
+
+def maybe_alert_missed_call_for_processed_call(call: dict[str, Any]) -> bool:
+    """After a recording is transcribed, retry missed-call GChat for a matching VM CDR."""
+    transcript = transcript_to_plain_text(call.get("transcript"))
+    if not transcript:
+        return False
+    try:
+        from src import database as db
+        from src.cdr_sync import _digits, _phones_match
+    except Exception:
+        return False
+
+    caller = _digits(call.get("vonage_caller_id"))
+    call_dt = call.get("call_date") or call.get("created_at")
+    if not caller or not isinstance(call_dt, datetime):
+        return False
+    if call_dt.tzinfo is None:
+        call_dt = call_dt.replace(tzinfo=timezone.utc)
+
+    try:
+        logs = db.list_call_logs(limit=300, days=2, missed_only=True)
+    except Exception:
+        logger.exception("Failed listing call logs for post-transcript VM alert")
+        return False
+
+    for row in logs:
+        if not is_voicemail_result(row.get("result")):
+            continue
+        start = row.get("start") or row.get("start_at")
+        if not isinstance(start, datetime):
+            continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if abs((start - call_dt).total_seconds()) > 180:
+            continue
+        if not _phones_match(caller, _digits(row.get("from_number"))):
+            continue
+        return alert_missed_inbound_call(
+            row,
+            matched_call_id=str(call.get("id") or "") or None,
+            matched_call=call,
+        )
+    return False
 
 
 def alert_missed_spike(
