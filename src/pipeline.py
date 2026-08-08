@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import tempfile
 import threading
@@ -26,7 +27,18 @@ _UPLOAD_ROOT.mkdir(exist_ok=True)
 
 _lock = threading.Lock()
 _queue: list[str] = []
-_worker_started = False
+_workers_started = 0
+_queue_wakeup = threading.Condition(_lock)
+
+
+def qa_worker_count() -> int:
+    """Parallel Transcribe/Bedrock workers (cap avoids accidental API storms)."""
+    raw = os.getenv("QA_WORKER_COUNT", "4").strip() or "4"
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 4
+    return max(1, min(16, n))
 
 
 def enqueue_local_file(
@@ -282,27 +294,32 @@ def _create_pending(
     )
 
 
+def _ensure_workers_locked() -> None:
+    """Start up to QA_WORKER_COUNT daemon workers (caller holds _lock)."""
+    global _workers_started
+    target = qa_worker_count()
+    while _workers_started < target:
+        _workers_started += 1
+        name = f"qa-worker-{_workers_started}"
+        threading.Thread(target=_worker_loop, name=name, daemon=True).start()
+        logger.info("Started %s (pool size %s)", name, target)
+
+
 def _queue_job(call_id: str, path: Path) -> None:
-    global _worker_started
-    with _lock:
+    with _queue_wakeup:
         _queue.append(f"{call_id}::{path}")
-        if not _worker_started:
-            _worker_started = True
-            t = threading.Thread(target=_worker_loop, daemon=True)
-            t.start()
+        _ensure_workers_locked()
+        _queue_wakeup.notify()
 
 
 def _worker_loop() -> None:
     while True:
-        item = None
-        with _lock:
-            if _queue:
-                item = _queue.pop(0)
-        if not item:
-            import time
-
-            time.sleep(1)
-            continue
+        with _queue_wakeup:
+            while not _queue:
+                _queue_wakeup.wait(timeout=5.0)
+                if not _queue:
+                    continue
+            item = _queue.pop(0)
         call_id, path_str = item.split("::", 1)
         path = Path(path_str)
         try:
@@ -317,7 +334,7 @@ def _worker_loop() -> None:
                 process_call_sync(call_id, path)
         except Exception:
             # Errors already recorded on the call document when using Firestore
-            pass
+            logger.exception("QA worker failed for call_id=%s", call_id)
 
 
 def save_upload_to_temp(uploaded_file: Any) -> Path:

@@ -15,9 +15,68 @@ _DEFAULT_MESSAGE = (
     "reply here and our team will follow up right away."
 )
 
+_CUSTOMEDICO_DID_DIGITS = "4806264810"
+# VBC often stores the dialed DID as the pharmacy extension on CDRs.
+_CUSTOMEDICO_EXTENSIONS = frozenset({"45000"})
+_CUSTOMEDICO_FROM_NUMBER = "+17028197515"
+_CUSTOMEDICO_MESSAGE = (
+    "Thanks for calling Customedico! We're currently unavailable, "
+    "but if you have a pharmacy or prescription question, "
+    "reply here and our team will follow up right away."
+)
+
 # Non-answered results we intentionally treat as patient follow-up SMS.
 # Busy is included (caller did not get through); see product notes in README.
 _ANSWERED_RESULTS = frozenset({"answered", "connected"})
+
+
+def phone_digits(value: str | None) -> str:
+    return re.sub(r"\D", "", (value or "").strip())
+
+
+def is_customedico_dialed_number(*candidates: str | None) -> bool:
+    """True when the inbound dialed number / DNIS / ext is Customedico."""
+    target = _CUSTOMEDICO_DID_DIGITS
+    for raw in candidates:
+        digits = phone_digits(raw)
+        if not digits:
+            continue
+        if digits in _CUSTOMEDICO_EXTENSIONS:
+            return True
+        if digits == target or digits.endswith(target) or digits == f"1{target}":
+            return True
+    return False
+
+
+def resolve_missed_sms_from_number(
+    *,
+    to_number: str | None = None,
+    dnis: str | None = None,
+    destination_extension: str | None = None,
+    default_from: str | None = None,
+    customedico_from: str | None = None,
+) -> str:
+    """Pick Twilio From number: Customedico DID uses pharmacy SMS line."""
+    if is_customedico_dialed_number(to_number, dnis, destination_extension):
+        custom = (customedico_from or "").strip()
+        return custom or _CUSTOMEDICO_FROM_NUMBER
+    return (default_from or "").strip()
+
+
+def resolve_missed_sms_template(
+    *,
+    to_number: str | None = None,
+    dnis: str | None = None,
+    destination_extension: str | None = None,
+    default_template: str | None = None,
+    customedico_template: str | None = None,
+) -> str:
+    """Pick Relevium vs Customedico SMS copy based on the dialed line."""
+    if is_customedico_dialed_number(to_number, dnis, destination_extension):
+        custom = (customedico_template or "").strip()
+        return custom or _CUSTOMEDICO_MESSAGE
+    default = (default_template or "").strip()
+    return default or _DEFAULT_MESSAGE
 
 
 def normalize_e164(phone: str | None) -> str | None:
@@ -145,7 +204,13 @@ def alert_key_for_number(e164: str) -> str:
     return f"missed_sms_{e164}"
 
 
-def send_sms(to_e164: str, body: str, *, status_callback: str | None = None) -> bool:
+def send_sms(
+    to_e164: str,
+    body: str,
+    *,
+    from_number: str | None = None,
+    status_callback: str | None = None,
+) -> bool:
     """Send one SMS via Twilio REST API. Returns True on HTTP success."""
     import httpx
 
@@ -154,14 +219,14 @@ def send_sms(to_e164: str, body: str, *, status_callback: str | None = None) -> 
     settings = get_settings()
     sid = settings.twilio_account_sid
     token = settings.twilio_auth_token
-    from_number = settings.twilio_from_number
-    if not (sid and token and from_number):
+    sender = (from_number or "").strip() or settings.twilio_from_number
+    if not (sid and token and sender):
         logger.warning("Twilio credentials incomplete — skip SMS to %s", to_e164)
         return False
 
     data: dict[str, str] = {
         "To": to_e164,
-        "From": from_number,
+        "From": sender,
         "Body": body,
     }
     callback = (status_callback or settings.twilio_status_callback_url or "").strip()
@@ -180,7 +245,12 @@ def send_sms(to_e164: str, body: str, *, status_callback: str | None = None) -> 
                 resp.text[:400],
             )
             return False
-        logger.info("Twilio SMS queued to %s (sid=%s)", to_e164, resp.json().get("sid"))
+        logger.info(
+            "Twilio SMS queued to %s from %s (sid=%s)",
+            to_e164,
+            sender,
+            resp.json().get("sid"),
+        )
         return True
     except Exception:
         logger.exception("Twilio SMS error to %s", to_e164)
@@ -189,14 +259,29 @@ def send_sms(to_e164: str, body: str, *, status_callback: str | None = None) -> 
 
 def _log_fields(log: Any) -> dict[str, Any]:
     if isinstance(log, dict):
-        return log
+        raw = log.get("raw") if isinstance(log.get("raw"), dict) else {}
+        return {
+            **log,
+            "dnis": log.get("dnis")
+            or raw.get("dnis")
+            or raw.get("to")
+            or raw.get("to_number"),
+            "destination_extension": log.get("destination_extension")
+            or raw.get("destination_extension"),
+        }
+    raw = getattr(log, "raw", None)
+    raw = raw if isinstance(raw, dict) else {}
     return {
         "direction": getattr(log, "direction", None),
         "result": getattr(log, "result", None),
         "from_number": getattr(log, "from_number", None),
+        "to_number": getattr(log, "to_number", None),
+        "destination_extension": getattr(log, "destination_extension", None)
+        or raw.get("destination_extension"),
         "start": getattr(log, "start", None),
         "is_missed": bool(getattr(log, "is_missed", False)),
         "log_id": getattr(log, "log_id", None) or getattr(log, "id", None),
+        "dnis": raw.get("dnis") or raw.get("to") or raw.get("to_number"),
     }
 
 
@@ -206,6 +291,7 @@ def maybe_notify_missed_inbound_call(log: Any) -> bool:
 
     Never raises — failures are logged and swallowed so CDR sync continues.
     Dedups via alert_state keyed by normalized phone + cooldown window.
+    Customedico DID (480) 626-4810 gets pharmacy-branded copy.
     """
     try:
         from src.config import get_settings
@@ -245,13 +331,38 @@ def maybe_notify_missed_inbound_call(log: Any) -> bool:
             )
             return False
 
+        template = resolve_missed_sms_template(
+            to_number=fields.get("to_number"),
+            dnis=fields.get("dnis"),
+            destination_extension=fields.get("destination_extension"),
+            default_template=settings.twilio_missed_sms_message,
+            customedico_template=settings.twilio_missed_sms_message_customedico,
+        )
         body = render_missed_sms_body(
-            settings.twilio_missed_sms_message,
+            template,
             main_line=settings.twilio_missed_sms_main_line,
         )
-        sent = send_sms(e164, body)
+        from_number = resolve_missed_sms_from_number(
+            to_number=fields.get("to_number"),
+            dnis=fields.get("dnis"),
+            destination_extension=fields.get("destination_extension"),
+            default_from=settings.twilio_from_number,
+            customedico_from=settings.twilio_from_number_customedico,
+        )
+        sent = send_sms(e164, body, from_number=from_number)
         if sent:
             db.mark_alert_sent(key)
+            logger.info(
+                "Missed-call SMS sent to %s from %s (customedico=%s log_id=%s)",
+                e164,
+                from_number,
+                is_customedico_dialed_number(
+                    fields.get("to_number"),
+                    fields.get("dnis"),
+                    fields.get("destination_extension"),
+                ),
+                fields.get("log_id"),
+            )
         return sent
     except Exception:
         logger.exception("Missed-call SMS notify failed")

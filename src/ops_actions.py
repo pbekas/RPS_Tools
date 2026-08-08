@@ -1,4 +1,4 @@
-"""Shared ops actions used by the poller FastAPI service (and Streamlit)."""
+"""Shared ops actions used by the poller FastAPI service."""
 
 from __future__ import annotations
 

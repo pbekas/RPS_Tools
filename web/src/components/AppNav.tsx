@@ -42,6 +42,16 @@ export function AppNav() {
                   Call ops
                 </Link>
                 <Link
+                  href="/reporting"
+                  className={
+                    pathname.startsWith("/reporting")
+                      ? "text-accent"
+                      : "hover:text-ink"
+                  }
+                >
+                  Reporting
+                </Link>
+                <Link
                   href="/queue"
                   className={
                     pathname.startsWith("/queue") ? "text-accent" : "hover:text-ink"

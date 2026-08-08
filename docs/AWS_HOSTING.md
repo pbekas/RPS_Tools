@@ -64,7 +64,6 @@ Secret name: `rps-call-qa/app` (JSON keys listed in `scripts/push_aws_secret.sh`
 |------|------|
 | [`web/Dockerfile`](../web/Dockerfile) | Next.js standalone |
 | [`Dockerfile.poller`](../Dockerfile.poller) | Uvicorn + VBC poller |
-| [`Dockerfile`](../Dockerfile) | Streamlit ops (optional / local) |
 
 ## Vonage setup
 

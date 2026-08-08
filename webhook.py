@@ -1,7 +1,7 @@
 """
 Vonage recording webhook + near-real-time VBC poller API.
 
-Run alongside Streamlit / Next.js:
+Run alongside Next.js:
   VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
 
 Or run the poller alone:

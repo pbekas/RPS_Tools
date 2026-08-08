@@ -18,8 +18,7 @@ build/
 venv/
 env/
 
-# Streamlit / IDE
-.streamlit/secrets.toml
+# IDE
 .idea/
 .vscode/
 *.swp

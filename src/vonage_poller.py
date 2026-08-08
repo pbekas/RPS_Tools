@@ -23,7 +23,7 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 _state: dict[str, Any] = {
     "running": False,
-    "interval_seconds": 300,
+    "interval_seconds": 60,
     "lookback_minutes": 30,
     "max_per_cycle": 25,
     "max_call_logs_per_cycle": 200,
@@ -159,12 +159,19 @@ def autostart_from_env() -> dict[str, Any] | None:
     enabled = os.getenv("VBC_POLLER_ENABLED", "").strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return None
-    interval = int(os.getenv("VBC_POLLER_INTERVAL_SECONDS", "300"))
+    interval = int(os.getenv("VBC_POLLER_INTERVAL_SECONDS", "60"))
     lookback = int(os.getenv("VBC_POLLER_LOOKBACK_MINUTES", "30"))
     max_cycle = int(os.getenv("VBC_POLLER_MAX_PER_CYCLE", "25"))
     max_logs = int(os.getenv("VBC_POLLER_MAX_CALL_LOGS", "200"))
     with _lock:
         _state["max_call_logs_per_cycle"] = max(1, max_logs)
+    logger.info(
+        "Autostarting VBC poller (interval=%ss lookback=%sm max_per_cycle=%s QA_WORKER_COUNT=%s)",
+        interval,
+        lookback,
+        max_cycle,
+        os.getenv("QA_WORKER_COUNT", "4"),
+    )
     return start_poller(
         interval_seconds=interval,
         lookback_minutes=lookback,

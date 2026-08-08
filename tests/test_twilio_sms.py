@@ -6,10 +6,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from src.twilio_sms import (
+    is_customedico_dialed_number,
     is_qualifying_missed_inbound,
     is_smsable_number,
     normalize_e164,
     render_missed_sms_body,
+    resolve_missed_sms_from_number,
+    resolve_missed_sms_template,
     should_send_missed_call_sms,
 )
 
@@ -131,6 +134,54 @@ class RenderBodyTest(unittest.TestCase):
         body = render_missed_sms_body(None)
         self.assertIn("Thanks for calling Relevium Pain Specialists", body)
         self.assertIn("reply here", body)
+
+
+class CustomedicoLineTest(unittest.TestCase):
+    def test_detects_did_formats(self) -> None:
+        self.assertTrue(is_customedico_dialed_number("(480) 626-4810"))
+        self.assertTrue(is_customedico_dialed_number("+14806264810"))
+        self.assertTrue(is_customedico_dialed_number("4806264810"))
+        self.assertTrue(is_customedico_dialed_number("45000"))
+        self.assertFalse(is_customedico_dialed_number("17029049704"))
+        self.assertFalse(is_customedico_dialed_number("10001"))
+
+    def test_resolves_customedico_template(self) -> None:
+        body = resolve_missed_sms_template(to_number="4806264810")
+        self.assertIn("Customedico", body)
+        self.assertNotIn("Relevium", body)
+
+    def test_resolves_customedico_via_extension(self) -> None:
+        body = resolve_missed_sms_template(destination_extension="45000")
+        self.assertIn("Customedico", body)
+
+    def test_resolves_relevium_default(self) -> None:
+        body = resolve_missed_sms_template(to_number="17029049704")
+        self.assertIn("Relevium Pain Specialists", body)
+
+    def test_customedico_from_number(self) -> None:
+        self.assertEqual(
+            resolve_missed_sms_from_number(
+                to_number="4806264810",
+                default_from="+15555550100",
+            ),
+            "+17028197515",
+        )
+        self.assertEqual(
+            resolve_missed_sms_from_number(
+                destination_extension="45000",
+                default_from="+15555550100",
+            ),
+            "+17028197515",
+        )
+
+    def test_relevium_from_number(self) -> None:
+        self.assertEqual(
+            resolve_missed_sms_from_number(
+                to_number="17029049704",
+                default_from="+15555550100",
+            ),
+            "+15555550100",
+        )
 
 
 if __name__ == "__main__":

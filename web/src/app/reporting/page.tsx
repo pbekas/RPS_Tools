@@ -2,35 +2,32 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { isFirestoreQuotaError } from "@/lib/database";
-import { CallOps } from "@/components/CallOps";
+import { CallReporting } from "@/components/CallReporting";
 import { QuotaNotice } from "@/components/QuotaNotice";
 import { loadOpsWindowData, parseDaysParam } from "@/lib/opsWindow";
 
 type Props = {
-  searchParams?:
-    | Promise<{ days?: string; person?: string; missed?: string }>
-    | { days?: string; person?: string; missed?: string };
+  searchParams?: Promise<{ days?: string }> | { days?: string };
 };
 
-export default async function OpsPage({ searchParams }: Props) {
+export default async function ReportingPage({ searchParams }: Props) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) redirect("/login");
   if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
 
   const params = await Promise.resolve(searchParams || {});
   const days = parseDaysParam(params.days);
-  const initialPerson = (params.person || "").trim();
-  const missedRaw = (params.missed || "").trim().toLowerCase();
-  const initialMissed = missedRaw === "1" || missedRaw === "true" || missedRaw === "yes";
 
   try {
     const data = await loadOpsWindowData(days);
     return (
-      <CallOps
+      <CallReporting
         logs={data.logs}
         days={data.days}
-        initialPerson={initialPerson}
-        initialMissed={initialMissed}
+        scorecardRows={data.scorecardRows}
+        scorecardTeam={data.scorecardTeam}
+        coachingQueue={data.coachingQueue}
+        qaAnswerSecondsByCallId={data.qaAnswerSecondsByCallId}
       />
     );
   } catch (err) {

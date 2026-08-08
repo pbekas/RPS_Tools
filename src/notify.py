@@ -50,8 +50,6 @@ def notify_gchat(
 def _review_url(call_id: str) -> str:
     settings = get_settings()
     app_url = settings.app_url.rstrip("/")
-    if "8501" in app_url:
-        app_url = app_url.replace("8501", "3000")
     return f"{app_url}/calls/{call_id}"
 
 

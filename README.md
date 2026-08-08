@@ -4,11 +4,11 @@ Phone call quality review for Relevium Pain Specialists. Batch-upload (or pull v
 
 ## Stack
 
-- **Review UI:** Next.js (`web/`) — transcript-first call review + dashboard
-- **Ops UI:** Streamlit (`app.py`) — upload, Vonage sync, team setup, re-analyze
+- **UI:** Next.js (`web/`) — call review, dashboard, Call ops, Reporting, settings
+- **Ingest / QA worker:** Vonage poller (`webhook.py` / `Dockerfile.poller`)
 - **Speech-to-text:** **Amazon Transcribe** (speaker diarization)
 - **AI QA / coaching:** **Amazon Bedrock** (Claude)
-- **DB:** Google Cloud Firestore
+- **DB:** Google Cloud Firestore (or Postgres via `DB_BACKEND`)
 - **Audio storage:** **AWS S3** (presigned playback URLs)
 - **Auth:** Google Workspace SSO (`@releviumpain.com` only)
 - **Phones:** **Vonage Business Communications** Call Recording API via [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
@@ -31,10 +31,11 @@ Optional env:
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `VBC_POLLER_ENABLED` | off | Autostart poller inside `webhook.py` |
-| `VBC_POLLER_INTERVAL_SECONDS` | `300` | Poll cadence (5 minutes) |
+| `VBC_POLLER_INTERVAL_SECONDS` | `60` | Poll cadence (1 minute) |
 | `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
 | `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
 | `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
+| `QA_WORKER_COUNT` | `4` | Parallel Transcribe + Bedrock workers (1–16) |
 | `GCHAT_WEBHOOK_URL` | empty | Google Chat incoming webhook for critical-flag + missed-call alerts |
 | `MISSED_ALERT_THRESHOLD` | `8` | Missed/non-answered CDRs in window before G Chat alert |
 | `MISSED_ALERT_WINDOW_MINUTES` | `30` | Rolling window for missed-call spike alerts |
@@ -44,7 +45,8 @@ Optional env:
 | `TWILIO_MISSED_SMS_MAX_AGE_MINUTES` | `120` | Ignore older CDRs (avoids SMS on backfill) |
 
 Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
-so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
+so admins can see missed / unrecorded traffic on **/ops**, with analytics on
+**/reporting**. Subscribe the VBC app to
 the **Reports API** suite in [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
 (same OAuth credentials as Call Recording).
 
@@ -127,12 +129,11 @@ Fill in:
 5. `APP_URL` — must match your OAuth redirect
 6. `VBC_*` — Vonage UC API Manager credentials
 
-In Google Cloud Console → OAuth client, add authorized redirect URIs:
+In Google Cloud Console → OAuth client, add authorized redirect URI:
 
-- Streamlit: `http://localhost:8501/`
-- Next.js review app: `http://localhost:3000/api/auth/callback/google`
+- Next.js: `http://localhost:3000/api/auth/callback/google`
 
-Promote your user to Admin once after first login (Team setup page), or set `role: "Admin"` on your `users/{email}` doc in Firestore.
+Promote your user to Admin once after first login (**Settings → Agents**), or set `role: "Admin"` on your `users/{email}` doc in Firestore.
 
 ### Review app (Next.js)
 
@@ -143,18 +144,15 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Dashboard lists scored calls; **Review** opens the SMS-style transcript with audio scrubbing and rule deep-links. Admins can save manager notes/feedback.
+Open [http://localhost:3000](http://localhost:3000). Dashboard lists scored calls; **Review** opens the SMS-style transcript with audio scrubbing and rule deep-links. Admins can save manager notes/feedback. Manual recording uploads live on **Call ops**.
 
-### Streamlit ops
-
-```bash
-streamlit run app.py
-```
-Vonage webhook (separate terminal):
+### Poller (local)
 
 ```bash
-uvicorn webhook:app --host 0.0.0.0 --port 8080
+VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
 ```
+
+Set `POLLER_INTERNAL_URL` / `OPS_INTERNAL_TOKEN` in `web/.env.local` so Next can reach re-analyze and upload.
 
 Weekly coaching CLI:
 
@@ -166,8 +164,8 @@ python scripts/run_weekly_coaching.py --agent name@releviumpain.com
 
 ## Features (Phase 1–4)
 
-1. **Schema** — calls, users, weekly metrics, feedback hub
-2. **Core app** — batch upload + background worker, **Transcribe + Bedrock** analysis (agent, topic, empathy, transfers, FCR, transcript), chat-bubble transcript, audio playback, manager notes/feedback → Firestore
+1. **Schema** — calls, users, weekly metrics, manager feedback on calls
+2. **Core app** — Vonage poller + optional upload, **Transcribe + Bedrock** analysis (agent, topic, empathy, transfers, FCR, transcript), chat-bubble transcript, audio playback, manager notes/feedback
 3. **SSO** — Google OAuth; domain lock to `@releviumpain.com`; Admin vs Agent views
 4. **Rolling feedback** — aggregates manager notes + AI summaries → **Bedrock** coaching report on the user record
 
@@ -189,7 +187,7 @@ Starter catalog: [`docs/call_topics_v1.json`](docs/call_topics_v1.json). Seeded 
 python scripts/seed_call_topics.py --force
 ```
 
-Each topic has an **id**, **label**, and **details** the AI uses to classify the call. Edit in Streamlit **Call topics**, or update Firestore / the JSON and re-seed.
+Each topic has an **id**, **label**, and **details** the AI uses to classify the call. Edit in Next.js **Settings → Topics**, or update the JSON and re-seed.
 
 ## Critical call flags & sentiment
 

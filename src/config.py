@@ -57,8 +57,10 @@ class Settings:
     twilio_account_sid: str
     twilio_auth_token: str
     twilio_from_number: str
+    twilio_from_number_customedico: str
     twilio_missed_sms_enabled: bool
     twilio_missed_sms_message: str
+    twilio_missed_sms_message_customedico: str
     twilio_missed_sms_main_line: str
     twilio_missed_sms_cooldown_minutes: int
     twilio_missed_sms_max_age_minutes: int
@@ -87,7 +89,7 @@ class Settings:
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
         self.google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
         self.session_secret = os.getenv("SESSION_SECRET", "dev-insecure-session").strip()
-        self.app_url = os.getenv("APP_URL", "http://localhost:8501").rstrip("/")
+        self.app_url = os.getenv("APP_URL", "http://localhost:3000").rstrip("/")
         self.gcs_bucket = os.getenv("GCS_BUCKET", "").strip()
         self.s3_bucket = os.getenv("S3_BUCKET", "").strip()
         self.aws_region = os.getenv("AWS_REGION", "us-west-2").strip()
@@ -156,10 +158,17 @@ class Settings:
         self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
         self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
         self.twilio_from_number = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+        # Default Customedico SMS sender; override with TWILIO_FROM_NUMBER_CUSTOMEDICO.
+        self.twilio_from_number_customedico = os.getenv(
+            "TWILIO_FROM_NUMBER_CUSTOMEDICO", "+17028197515"
+        ).strip()
         self.twilio_missed_sms_enabled = os.getenv(
             "TWILIO_MISSED_SMS_ENABLED", "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
         self.twilio_missed_sms_message = os.getenv("TWILIO_MISSED_SMS_MESSAGE", "").strip()
+        self.twilio_missed_sms_message_customedico = os.getenv(
+            "TWILIO_MISSED_SMS_MESSAGE_CUSTOMEDICO", ""
+        ).strip()
         self.twilio_missed_sms_main_line = os.getenv(
             "TWILIO_MISSED_SMS_MAIN_LINE", ""
         ).strip()
