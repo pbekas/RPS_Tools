@@ -465,6 +465,8 @@ export type UserDoc = {
   email: string;
   name?: string;
   role?: string;
+  /** Optional module grants; empty uses role defaults. */
+  modules?: string[];
   rolling_ai_feedback?: string;
   last_coaching_at?: string | null;
   provisional?: boolean;
@@ -517,6 +519,7 @@ export async function upsertUser(input: {
   name: string;
   role: string;
   provisional?: boolean;
+  modules?: string[];
 }): Promise<UserDoc> {
   const ref = getDb().collection("users").doc(input.email.toLowerCase());
   const existing = await ref.get();
@@ -528,12 +531,14 @@ export async function upsertUser(input: {
       updated_at: now,
     };
     if (input.provisional !== undefined) updates.provisional = input.provisional;
+    if (input.modules !== undefined) updates.modules = input.modules;
     await ref.update(updates);
   } else {
     await ref.set({
       email: input.email.toLowerCase(),
       name: input.name,
       role: input.role,
+      modules: input.modules || [],
       rolling_ai_feedback: "",
       active: true,
       provisional: !!input.provisional,

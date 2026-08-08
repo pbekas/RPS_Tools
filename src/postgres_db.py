@@ -229,14 +229,18 @@ def upsert_user(
     role: str | None = None,
     *,
     provisional: bool | None = None,
+    modules: list[str] | None = None,
 ) -> dict[str, Any]:
     email_norm = email.strip().lower()
     role_value = role or None
     with get_connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO users (email, name, role, provisional)
-            VALUES (%s, %s, COALESCE(%s, 'Agent'), COALESCE(%s, false))
+            INSERT INTO users (email, name, role, provisional, modules)
+            VALUES (
+              %s, %s, COALESCE(%s, 'Agent'), COALESCE(%s, false),
+              COALESCE(%s::text[], '{}'::text[])
+            )
             ON CONFLICT (email) DO UPDATE SET
                 name = EXCLUDED.name,
                 role = CASE
@@ -247,6 +251,10 @@ def upsert_user(
                     WHEN %s::boolean IS NULL THEN users.provisional
                     ELSE EXCLUDED.provisional
                 END,
+                modules = CASE
+                    WHEN %s::text[] IS NULL THEN users.modules
+                    ELSE EXCLUDED.modules
+                END,
                 updated_at = now()
             RETURNING *
             """,
@@ -255,8 +263,10 @@ def upsert_user(
                 name,
                 role_value,
                 provisional,
+                modules,
                 role_value,
                 provisional,
+                modules,
             ),
         ).fetchone()
     return _serialize_user(row)  # type: ignore[return-value]

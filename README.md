@@ -1,10 +1,10 @@
-# RPS_Tools — Call QA
+# RPS_Tools — internal toolkit
 
-Phone call quality review for Relevium Pain Specialists. Batch-upload (or pull via Vonage) call recordings, run Amazon Transcribe + Bedrock QA, review chat-style transcripts with audio, capture manager feedback, and generate rolling AI coaching per agent.
+Phone call quality review and related ops tools for Relevium Pain Specialists. The product shell is **RPS Tools**; **Call QA** is one module (review, coaching, ops, reporting). **Users** is a separate admin module for team directory and access.
 
 ## Stack
 
-- **UI:** Next.js (`web/`) — call review, dashboard, Call ops, Reporting, settings
+- **UI:** Next.js (`web/`) — **RPS Tools** shell with module nav (Call QA, Users)
 - **Ingest / QA worker:** Vonage poller (`webhook.py` / `Dockerfile.poller`)
 - **Speech-to-text:** **Amazon Transcribe** (speaker diarization)
 - **AI QA / coaching:** **Amazon Bedrock** (Claude)

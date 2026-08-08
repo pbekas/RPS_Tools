@@ -1,10 +1,10 @@
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { isFirestoreQuotaError } from "@/lib/database";
 import { CallOps } from "@/components/CallOps";
 import { QuotaNotice } from "@/components/QuotaNotice";
 import { loadOpsWindowData, parseDaysParam } from "@/lib/opsWindow";
+import { isAdminRole } from "@/lib/permissions";
+import { requireModule } from "@/lib/requireAccess";
 
 type Props = {
   searchParams?:
@@ -13,15 +13,15 @@ type Props = {
 };
 
 export default async function OpsPage({ searchParams }: Props) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
-  if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
+  const session = await requireModule("call_qa");
+  if (!isAdminRole(session.user.role)) redirect("/");
 
   const params = await Promise.resolve(searchParams || {});
   const days = parseDaysParam(params.days);
   const initialPerson = (params.person || "").trim();
   const missedRaw = (params.missed || "").trim().toLowerCase();
-  const initialMissed = missedRaw === "1" || missedRaw === "true" || missedRaw === "yes";
+  const initialMissed =
+    missedRaw === "1" || missedRaw === "true" || missedRaw === "yes";
 
   try {
     const data = await loadOpsWindowData(days);

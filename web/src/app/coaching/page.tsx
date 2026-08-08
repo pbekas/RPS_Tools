@@ -1,6 +1,3 @@
-import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import {
   getUser,
   listCalls,
@@ -12,17 +9,18 @@ import {
 import { pickReviewSampleIds } from "@/lib/coachingQueue";
 import { CoachingPanel } from "@/components/CoachingPanel";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { isAdminRole } from "@/lib/permissions";
+import { requireModule } from "@/lib/requireAccess";
 
 type Props = {
   searchParams?: Promise<{ agent?: string }> | { agent?: string };
 };
 
 export default async function CoachingPage({ searchParams }: Props) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
+  const session = await requireModule("call_qa");
 
-  const email = session.user.email.toLowerCase();
-  const isAdmin = (session.user.role || "").toLowerCase() === "admin";
+  const email = session.user.email!.toLowerCase();
+  const isAdmin = isAdminRole(session.user.role);
   const params = await Promise.resolve(searchParams || {});
   const requestedAgent = (params.agent || "").trim().toLowerCase();
 

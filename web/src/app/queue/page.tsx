@@ -1,13 +1,12 @@
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { listCalls, listUsers } from "@/lib/database";
 import { SampleQueue } from "@/components/SampleQueue";
+import { isAdminRole } from "@/lib/permissions";
+import { requireModule } from "@/lib/requireAccess";
 
 export default async function QueuePage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
-  if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
+  const session = await requireModule("call_qa");
+  if (!isAdminRole(session.user.role)) redirect("/");
 
   const [users, calls] = await Promise.all([
     listUsers(),

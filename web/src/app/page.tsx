@@ -1,25 +1,26 @@
-import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { authOptions } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { isFirestoreQuotaError, listCalls } from "@/lib/database";
 import { buildIssueHeatmap } from "@/lib/qa";
 import { Dashboard } from "@/components/Dashboard";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { defaultHrefForUser, hasModule, isAdminRole } from "@/lib/permissions";
+import { requireSession } from "@/lib/requireAccess";
 
 export default async function HomePage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
+  const session = await requireSession();
+  if (!hasModule(session.user, "call_qa")) {
+    redirect(defaultHrefForUser(session.user));
+  }
 
-  const role = (session.user.role || "Agent").toLowerCase();
-  const isAdmin = role === "admin";
+  const isAdmin = isAdminRole(session.user.role);
   const heatmapDays = 14;
   const sinceMs = Date.now() - heatmapDays * 24 * 60 * 60 * 1000;
 
   let calls;
   try {
     calls = await listCalls({
-      agentEmail: isAdmin ? null : session.user.email.toLowerCase(),
+      agentEmail: isAdmin ? null : session.user.email!.toLowerCase(),
       status: "complete",
       limit: isAdmin ? 200 : 100,
       sinceMs: isAdmin ? sinceMs : null,

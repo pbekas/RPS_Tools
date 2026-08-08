@@ -11,6 +11,7 @@ export const config = {
     "/queue",
     "/ops",
     "/reporting",
+    "/users",
     "/coaching",
     "/settings",
     "/api/calls/:path*",

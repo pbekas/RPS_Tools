@@ -11,21 +11,24 @@ import {
   setUserExtension,
   upsertUser,
 } from "@/lib/database";
+import { hasModule, normalizeModules } from "@/lib/permissions";
 import { PollerError, pollerJson } from "@/lib/poller";
 
-function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
+function requireUsersModule(
+  session: { user?: { email?: string | null; role?: string; modules?: string[] } } | null
+) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  if (!hasModule(session.user, "users")) {
+    return NextResponse.json({ error: "Users module required" }, { status: 403 });
   }
   return null;
 }
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
-  const denied = requireAdmin(session);
+  const denied = requireUsersModule(session);
   if (denied) return denied;
 
   const { searchParams } = new URL(req.url);
@@ -39,7 +42,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  const denied = requireAdmin(session);
+  const denied = requireUsersModule(session);
   if (denied) return denied;
 
   const body = await req.json().catch(() => ({}));
@@ -67,6 +70,7 @@ export async function POST(req: Request) {
         name,
         role,
         provisional: false,
+        modules: normalizeModules(body.modules),
       });
       return NextResponse.json({ ok: true, user });
     }

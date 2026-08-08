@@ -16,3 +16,4 @@ secrets
 **/firebase-service-account.json
 **/*-credentials.json
 infra/aws/cdk.out
+infra/aws/cdk.out-*

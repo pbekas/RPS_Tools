@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { UnmappedAgentRow, UserDoc, VonageExtensionDoc } from "@/lib/database";
+import { ALL_MODULE_IDS, MODULES, normalizeModules, type ModuleId } from "@/lib/permissions";
 
 type Props = {
   initialUsers: UserDoc[];
@@ -22,6 +23,7 @@ export function AgentSettings({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Agent");
+  const [modules, setModules] = useState<ModuleId[]>(["call_qa"]);
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [extensionDrafts, setExtensionDrafts] = useState<Record<string, string>>({});
@@ -229,6 +231,7 @@ export function AgentSettings({
           name,
           email: editingEmail || email,
           role,
+          modules: role === "Admin" ? ALL_MODULE_IDS : modules,
         }),
       });
       const data = await res.json();
@@ -264,6 +267,7 @@ export function AgentSettings({
           email: user.email,
           name: nextName,
           role: user.role || "Agent",
+          modules: user.modules,
         }),
       });
       const data = await res.json();
@@ -306,6 +310,7 @@ export function AgentSettings({
     setName("");
     setEmail("");
     setRole("Agent");
+    setModules(["call_qa"]);
   }
 
   function editUser(user: UserDoc) {
@@ -313,6 +318,8 @@ export function AgentSettings({
     setName(user.name || "");
     setEmail(user.email);
     setRole(user.role || "Agent");
+    const mods = normalizeModules(user.modules);
+    setModules(mods.length ? mods : ["call_qa"]);
     document.getElementById("agent-edit-form")?.scrollIntoView({
       behavior: "smooth",
       block: "start",
@@ -334,10 +341,10 @@ export function AgentSettings({
         </div>
       ) : (
         <div className="mb-8">
-          <h2 className="font-display text-2xl text-ink">Agents & team</h2>
+          <h2 className="font-display text-2xl text-ink">Team directory</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Team directory first — map Vonage extensions, then clean up names
-            detected on calls below.
+            Map Vonage extensions, assign roles and module access, then clean up
+            names detected on calls below.
           </p>
         </div>
       )}
@@ -625,6 +632,40 @@ export function AgentSettings({
             <option value="Admin">Admin</option>
           </select>
         </label>
+        {role === "Admin" ? (
+          <p className="mt-2 text-xs text-ink-soft">
+            Admins automatically get every module (Call QA, Users, and future
+            tools).
+          </p>
+        ) : (
+          <fieldset className="mt-3">
+            <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              Modules
+            </legend>
+            <div className="flex flex-wrap gap-4">
+              {ALL_MODULE_IDS.map((id) => (
+                <label
+                  key={id}
+                  className="flex items-center gap-2 text-sm text-ink"
+                >
+                  <input
+                    type="checkbox"
+                    checked={modules.includes(id)}
+                    onChange={(e) => {
+                      setModules((prev) => {
+                        if (e.target.checked) {
+                          return prev.includes(id) ? prev : [...prev, id];
+                        }
+                        return prev.filter((m) => m !== id);
+                      });
+                    }}
+                  />
+                  {MODULES[id].label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="submit"

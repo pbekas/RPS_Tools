@@ -30,7 +30,7 @@ function LoginInner() {
           />
         </div>
         <h1 className="mt-8 text-center font-display text-3xl tracking-tight text-white sm:text-4xl">
-          Employee Tools
+          RPS Tools
         </h1>
         {error ? (
           <p className="mt-4 rounded-lg bg-red-50/10 px-3 py-2 text-center text-sm text-red-300">

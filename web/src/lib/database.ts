@@ -561,18 +561,24 @@ export async function upsertUser(input: {
   name: string;
   role: string;
   provisional?: boolean;
+  modules?: string[];
 }): Promise<UserDoc> {
   if (!usePostgres()) return firestore.upsertUser(input);
   const email = input.email.trim().toLowerCase();
+  const modules = Array.isArray(input.modules) ? input.modules : null;
   const rows = await query(
-    `INSERT INTO users (email, name, role, provisional)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, name, role, provisional, modules)
+     VALUES ($1, $2, $3, $4, COALESCE($5::text[], '{}'::text[]))
      ON CONFLICT (email) DO UPDATE SET
        name = EXCLUDED.name,
        role = EXCLUDED.role,
        provisional = CASE
-         WHEN $5::boolean IS NULL THEN users.provisional
+         WHEN $6::boolean IS NULL THEN users.provisional
          ELSE EXCLUDED.provisional
+       END,
+       modules = CASE
+         WHEN $5::text[] IS NULL THEN users.modules
+         ELSE EXCLUDED.modules
        END,
        updated_at = now()
      RETURNING *`,
@@ -581,6 +587,7 @@ export async function upsertUser(input: {
       input.name,
       input.role,
       input.provisional ?? false,
+      modules,
       input.provisional ?? null,
     ]
   );
