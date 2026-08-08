@@ -76,6 +76,12 @@ result, dialed number, destination, and whether the patient SMS was sent.
 Set `GCHAT_MISSED_CALLS_WEBHOOK_URL` to a dedicated Space webhook (falls back to
 `GCHAT_WEBHOOK_URL`). Deduped per CDR id so re-syncs do not spam.
 
+**Agent extensions:** Call Ops scorecards identify staff by `users.extension`
+(VBC extension). Sync catalog via Agent Settings → **Sync extensions** (CDR
+harvest + optional Vonage Provisioning) or `python scripts/sync_vonage_extensions.py`.
+CDRs without a mapped extension roll into a single **Unknown** row — they do not
+create new agents.
+
 **Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
 
 `http://localhost:8080/poller/sync-now`

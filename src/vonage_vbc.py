@@ -316,6 +316,48 @@ class VonageVBCClient:
         data = self._get_json(url)
         return _parse_recording(data)
 
+    # ── Provisioning (users / extensions) ───────────────────────────────
+
+    def list_provisioning_users(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 100,
+        email: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """List VBC account users (requires Provisioning API subscription)."""
+        account_id = self.reports_account_id()
+        params: dict[str, Any] = {"page": page, "page_size": page_size}
+        if email:
+            params["email"] = email
+        last_error: Exception | None = None
+        for base in (
+            "https://api.vonage.com/t/vbc.prod/provisioning/api",
+            "https://api.vonage.com/t/vbc.prod/provisioning/v1/api",
+        ):
+            url = f"{base}/accounts/{account_id}/users"
+            try:
+                data = self._get_json(url, params=params)
+                return _embedded_provisioning_users(data), data
+            except VonageVBCError as exc:
+                last_error = exc
+                continue
+        raise VonageVBCError(str(last_error or "Provisioning users list failed"))
+
+    def iter_provisioning_users(
+        self,
+        *,
+        page_size: int = 100,
+        max_pages: int = 50,
+    ) -> Iterator[dict[str, Any]]:
+        for page in range(1, max_pages + 1):
+            rows, _meta = self.list_provisioning_users(page=page, page_size=page_size)
+            if not rows:
+                break
+            yield from rows
+            if len(rows) < page_size:
+                break
+
     def download_recording(self, recording: VBCRecording | str) -> bytes:
         if isinstance(recording, VBCRecording):
             url = recording.download_url or (
@@ -380,6 +422,20 @@ def _embedded_recordings(data: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(rows, dict):
         rows = [rows]
     return list(rows)
+
+
+def _embedded_provisioning_users(data: dict[str, Any]) -> list[dict[str, Any]]:
+    embedded = data.get("_embedded") or {}
+    rows = (
+        embedded.get("data")
+        or embedded.get("users")
+        or data.get("users")
+        or data.get("data")
+        or []
+    )
+    if isinstance(rows, dict):
+        rows = [rows]
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _parse_recording(item: dict[str, Any]) -> VBCRecording:

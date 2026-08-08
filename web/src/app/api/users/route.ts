@@ -6,9 +6,12 @@ import {
   importAndMapAgent,
   linkProvisionalAgent,
   listUsers,
+  listVonageExtensions,
   setUserActive,
+  setUserExtension,
   upsertUser,
 } from "@/lib/database";
+import { PollerError, pollerJson } from "@/lib/poller";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {
@@ -27,9 +30,11 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const includeUnmapped = searchParams.get("unmapped") !== "0";
+  const includeExtensions = searchParams.get("extensions") === "1";
   const users = await listUsers();
   const unmapped = includeUnmapped ? await discoverUnmappedAgents() : [];
-  return NextResponse.json({ users, unmapped });
+  const extensions = includeExtensions ? await listVonageExtensions() : undefined;
+  return NextResponse.json({ users, unmapped, extensions });
 }
 
 export async function POST(req: Request) {
@@ -109,6 +114,45 @@ export async function POST(req: Request) {
         }
       }
       return NextResponse.json({ ok: true, results });
+    }
+
+    if (action === "set_extension") {
+      const email = String(body.email || "")
+        .trim()
+        .toLowerCase();
+      const extension =
+        body.extension == null ? "" : String(body.extension).trim();
+      if (!email) {
+        return NextResponse.json({ error: "Email is required" }, { status: 400 });
+      }
+      const user = await setUserExtension(email, extension);
+      return NextResponse.json({ ok: true, user });
+    }
+
+    if (action === "sync_extensions") {
+      try {
+        const data = await pollerJson<{
+          status: string;
+          summary?: Record<string, unknown>;
+        }>("/ops/sync-extensions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_map: body.auto_map !== false }),
+        });
+        const users = await listUsers();
+        const extensions = await listVonageExtensions();
+        return NextResponse.json({
+          ok: true,
+          summary: data.summary || {},
+          users,
+          extensions,
+        });
+      } catch (e) {
+        if (e instanceof PollerError) {
+          return NextResponse.json({ error: e.detail }, { status: e.status });
+        }
+        throw e;
+      }
     }
 
     if (action === "link_provisional") {

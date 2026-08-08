@@ -469,6 +469,8 @@ export type UserDoc = {
   last_coaching_at?: string | null;
   provisional?: boolean;
   active?: boolean;
+  /** VBC extension number used to identify this agent on CDRs. */
+  extension?: string | null;
 };
 
 function serializeValue(value: unknown): unknown {

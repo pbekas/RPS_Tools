@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { UnmappedAgentRow, UserDoc } from "@/lib/database";
+import type { UnmappedAgentRow, UserDoc, VonageExtensionDoc } from "@/lib/database";
 
 type Props = {
   initialUsers: UserDoc[];
@@ -18,9 +18,11 @@ export function AgentSettings({
 }: Props) {
   const [users, setUsers] = useState(initialUsers);
   const [unmapped, setUnmapped] = useState(initialUnmapped);
+  const [extensions, setExtensions] = useState<VonageExtensionDoc[]>([]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Agent");
+  const [extensionDrafts, setExtensionDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
@@ -38,17 +40,78 @@ export function AgentSettings({
       return (
         (u.name || "").toLowerCase().includes(needle) ||
         (u.email || "").toLowerCase().includes(needle) ||
-        (u.role || "").toLowerCase().includes(needle)
+        (u.role || "").toLowerCase().includes(needle) ||
+        String(u.extension || "").toLowerCase().includes(needle)
       );
     });
   }, [users, q]);
 
+  const unmappedExts = useMemo(
+    () => extensions.filter((e) => !e.mapped_email),
+    [extensions]
+  );
+
   async function refresh() {
-    const res = await fetch("/api/users?unmapped=1");
+    const res = await fetch("/api/users?unmapped=1&extensions=1");
     const data = await res.json();
     if (res.ok) {
       setUsers(data.users || []);
       setUnmapped(data.unmapped || []);
+      setExtensions(data.extensions || []);
+    }
+  }
+
+  async function syncExtensions() {
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync_extensions" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+      if (data.users) setUsers(data.users);
+      if (data.extensions) setExtensions(data.extensions);
+      const s = data.summary || {};
+      setMsg(
+        `Synced extensions: ${s.upserted ?? 0} catalog · ${s.auto_mapped ?? 0} auto-mapped` +
+          (s.provisioning_ok
+            ? " (Vonage Provisioning)"
+            : s.provisioning_error
+              ? " (CDR harvest — enable Provisioning API for full directory)"
+              : " (CDR harvest)")
+      );
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveExtension(u: UserDoc) {
+    setSaving(true);
+    setMsg("");
+    try {
+      const ext = (extensionDrafts[u.email] ?? u.extension ?? "").trim();
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "set_extension",
+          email: u.email,
+          extension: ext,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      setMsg(`Saved extension ${ext || "(cleared)"} for ${u.name || u.email}`);
+      await refresh();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -195,6 +258,43 @@ export function AgentSettings({
           {msg}
         </p>
       ) : null}
+
+      <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl text-ink">Vonage extensions</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              Scorecard only counts staff with a mapped extension. Sync harvests
+              extensions from CDRs (and Vonage Provisioning when enabled), then
+              set each agent&apos;s extension below.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={syncExtensions}
+            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+          >
+            {saving ? "Syncing…" : "Sync extensions"}
+          </button>
+        </div>
+        {unmappedExts.length > 0 ? (
+          <p className="mt-3 text-xs text-ink-soft">
+            {unmappedExts.length} extension{unmappedExts.length === 1 ? "" : "s"} in
+            catalog without a user map
+            {unmappedExts.slice(0, 8).map((e) => ` · ${e.extension}`).join("")}
+            {unmappedExts.length > 8 ? "…" : ""}
+          </p>
+        ) : extensions.length > 0 ? (
+          <p className="mt-3 text-xs text-ink-soft">
+            {extensions.length} extensions synced
+          </p>
+        ) : (
+          <p className="mt-3 text-xs text-ink-soft">
+            No extension catalog yet — click Sync extensions.
+          </p>
+        )}
+      </section>
 
       <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -352,6 +452,7 @@ export function AgentSettings({
             <tr>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Ext</th>
               <th className="px-4 py-3">Role</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
@@ -360,7 +461,7 @@ export function AgentSettings({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-ink-soft">
+                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
                   No agents in the directory yet.
                 </td>
               </tr>
@@ -373,6 +474,29 @@ export function AgentSettings({
                       {u.name || "—"}
                     </td>
                     <td className="px-4 py-3 text-ink-soft">{u.email}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={extensionDrafts[u.email] ?? u.extension ?? ""}
+                          onChange={(e) =>
+                            setExtensionDrafts((prev) => ({
+                              ...prev,
+                              [u.email]: e.target.value,
+                            }))
+                          }
+                          placeholder="e.g. 101"
+                          className="w-20 rounded-lg border border-line px-2 py-1 text-sm"
+                        />
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => saveExtension(u)}
+                          className="text-xs font-semibold text-accent hover:underline disabled:opacity-60"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-4 py-3">{u.role || "Agent"}</td>
                     <td className="px-4 py-3">
                       <span

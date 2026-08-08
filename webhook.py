@@ -134,6 +134,26 @@ async def ops_reanalyze(call_id: str, request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", **result})
 
 
+@app.post("/ops/sync-extensions")
+async def ops_sync_extensions(request: Request) -> JSONResponse:
+    """Admin ops: sync Vonage/CDR extensions and auto-map onto users."""
+    _require_ops_token(request)
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    auto_map = body.get("auto_map", True)
+    try:
+        from src.extension_sync import sync_extensions
+
+        summary = sync_extensions(auto_map=bool(auto_map))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Extension sync failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", "summary": summary})
+
+
 @app.post("/ops/upload")
 async def ops_upload(
     request: Request,

@@ -160,7 +160,7 @@ export function AgentScorecard({
           </span>
           {unmapped ? (
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-warn">
-              {unmapped} unmapped
+              Unknown bucket active
             </span>
           ) : null}
         </div>
@@ -212,7 +212,7 @@ export function AgentScorecard({
       <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
         Rock star = high answer rate + high quality + no critical flags (relative
         to team). Coach = weak access, quality/empathy, FCR, or flag volume.
-        Unmapped = CDR person not matched to a Workspace agent yet.
+        Unknown = CDRs not tied to a mapped Vonage extension (single bucket).
       </p>
     </section>
   );

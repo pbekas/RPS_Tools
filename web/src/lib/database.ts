@@ -605,6 +605,73 @@ export async function setUserActive(email: string, active: boolean): Promise<Use
   return serializeRow<UserDoc>(rows[0]);
 }
 
+export async function setUserExtension(
+  email: string,
+  extension: string | null
+): Promise<UserDoc> {
+  if (!usePostgres()) {
+    const existing = await firestore.getUser(email);
+    if (!existing) throw new Error("User not found");
+    const ext = (extension || "").trim();
+    await firestore.getDb()
+      .collection("users")
+      .doc(email.trim().toLowerCase())
+      .update({ extension: ext, updated_at: new Date() });
+    return { ...existing, extension: ext };
+  }
+  const ext = (extension || "").trim();
+  if (ext) {
+    const clash = await query(
+      "SELECT email FROM users WHERE extension = $1 AND email <> $2 LIMIT 1",
+      [ext, email.trim().toLowerCase()]
+    );
+    if (clash[0]) {
+      throw new Error(`Extension ${ext} is already mapped to ${clash[0].email}`);
+    }
+  }
+  const rows = await query(
+    `UPDATE users SET extension = $2, updated_at = now()
+     WHERE email = $1 RETURNING *`,
+    [email.trim().toLowerCase(), ext]
+  );
+  if (!rows[0]) throw new Error("User not found");
+  if (ext) {
+    await query(
+      `INSERT INTO vonage_extensions (extension, mapped_email, source, updated_at)
+       VALUES ($1, $2, 'manual', now())
+       ON CONFLICT (extension) DO UPDATE SET
+         mapped_email = EXCLUDED.mapped_email,
+         updated_at = now()`,
+      [ext, email.trim().toLowerCase()]
+    );
+  } else {
+    await query(
+      `UPDATE vonage_extensions SET mapped_email = NULL, updated_at = now()
+       WHERE mapped_email = $1`,
+      [email.trim().toLowerCase()]
+    );
+  }
+  return serializeRow<UserDoc>(rows[0]);
+}
+
+export type VonageExtensionDoc = {
+  extension: string;
+  display_name?: string;
+  vbc_username?: string;
+  vbc_email?: string;
+  mapped_email?: string | null;
+  source?: string;
+};
+
+export async function listVonageExtensions(): Promise<VonageExtensionDoc[]> {
+  if (!usePostgres()) return [];
+  const rows = await query(
+    `SELECT * FROM vonage_extensions
+     ORDER BY CASE WHEN mapped_email IS NULL THEN 0 ELSE 1 END, extension`
+  );
+  return rows.map((row) => serializeRow<VonageExtensionDoc>(row));
+}
+
 function slugifyAgentName(name: string): string {
   return (
     name.trim().toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") ||

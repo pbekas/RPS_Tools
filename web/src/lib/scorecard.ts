@@ -1,4 +1,10 @@
-/** Unified agent scorecard: join CDR ops metrics with QA quality signals. */
+/** Unified agent scorecard: join CDR ops metrics with QA quality signals.
+
+Identity rules:
+  - Prefer users.extension ↔ CDR party extension (known staff only).
+  - Fall back to matched QA agent_email when that user exists.
+  - Everything else rolls into a single Unknown bucket — never invent agents.
+*/
 
 import type { CallLogDoc } from "@/lib/callLogs";
 import {
@@ -36,6 +42,8 @@ export type AgentScorecardRow = {
   tier: ScorecardTier;
 };
 
+const UNKNOWN_KEY = "unknown";
+
 function namesMatch(a: string, b: string): boolean {
   const left = (a || "").trim().toLowerCase();
   const right = (b || "").trim().toLowerCase();
@@ -69,65 +77,74 @@ type Identity = {
 
 function buildUserIndex(users: UserDoc[]): {
   byEmail: Map<string, UserDoc>;
+  byExtension: Map<string, UserDoc>;
   candidates: Array<{ email: string; name: string; local: string }>;
 } {
   const byEmail = new Map<string, UserDoc>();
+  const byExtension = new Map<string, UserDoc>();
   const candidates: Array<{ email: string; name: string; local: string }> = [];
   for (const u of users) {
     if (u.active === false) continue;
+    // Provisional / auto-created shells are not scorecard agents.
+    if (u.provisional) continue;
     const email = (u.email || "").trim().toLowerCase();
     if (!email) continue;
     byEmail.set(email, u);
+    const ext = String(u.extension || "").trim();
+    if (ext) byExtension.set(ext, u);
     candidates.push({
       email,
       name: (u.name || "").trim(),
       local: emailLocalName(email),
     });
   }
-  return { byEmail, candidates };
+  return { byEmail, byExtension, candidates };
+}
+
+function unknownIdentity(extension: string | null = null): Identity {
+  return {
+    key: UNKNOWN_KEY,
+    name: "Unknown",
+    email: null,
+    extension,
+  };
 }
 
 function resolveIdentity(
   party: ReturnType<typeof partyFromLog>,
   log: CallLogDoc,
   callsById: Map<string, CallDoc>,
-  candidates: Array<{ email: string; name: string; local: string }>
+  byEmail: Map<string, UserDoc>,
+  byExtension: Map<string, UserDoc>
 ): Identity {
+  const ext = (party.extension || "").trim();
+  if (ext && byExtension.has(ext)) {
+    const user = byExtension.get(ext)!;
+    return {
+      key: `email:${user.email}`,
+      name: (user.name || "").trim() || party.name,
+      email: user.email,
+      extension: ext,
+    };
+  }
+
   const matchedId = (log.matched_call_id || "").trim();
   if (matchedId) {
     const call = callsById.get(matchedId);
     const email = (call?.agent_email || "").trim().toLowerCase();
-    if (email) {
+    if (email && byEmail.has(email)) {
+      const user = byEmail.get(email)!;
       return {
         key: `email:${email}`,
-        name: (call?.agent_name || "").trim() || party.name,
+        name: (user.name || call?.agent_name || "").trim() || party.name,
         email,
-        extension: party.extension,
+        extension: (user.extension || ext || null) as string | null,
       };
     }
   }
 
-  for (const c of candidates) {
-    if (
-      namesMatch(party.name, c.name) ||
-      namesMatch(party.name, c.local) ||
-      (party.user && namesMatch(party.user, c.local))
-    ) {
-      return {
-        key: `email:${c.email}`,
-        name: c.name || party.name,
-        email: c.email,
-        extension: party.extension,
-      };
-    }
-  }
-
-  return {
-    key: `cdr:${party.key}`,
-    name: party.name,
-    email: null,
-    extension: party.extension,
-  };
+  // No known staff extension / mapped user → single Unknown bucket.
+  return unknownIdentity(ext || null);
 }
 
 function median(values: number[]): number | null {
@@ -150,7 +167,7 @@ function assignTier(rows: AgentScorecardRow[]): void {
   const qMed = median(qualities) ?? 7.5;
 
   for (const row of rows) {
-    if (!row.email) {
+    if (!row.email || row.key === UNKNOWN_KEY) {
       row.tier = "unmapped";
       continue;
     }
@@ -190,10 +207,8 @@ export function buildAgentScorecard(input: {
   calls: CallDoc[];
   users: UserDoc[];
 }): { rows: AgentScorecardRow[]; team: AgentScorecardRow } {
-  const { byEmail, candidates } = buildUserIndex(input.users);
-  const callsById = new Map(
-    input.calls.map((c) => [c.id, c] as const)
-  );
+  const { byEmail, byExtension, candidates } = buildUserIndex(input.users);
+  const callsById = new Map(input.calls.map((c) => [c.id, c] as const));
 
   type Acc = {
     key: string;
@@ -225,7 +240,7 @@ export function buildAgentScorecard(input: {
         key: id.key,
         name: (user?.name || id.name || id.email || "Unknown").trim(),
         email: id.email,
-        extension: id.extension,
+        extension: (user?.extension || id.extension || null) as string | null,
         partyKeys: new Set(),
         cdrCalls: 0,
         answered: 0,
@@ -249,7 +264,7 @@ export function buildAgentScorecard(input: {
 
   for (const log of input.logs) {
     const party = partyFromLog(log);
-    const identity = resolveIdentity(party, log, callsById, candidates);
+    const identity = resolveIdentity(party, log, callsById, byEmail, byExtension);
     const row = ensure(identity);
     row.partyKeys.add(party.key);
     row.cdrCalls += 1;
@@ -265,30 +280,39 @@ export function buildAgentScorecard(input: {
   for (const call of input.calls) {
     const email = (call.agent_email || "").trim().toLowerCase();
     const name = (call.agent_name || "").trim() || email || "Unknown";
-    let key: string;
-    let identityEmail: string | null = email || null;
+    let identity: Identity;
 
-    if (email) {
-      key = `email:${email}`;
+    if (email && byEmail.has(email)) {
+      const user = byEmail.get(email)!;
+      identity = {
+        key: `email:${email}`,
+        name: (user.name || name).trim(),
+        email,
+        extension: (user.extension || null) as string | null,
+      };
     } else {
-      // Try to attach unnamed QA to a user by agent_name
       const match = candidates.find(
         (c) => namesMatch(name, c.name) || namesMatch(name, c.local)
       );
-      if (match) {
-        key = `email:${match.email}`;
-        identityEmail = match.email;
+      if (match && byEmail.has(match.email)) {
+        const user = byEmail.get(match.email)!;
+        // Only attach by name when the user has a known extension (staff).
+        if (String(user.extension || "").trim()) {
+          identity = {
+            key: `email:${match.email}`,
+            name: (user.name || name).trim(),
+            email: match.email,
+            extension: user.extension || null,
+          };
+        } else {
+          identity = unknownIdentity();
+        }
       } else {
-        key = `qa:${name.toLowerCase()}`;
+        identity = unknownIdentity();
       }
     }
 
-    const row = ensure({
-      key,
-      name,
-      email: identityEmail,
-      extension: null,
-    });
+    const row = ensure(identity);
     row.qaCalls += 1;
     row.criticalFlags += criticalFlagCount(call);
     if (typeof call.quality_score === "number") {
@@ -325,12 +349,16 @@ export function buildAgentScorecard(input: {
       criticalFlags: r.criticalFlags,
       tier: "solid" as ScorecardTier,
     }))
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      // Keep Unknown at the bottom.
+      if (a.key === UNKNOWN_KEY && b.key !== UNKNOWN_KEY) return 1;
+      if (b.key === UNKNOWN_KEY && a.key !== UNKNOWN_KEY) return -1;
+      return (
         b.talkSeconds - a.talkSeconds ||
         b.cdrCalls - a.cdrCalls ||
         (b.avgQuality || 0) - (a.avgQuality || 0)
-    );
+      );
+    });
 
   assignTier(rows);
 
@@ -343,10 +371,7 @@ export function buildAgentScorecard(input: {
   const qVals = rows.filter((r) => r.avgQuality != null).map((r) => r.avgQuality!);
   const eVals = rows.filter((r) => r.avgEmpathy != null).map((r) => r.avgEmpathy!);
   const fVals = rows.filter((r) => r.fcrRate != null && r.qaCalls > 0);
-  const fcrYes = fVals.reduce(
-    (n, r) => n + (r.fcrRate || 0) * r.qaCalls,
-    0
-  );
+  const fcrYes = fVals.reduce((n, r) => n + (r.fcrRate || 0) * r.qaCalls, 0);
   const fcrN = fVals.reduce((n, r) => n + r.qaCalls, 0);
 
   const team: AgentScorecardRow = {
@@ -382,7 +407,7 @@ export function scorecardTierLabel(tier: ScorecardTier): string {
     case "coach":
       return "Coach";
     case "unmapped":
-      return "Unmapped";
+      return "Unknown";
     case "baseline":
       return "Baseline";
     default:
@@ -395,6 +420,13 @@ export function filterLogsForScorecardRow(
   row: AgentScorecardRow | null
 ): CallLogDoc[] {
   if (!row || row.key === "team") return logs;
+  if (row.key === UNKNOWN_KEY) {
+    // Unknown = any log whose party does not map to a known extension row's parties
+    // Use partyKeys collected during build.
+    const keys = new Set(row.partyKeys);
+    if (!keys.size) return [];
+    return logs.filter((log) => keys.has(partyFromLog(log).key));
+  }
   const keys = new Set(row.partyKeys);
   if (!keys.size) return [];
   return logs.filter((log) => keys.has(partyFromLog(log).key));

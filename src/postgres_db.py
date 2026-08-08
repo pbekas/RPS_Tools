@@ -297,6 +297,194 @@ def set_rolling_feedback(email: str, feedback: str) -> None:
             raise ValueError(f"User {email} not found")
 
 
+def set_user_extension(email: str, extension: str | None) -> dict[str, Any]:
+    """Set or clear a user's VBC extension. Empty string clears."""
+    email_norm = email.strip().lower()
+    ext = str(extension or "").strip()
+    with get_connection() as conn:
+        if ext:
+            clash = conn.execute(
+                """
+                SELECT email FROM users
+                WHERE extension = %s AND email <> %s
+                LIMIT 1
+                """,
+                (ext, email_norm),
+            ).fetchone()
+            if clash:
+                raise ValueError(
+                    f"Extension {ext} is already mapped to {clash['email']}"
+                )
+        row = conn.execute(
+            """
+            UPDATE users
+            SET extension = %s, updated_at = now()
+            WHERE email = %s
+            RETURNING *
+            """,
+            (ext, email_norm),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"User {email} not found")
+        if ext:
+            conn.execute(
+                """
+                INSERT INTO vonage_extensions (extension, mapped_email, source, updated_at)
+                VALUES (%s, %s, 'manual', now())
+                ON CONFLICT (extension) DO UPDATE SET
+                    mapped_email = EXCLUDED.mapped_email,
+                    source = CASE
+                        WHEN vonage_extensions.source = 'provisioning' THEN vonage_extensions.source
+                        ELSE 'manual'
+                    END,
+                    updated_at = now()
+                """,
+                (ext, email_norm),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE vonage_extensions
+                SET mapped_email = NULL, updated_at = now()
+                WHERE mapped_email = %s
+                """,
+                (email_norm,),
+            )
+    return _serialize_user(row)  # type: ignore[return-value]
+
+
+def get_user_by_extension(extension: str) -> dict[str, Any] | None:
+    ext = str(extension or "").strip()
+    if not ext:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE extension = %s LIMIT 1",
+            (ext,),
+        ).fetchone()
+    return _serialize_user(row)
+
+
+def list_distinct_cdr_extensions(*, limit: int = 2000) -> list[dict[str, Any]]:
+    """Harvest unique extensions seen on CDRs with a best-effort display name."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            WITH parts AS (
+                SELECT
+                    nullif(trim(destination_extension), '') AS extension,
+                    nullif(trim(destination_user_full_name), '') AS display_name,
+                    nullif(trim(destination_user), '') AS username
+                FROM call_logs
+                WHERE nullif(trim(destination_extension), '') IS NOT NULL
+                UNION ALL
+                SELECT
+                    nullif(trim(source_extension), '') AS extension,
+                    nullif(trim(source_user_full_name), '') AS display_name,
+                    nullif(trim(source_user), '') AS username
+                FROM call_logs
+                WHERE nullif(trim(source_extension), '') IS NOT NULL
+            )
+            SELECT
+                extension,
+                coalesce(max(display_name), '') AS display_name,
+                coalesce(max(username), '') AS username,
+                count(*)::int AS seen_count
+            FROM parts
+            WHERE extension IS NOT NULL
+            GROUP BY extension
+            ORDER BY count(*) DESC, extension
+            LIMIT %s
+            """,
+            (max(1, limit),),
+        ).fetchall()
+    return [_normalize(dict(row)) for row in rows]
+
+
+def upsert_vonage_extension(payload: dict[str, Any]) -> dict[str, Any]:
+    ext = str(payload.get("extension") or "").strip()
+    if not ext:
+        raise ValueError("extension is required")
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO vonage_extensions (
+                extension, display_name, vbc_username, vbc_email, vbc_user_id,
+                source, raw, synced_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, now(), now())
+            ON CONFLICT (extension) DO UPDATE SET
+                display_name = CASE
+                    WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
+                    ELSE vonage_extensions.display_name
+                END,
+                vbc_username = CASE
+                    WHEN EXCLUDED.vbc_username <> '' THEN EXCLUDED.vbc_username
+                    ELSE vonage_extensions.vbc_username
+                END,
+                vbc_email = CASE
+                    WHEN EXCLUDED.vbc_email <> '' THEN EXCLUDED.vbc_email
+                    ELSE vonage_extensions.vbc_email
+                END,
+                vbc_user_id = CASE
+                    WHEN EXCLUDED.vbc_user_id <> '' THEN EXCLUDED.vbc_user_id
+                    ELSE vonage_extensions.vbc_user_id
+                END,
+                source = CASE
+                    WHEN EXCLUDED.source = 'provisioning' THEN 'provisioning'
+                    WHEN vonage_extensions.source = 'provisioning' THEN 'provisioning'
+                    ELSE EXCLUDED.source
+                END,
+                raw = vonage_extensions.raw || EXCLUDED.raw,
+                synced_at = now(),
+                updated_at = now()
+            RETURNING *
+            """,
+            (
+                ext,
+                str(payload.get("display_name") or "").strip(),
+                str(payload.get("vbc_username") or "").strip(),
+                str(payload.get("vbc_email") or "").strip().lower(),
+                str(payload.get("vbc_user_id") or "").strip(),
+                str(payload.get("source") or "cdr"),
+                Jsonb(_json_value(payload.get("raw") or {})),
+            ),
+        ).fetchone()
+    return _normalize(dict(row))  # type: ignore[arg-type]
+
+
+def set_vonage_extension_mapping(extension: str, email: str | None) -> dict[str, Any]:
+    ext = str(extension or "").strip()
+    email_norm = (email or "").strip().lower() or None
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE vonage_extensions
+            SET mapped_email = %s, updated_at = now()
+            WHERE extension = %s
+            RETURNING *
+            """,
+            (email_norm, ext),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Extension {ext} not found")
+    return _normalize(dict(row))
+
+
+def list_vonage_extensions() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM vonage_extensions
+            ORDER BY
+                CASE WHEN mapped_email IS NULL THEN 0 ELSE 1 END,
+                extension
+            """
+        ).fetchall()
+    return [_normalize(dict(row)) for row in rows]
+
+
 # ── Calls ──────────────────────────────────────────────────────────────
 
 
