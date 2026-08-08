@@ -237,18 +237,16 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Agents & team</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            Import agents found on calls as{" "}
-            <code className="rounded bg-wash px-1">{`{name}@${domain}`}</code>, then
-            adjust emails if needed (e.g. initials like tr@).
+            Manage your staff directory and map each person to their Vonage
+            extension so Call Ops scorecards stay clean.
           </p>
         </div>
       ) : (
         <div className="mb-8">
           <h2 className="font-display text-2xl text-ink">Agents & team</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Import agents found on calls as{" "}
-            <code className="rounded bg-wash px-1">{`{name}@${domain}`}</code>, then
-            adjust emails if needed.
+            Team directory first — map Vonage extensions, then clean up names
+            detected on calls below.
           </p>
         </div>
       )}
@@ -266,7 +264,7 @@ export function AgentSettings({
             <p className="mt-1 text-sm text-ink-soft">
               Scorecard only counts staff with a mapped extension. Sync harvests
               extensions from CDRs (and Vonage Provisioning when enabled), then
-              set each agent&apos;s extension below.
+              set each agent&apos;s extension in the directory below.
             </p>
           </div>
           <button
@@ -296,148 +294,13 @@ export function AgentSettings({
         )}
       </section>
 
-      <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="font-display text-2xl text-ink">Import & map</h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              Names detected on calls that still need a Workspace email. Default
-              mapping is firstname (or first.last) @{domain}.
-            </p>
-          </div>
-          {needsImport.length > 0 ? (
-            <button
-              type="button"
-              disabled={saving}
-              onClick={importAll}
-              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-            >
-              {saving ? "Importing…" : `Import all (${needsImport.length})`}
-            </button>
-          ) : null}
-        </div>
-
-        {needsImport.length === 0 ? (
-          <p className="mt-6 text-sm text-ink-soft">
-            No unmapped agents right now — everyone found on recent calls is mapped.
-          </p>
-        ) : (
-          <div className="mt-4 overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
-                <tr>
-                  <th className="px-3 py-2">Name on calls</th>
-                  <th className="px-3 py-2">Calls</th>
-                  <th className="px-3 py-2">Map to email</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {needsImport.map((row) => (
-                  <tr key={row.agent_name} className="border-b border-line/70 last:border-0">
-                    <td className="px-3 py-3 font-semibold text-ink">
-                      {row.agent_name}
-                      {row.current_email ? (
-                        <div className="text-[11px] font-normal text-ink-soft">
-                          currently {row.current_email || "unassigned"}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] font-normal text-ink-soft">
-                          no email on calls yet
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-ink-soft">{row.call_count}</td>
-                    <td className="px-3 py-3">
-                      <input
-                        value={edits[row.agent_name] ?? row.suggested_email}
-                        onChange={(e) =>
-                          setEdits((prev) => ({
-                            ...prev,
-                            [row.agent_name]: e.target.value,
-                          }))
-                        }
-                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
-                      />
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => importOne(row)}
-                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
-                      >
-                        Import & map
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <form
-        onSubmit={saveUser}
-        className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
-      >
-        <h2 className="font-display text-2xl text-ink">Add / update manually</h2>
-        <p className="mt-1 text-sm text-ink-soft">
-          Use this for people who haven’t appeared on calls yet, or to set initials
-          emails (e.g. tr@{domain}).
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              Display name
-            </span>
-            <input
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2"
-              placeholder="Diana"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              Workspace email
-            </span>
-            <input
-              required
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2"
-              placeholder={`diana@${domain}`}
-            />
-          </label>
-        </div>
-        <label className="mt-3 block text-sm">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-            Role
-          </span>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
-          >
-            <option value="Agent">Agent</option>
-            <option value="Admin">Admin</option>
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={saving}
-          className="mt-4 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save agent"}
-        </button>
-      </form>
-
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl text-ink">Team directory</h2>
+        <div>
+          <h2 className="font-display text-2xl text-ink">Team directory</h2>
+          <p className="mt-1 text-sm text-ink-soft">
+            {users.length} people · set Ext to include them on the agent scorecard
+          </p>
+        </div>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -446,7 +309,7 @@ export function AgentSettings({
         />
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
+      <div className="mb-8 overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
             <tr>
@@ -462,7 +325,7 @@ export function AgentSettings({
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
-                  No agents in the directory yet.
+                  No agents in the directory yet — add one below or import from calls.
                 </td>
               </tr>
             ) : (
@@ -539,6 +402,147 @@ export function AgentSettings({
           </tbody>
         </table>
       </div>
+
+      <form
+        onSubmit={saveUser}
+        className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
+      >
+        <h2 className="font-display text-2xl text-ink">Add / update manually</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Use this for people who haven&apos;t appeared on calls yet, or to set initials
+          emails (e.g. tr@{domain}).
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              Display name
+            </span>
+            <input
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-lg border border-line px-3 py-2"
+              placeholder="Diana"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              Workspace email
+            </span>
+            <input
+              required
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-line px-3 py-2"
+              placeholder={`diana@${domain}`}
+            />
+          </label>
+        </div>
+        <label className="mt-3 block text-sm">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            Role
+          </span>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
+          >
+            <option value="Agent">Agent</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </label>
+        <button
+          type="submit"
+          disabled={saving}
+          className="mt-4 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save agent"}
+        </button>
+      </form>
+
+      <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl text-ink">Import & map</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              Names detected on calls that still need a Workspace email. Default
+              mapping is firstname (or first.last) @{domain}. Prefer mapping real
+              staff in Team directory with an Ext — avoid importing every unknown name.
+            </p>
+          </div>
+          {needsImport.length > 0 ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={importAll}
+              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+            >
+              {saving ? "Importing…" : `Import all (${needsImport.length})`}
+            </button>
+          ) : null}
+        </div>
+
+        {needsImport.length === 0 ? (
+          <p className="mt-6 text-sm text-ink-soft">
+            No unmapped agents right now — everyone found on recent calls is mapped.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-hidden rounded-xl border border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
+                <tr>
+                  <th className="px-3 py-2">Name on calls</th>
+                  <th className="px-3 py-2">Calls</th>
+                  <th className="px-3 py-2">Map to email</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {needsImport.map((row) => (
+                  <tr key={row.agent_name} className="border-b border-line/70 last:border-0">
+                    <td className="px-3 py-3 font-semibold text-ink">
+                      {row.agent_name}
+                      {row.current_email ? (
+                        <div className="text-[11px] font-normal text-ink-soft">
+                          currently {row.current_email || "unassigned"}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] font-normal text-ink-soft">
+                          no email on calls yet
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-ink-soft">{row.call_count}</td>
+                    <td className="px-3 py-3">
+                      <input
+                        value={edits[row.agent_name] ?? row.suggested_email}
+                        onChange={(e) =>
+                          setEdits((prev) => ({
+                            ...prev,
+                            [row.agent_name]: e.target.value,
+                          }))
+                        }
+                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
+                      />
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => importOne(row)}
+                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
+                      >
+                        Import & map
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
