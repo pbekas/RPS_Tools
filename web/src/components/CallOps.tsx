@@ -17,6 +17,7 @@ import { buildOpsTower, classifyOutcome, type OutcomeBucket } from "@/lib/opsTow
 import { formatCallDate, formatDuration } from "@/lib/format";
 import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 import { AgentScorecard } from "@/components/AgentScorecard";
+import { LiveCallsBoard } from "@/components/LiveCallsBoard";
 import { OpsControlTower } from "@/components/OpsControlTower";
 
 type Props = {
@@ -265,6 +266,8 @@ export function CallOps({
         *Missed includes non-answered results (missed, abandoned, voicemail, busy,
         etc.). Use the control tower outcome taxonomy for a cleaner split.
       </p>
+
+      <LiveCallsBoard />
 
       <OpsControlTower
         tower={tower}

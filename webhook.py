@@ -154,6 +154,20 @@ async def ops_sync_extensions(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "summary": summary})
 
 
+@app.get("/ops/live-calls")
+async def ops_live_calls(request: Request) -> JSONResponse:
+    """Admin ops: live extension board (Telephony active calls + directory)."""
+    _require_ops_token(request)
+    try:
+        from src.live_calls import build_live_call_board
+
+        board = build_live_call_board()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Live call board failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **board})
+
+
 @app.post("/ops/upload")
 async def ops_upload(
     request: Request,

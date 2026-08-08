@@ -23,6 +23,7 @@ from src.config import get_settings
 
 TOKEN_URL = "https://api.vonage.com/token"
 RECORDING_API = "https://api.vonage.com/t/vbc.prod/call_recording"
+TELEPHONY_API = "https://api.vonage.com/t/vbc.prod/telephony/v3"
 AUTHORIZE_URL = "https://api.vonage.com/authorize"
 
 _TOKEN_CACHE_PATH = Path(__file__).resolve().parent.parent / ".cache" / "vbc_token.json"
@@ -315,6 +316,41 @@ class VonageVBCClient:
         )
         data = self._get_json(url)
         return _parse_recording(data)
+
+    # ── Telephony (live active calls) ───────────────────────────────────
+
+    def list_active_calls(
+        self,
+        *,
+        page_size: int = 100,
+        extension: str | None = None,
+        max_pages: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Account-wide active calls (ringing / on-call). Requires Telephony API."""
+        account_id = self.reports_account_id()
+        out: list[dict[str, Any]] = []
+        page = 0
+        while page < max_pages:
+            params: dict[str, Any] = {
+                "page_size": page_size,
+                "order": "desc",
+            }
+            if extension:
+                params["extension"] = extension
+            # API uses 0-based pages in responses we observed.
+            if page > 0:
+                params["page"] = page
+            url = f"{TELEPHONY_API}/cc/accounts/{account_id}/calls"
+            data = self._get_json(url, params=params)
+            rows = data.get("calls") or []
+            if isinstance(rows, dict):
+                rows = [rows]
+            batch = [row for row in rows if isinstance(row, dict)]
+            out.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return out
 
     # ── Provisioning (users / extensions) ───────────────────────────────
 
