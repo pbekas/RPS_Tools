@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.bedrock_analyst import analyze_transcript
-from src import firestore_db as db
+from src import database as db
 from src.agent_identity import resolve_or_create_agent
 from src.qa_rules import get_active_ruleset
 

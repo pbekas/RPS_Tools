@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { CallDoc } from "@/lib/firestore";
+import type { CallDoc } from "@/lib/database";
 import type { HeatmapData } from "@/lib/qa";
 import { agentBucketKey } from "@/lib/qa";
 import {

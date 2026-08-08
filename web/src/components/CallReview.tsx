@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { CallDoc, UserDoc } from "@/lib/firestore";
+import type { CallDoc, UserDoc } from "@/lib/database";
 import { formatCallDate, formatDuration, resolveAgentLabel, resolvePatientName } from "@/lib/format";
 import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 import { QueueNav } from "@/components/QueueNav";

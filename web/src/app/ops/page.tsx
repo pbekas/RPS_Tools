@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { isFirestoreQuotaError, listCallLogs } from "@/lib/firestore";
+import { isFirestoreQuotaError, listCallLogs } from "@/lib/database";
 import { CallOps } from "@/components/CallOps";
 import { QuotaNotice } from "@/components/QuotaNotice";
 
