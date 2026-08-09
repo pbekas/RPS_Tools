@@ -44,7 +44,7 @@ export function SettingsShell({
         <div className="mt-6 flex flex-wrap gap-2 border-b border-line pb-0">
           {(
             [
-              ["agents", "Agents"],
+              ["agents", "Users & access"],
               ["topics", "Topics"],
               ["rules", "Audit rules"],
               ["flags", "Critical flags"],

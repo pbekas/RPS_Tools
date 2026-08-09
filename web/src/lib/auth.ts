@@ -1,8 +1,46 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
-import { getUser, upsertUser } from "@/lib/database";
+import {
+  getUser,
+  setUserModules,
+  upsertUser,
+} from "@/lib/database";
+import { ALL_TOOLSET_IDS } from "@/lib/permissions";
 
-const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase();
+function allowedDomains(): string[] {
+  const multi = (process.env.ALLOWED_EMAIL_DOMAINS || "")
+    .split(",")
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  if (multi.length) return multi;
+  const single = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com")
+    .trim()
+    .toLowerCase();
+  return single ? [single] : ["releviumpain.com"];
+}
+
+function bootstrapAdminEmails(): Set<string> {
+  const raw = (process.env.BOOTSTRAP_ADMIN_EMAILS || "").trim();
+  const fromEnv = raw
+    ? raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean)
+    : [];
+  // Owner + common relevium aliases — ensure Pete has both tool sets.
+  const defaults = [
+    "pb@octanesolutiongroup.com",
+    "pb@releviumpain.com",
+    "pete@releviumpain.com",
+    "pete.bekas@releviumpain.com",
+  ];
+  return new Set([...defaults, ...fromEnv]);
+}
+
+function emailAllowed(email: string): boolean {
+  const domains = allowedDomains();
+  return domains.some((d) => email.endsWith(`@${d}`));
+}
+
+const domains = allowedDomains();
+const primaryDomain = domains[0] || "releviumpain.com";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -11,7 +49,8 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       authorization: {
         params: {
-          hd: domain,
+          // Only lock Google hosted-domain when a single domain is configured.
+          ...(domains.length === 1 ? { hd: primaryDomain } : {}),
           prompt: "select_account",
         },
       },
@@ -25,24 +64,44 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async signIn({ user }) {
       const email = (user.email || "").toLowerCase();
-      if (!email.endsWith(`@${domain}`)) return false;
+      if (!emailAllowed(email)) return false;
       try {
         const existing = await getUser(email);
+        const bootstrap = bootstrapAdminEmails().has(email);
         if (!existing) {
           await upsertUser({
             email,
             name: user.name || email,
-            role: "Agent",
+            role: bootstrap ? "Admin" : "Agent",
           });
-        } else if (user.name && existing.name !== user.name) {
-          await upsertUser({
+          await setUserModules(
             email,
-            name: user.name,
-            role: existing.role || "Agent",
-          });
+            bootstrap ? [...ALL_TOOLSET_IDS] : ["call_qa"]
+          );
+        } else {
+          if (user.name && existing.name !== user.name) {
+            await upsertUser({
+              email,
+              name: user.name,
+              role: existing.role || "Agent",
+            });
+          }
+          if (bootstrap) {
+            const role = (existing.role || "").toLowerCase();
+            if (role !== "admin") {
+              await upsertUser({
+                email,
+                name: existing.name || user.name || email,
+                role: "Admin",
+              });
+            }
+            await setUserModules(email, [...ALL_TOOLSET_IDS]);
+          } else if (!Array.isArray(existing.modules) || !existing.modules.length) {
+            await setUserModules(email, ["call_qa"]);
+          }
         }
       } catch {
-        // Allow login even if Firestore briefly fails; role resolves later
+        // Allow login even if DB briefly fails; role resolves later
       }
       return true;
     },

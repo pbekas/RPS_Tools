@@ -262,6 +262,8 @@ class RpsCallQaStack(Stack):
                     "AWS_DEFAULT_REGION": Stack.of(self).region,
                     "S3_BUCKET": bucket_name,
                     "ALLOWED_EMAIL_DOMAIN": "releviumpain.com",
+                    "ALLOWED_EMAIL_DOMAINS": "releviumpain.com,octanesolutiongroup.com",
+                    "BOOTSTRAP_ADMIN_EMAILS": "pb@octanesolutiongroup.com,pb@releviumpain.com,pete@releviumpain.com",
                     "BEDROCK_MODEL_ID": bedrock_model,
                     "BEDROCK_COACHING_MODEL_ID": coaching_model,
                     # Defaults keep Firestore primary until shadow validation.
@@ -328,9 +330,12 @@ class RpsCallQaStack(Stack):
                 "VBC_POLLER_LOOKBACK_MINUTES": "30",
                 "VBC_POLLER_MAX_PER_CYCLE": "25",
                 "ALLOWED_EMAIL_DOMAIN": "releviumpain.com",
+                "ALLOWED_EMAIL_DOMAINS": "releviumpain.com,octanesolutiongroup.com",
+                "BOOTSTRAP_ADMIN_EMAILS": "pb@octanesolutiongroup.com,pb@releviumpain.com,pete@releviumpain.com",
                 "APP_URL": f"https://{domain}",
                 "ALERTS_ENABLED": "1",
-                "MISSED_ALERT_WINDOW_MINUTES": "30",
+                "CONTRACT_ALERTS_ENABLED": "1",
+                "CONTRACT_ALERT_DAYS": "90",                "MISSED_ALERT_WINDOW_MINUTES": "30",
                 "MISSED_ALERT_THRESHOLD": "8",
                 # Missed-inbound patient SMS stays off until secret flag is enabled.
                 "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": "90",

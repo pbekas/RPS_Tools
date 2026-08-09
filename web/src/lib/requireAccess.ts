@@ -2,7 +2,12 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { hasModule, isAdmin, type ModuleId } from "@/lib/permissions";
+import {
+  defaultHrefForUser,
+  hasModule,
+  isAdmin,
+  type ModuleId,
+} from "@/lib/permissions";
 
 export async function requireSession() {
   const session = await getServerSession(authOptions);
@@ -12,13 +17,15 @@ export async function requireSession() {
 
 export async function requireModule(moduleId: ModuleId) {
   const session = await requireSession();
-  if (!hasModule(session.user, moduleId)) redirect("/");
+  if (!hasModule(session.user, moduleId)) {
+    redirect(defaultHrefForUser(session.user));
+  }
   return session;
 }
 
 export async function requireAdminSession() {
   const session = await requireSession();
-  if (!isAdmin(session.user)) redirect("/");
+  if (!isAdmin(session.user)) redirect(defaultHrefForUser(session.user));
   return session;
 }
 

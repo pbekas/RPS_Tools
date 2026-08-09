@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname } from "next/navigation";
-import { hasModule, isAdmin } from "@/lib/permissions";
+import {
+  TOOLSETS,
+  activeToolset,
+  defaultHrefForUser,
+  grantedToolsets,
+  isAdmin,
+} from "@/lib/permissions";
 
 function navClass(active: boolean) {
   return active ? "text-accent" : "hover:text-ink";
@@ -15,37 +21,51 @@ export function AppNav() {
   if (!data?.user || pathname === "/login") return null;
 
   const admin = isAdmin(data.user);
-  const showContracts = hasModule(data.user, "contracts");
-  const onContracts = pathname.startsWith("/contracts");
+  const toolsets = grantedToolsets(data.user);
+  const current = activeToolset(pathname);
+  const onUsers =
+    pathname.startsWith("/users") || pathname.startsWith("/settings");
+  const brandHref = defaultHrefForUser(data.user);
 
   return (
     <header className="sticky top-0 z-20 border-b border-line/80 bg-white/80 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-        <div className="flex min-w-0 items-center gap-6">
-          <Link href="/" className="shrink-0 font-display text-xl tracking-tight text-ink">
+        <div className="flex min-w-0 items-center gap-4 sm:gap-6">
+          <Link
+            href={brandHref}
+            className="shrink-0 font-display text-xl tracking-tight text-ink"
+          >
             Relevium <span className="text-accent">Tools</span>
           </Link>
-          <nav className="hidden items-center gap-1 text-sm font-semibold text-ink-soft sm:flex">
-            <Link
-              href="/"
-              className={`rounded-lg px-2.5 py-1.5 ${
-                !onContracts ? "bg-wash text-accent" : "hover:text-ink"
-              }`}
+
+          {toolsets.length > 0 ? (
+            <div
+              className="flex items-center rounded-xl border border-line bg-paper/80 p-0.5 text-sm font-semibold"
+              role="group"
+              aria-label="Tool set"
             >
-              Call QA
-            </Link>
-            {showContracts ? (
-              <Link
-                href="/contracts"
-                className={`rounded-lg px-2.5 py-1.5 ${
-                  onContracts ? "bg-wash text-accent" : "hover:text-ink"
-                }`}
-              >
-                Contracts
-              </Link>
-            ) : null}
-          </nav>
-          {!onContracts ? (
+              {toolsets.map((id) => {
+                const set = TOOLSETS[id];
+                return (
+                  <Link
+                    key={id}
+                    href={set.href}
+                    className={`rounded-lg px-3 py-1.5 transition ${
+                      current === id
+                        ? "bg-accent text-white shadow-sm"
+                        : "text-ink-soft hover:text-ink"
+                    }`}
+                    aria-current={current === id ? "page" : undefined}
+                    title={set.description}
+                  >
+                    {set.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {current === "call_qa" ? (
             <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft lg:flex">
               <Link href="/" className={navClass(pathname === "/")}>
                 Dashboard
@@ -71,12 +91,14 @@ export function AppNav() {
                     href="/settings"
                     className={navClass(pathname.startsWith("/settings"))}
                   >
-                    Settings
+                    QA settings
                   </Link>
                 </>
               ) : null}
             </nav>
-          ) : (
+          ) : null}
+
+          {current === "contracts" ? (
             <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft md:flex">
               <Link
                 href="/contracts"
@@ -108,10 +130,21 @@ export function AppNav() {
                 </Link>
               ) : null}
             </nav>
-          )}
+          ) : null}
         </div>
+
         <div className="flex items-center gap-3 text-sm">
-          <span className="hidden text-ink-soft sm:inline">
+          {admin ? (
+            <Link
+              href="/users"
+              className={`hidden font-semibold sm:inline ${
+                onUsers ? "text-accent" : "text-ink-soft hover:text-ink"
+              }`}
+            >
+              Users & access
+            </Link>
+          ) : null}
+          <span className="hidden text-ink-soft md:inline">
             {data.user.name || data.user.email}
             {data.user.role ? ` · ${data.user.role}` : ""}
           </span>

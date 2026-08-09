@@ -7,8 +7,10 @@ import {
   linkProvisionalAgent,
   listUsers,
   setUserActive,
+  setUserModules,
   upsertUser,
 } from "@/lib/database";
+import { ALL_TOOLSET_IDS, normalizeToolsetGrants } from "@/lib/permissions";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {
@@ -20,6 +22,15 @@ function requireAdmin(session: { user?: { email?: string | null; role?: string }
   return null;
 }
 
+function allowedDomains(): string[] {
+  const multi = (process.env.ALLOWED_EMAIL_DOMAINS || "")
+    .split(",")
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  if (multi.length) return multi;
+  return [(process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase()];
+}
+
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   const denied = requireAdmin(session);
@@ -29,7 +40,7 @@ export async function GET(req: Request) {
   const includeUnmapped = searchParams.get("unmapped") !== "0";
   const users = await listUsers();
   const unmapped = includeUnmapped ? await discoverUnmappedAgents() : [];
-  return NextResponse.json({ users, unmapped });
+  return NextResponse.json({ users, unmapped, toolsets: ALL_TOOLSET_IDS });
 }
 
 export async function POST(req: Request) {
@@ -39,7 +50,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || "upsert");
-  const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase();
+  const domains = allowedDomains();
 
   try {
     if (action === "upsert") {
@@ -51,8 +62,11 @@ export async function POST(req: Request) {
       if (!email || !name) {
         return NextResponse.json({ error: "Name and email are required" }, { status: 400 });
       }
-      if (!email.endsWith(`@${domain}`)) {
-        return NextResponse.json({ error: `Email must be @${domain}` }, { status: 400 });
+      if (!domains.some((d) => email.endsWith(`@${d}`))) {
+        return NextResponse.json(
+          { error: `Email must be one of: ${domains.map((d) => `@${d}`).join(", ")}` },
+          { status: 400 }
+        );
       }
       if (!["Agent", "Admin"].includes(role)) {
         return NextResponse.json({ error: "Role must be Agent or Admin" }, { status: 400 });
@@ -63,6 +77,9 @@ export async function POST(req: Request) {
         role,
         provisional: false,
       });
+      if (role === "Admin") {
+        await setUserModules(email, [...ALL_TOOLSET_IDS]);
+      }
       return NextResponse.json({ ok: true, user });
     }
 
@@ -72,6 +89,24 @@ export async function POST(req: Request) {
         .toLowerCase();
       const active = !!body.active;
       const user = await setUserActive(email, active);
+      return NextResponse.json({ ok: true, user });
+    }
+
+    if (action === "set_modules") {
+      const email = String(body.email || "")
+        .trim()
+        .toLowerCase();
+      const requested = Array.isArray(body.modules)
+        ? body.modules.map((m: unknown) => String(m))
+        : [];
+      const modules = normalizeToolsetGrants(requested);
+      if (!modules.length) {
+        return NextResponse.json(
+          { error: "Grant at least one tool set (Call QA or Contracts)" },
+          { status: 400 }
+        );
+      }
+      const user = await setUserModules(email, modules);
       return NextResponse.json({ ok: true, user });
     }
 
@@ -118,18 +153,6 @@ export async function POST(req: Request) {
         name: body.name ? String(body.name) : undefined,
       });
       return NextResponse.json({ ok: true, ...result });
-    }
-
-    if (action === "set_modules") {
-      const { setUserModules } = await import("@/lib/database");
-      const email = String(body.email || "")
-        .trim()
-        .toLowerCase();
-      const modules = Array.isArray(body.modules)
-        ? body.modules.map((m: unknown) => String(m))
-        : [];
-      const user = await setUserModules(email, modules);
-      return NextResponse.json({ ok: true, user });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

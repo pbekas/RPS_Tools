@@ -4,16 +4,19 @@ import Image from "next/image";
 import { signIn, useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
+import { defaultHrefForUser } from "@/lib/permissions";
 
 function LoginInner() {
-  const { status } = useSession();
+  const { data, status } = useSession();
   const router = useRouter();
   const params = useSearchParams();
   const error = params.get("error");
 
   useEffect(() => {
-    if (status === "authenticated") router.replace("/");
-  }, [status, router]);
+    if (status === "authenticated" && data?.user) {
+      router.replace(defaultHrefForUser(data.user));
+    }
+  }, [status, data?.user, router]);
 
   return (
     <main className="relative flex min-h-screen items-center justify-center px-4">
@@ -32,9 +35,12 @@ function LoginInner() {
         <h1 className="mt-8 text-center font-display text-3xl tracking-tight text-white sm:text-4xl">
           Employee Tools
         </h1>
+        <p className="mt-2 text-center text-sm text-white/70">
+          Call QA and Contracts — switch tool sets after you sign in.
+        </p>
         {error ? (
           <p className="mt-4 rounded-lg bg-red-50/10 px-3 py-2 text-center text-sm text-red-300">
-            Sign-in failed. Use a Relevium Google account.
+            Sign-in failed. Use an allowed Google Workspace account.
           </p>
         ) : null}
         <button

@@ -6,10 +6,17 @@ import { isFirestoreQuotaError, listCalls } from "@/lib/database";
 import { buildIssueHeatmap } from "@/lib/qa";
 import { Dashboard } from "@/components/Dashboard";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import {
+  defaultHrefForUser,
+  hasModule,
+} from "@/lib/permissions";
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) redirect("/login");
+  if (!hasModule(session.user, "call_qa")) {
+    redirect(defaultHrefForUser(session.user));
+  }
 
   const role = (session.user.role || "Agent").toLowerCase();
   const isAdmin = role === "admin";

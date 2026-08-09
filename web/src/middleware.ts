@@ -12,6 +12,7 @@ export const config = {
     "/ops",
     "/coaching",
     "/settings",
+    "/users",
     "/contracts",
     "/contracts/:path*",
     "/api/calls/:path*",
