@@ -65,15 +65,23 @@ export async function resolveObjectUrl(input: {
   s3Uri?: string;
   s3Key?: string;
   expiresIn?: number;
+  downloadFilename?: string;
 }): Promise<string> {
   const parsed = input.s3Uri?.startsWith("s3://") ? parseS3Uri(input.s3Uri) : null;
   const bucket = parsed?.bucket || bucketName();
   const key = parsed?.key || input.s3Key || "";
   if (!key) return "";
   const client = s3Client();
+  const filename = (input.downloadFilename || "").replace(/["\r\n]+/g, "_").trim();
   return getSignedUrl(
     client,
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ...(filename
+        ? { ResponseContentDisposition: `attachment; filename="${filename}"` }
+        : {}),
+    }),
     { expiresIn: input.expiresIn ?? 60 * 60 * 6 }
   );
 }

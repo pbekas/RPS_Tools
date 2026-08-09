@@ -28,6 +28,7 @@ def test_normalize_contract_extraction_dates_and_cost():
     out = normalize_contract_extraction(raw)
     assert out["title"] == "Office Lease"
     assert out["vendor_name"] == "Main Street Holdings"
+    assert out["our_company"] == ""
     assert out["group_hint"] == "leases"
     assert out["effective_date"] == "2025-01-01"
     assert out["term_end_date"] == "2028-01-01"
@@ -36,6 +37,8 @@ def test_normalize_contract_extraction_dates_and_cost():
     assert out["cost_currency"] == "USD"
     assert out["cost_frequency"] == "monthly"
     assert out["confidence"] == 0.91
+    assert out["document_role"] == "standalone"
+    assert out["obligations"] == []
 
 
 def test_normalize_contract_extraction_unknowns():
@@ -53,3 +56,38 @@ def test_normalize_contract_extraction_unknowns():
     assert out["cost_frequency"] == "unknown"
     assert out["confidence"] == 1.0
     assert out["effective_date"] is None
+
+
+def test_normalize_our_company():
+    out = normalize_contract_extraction(
+        {"our_company": "ACA Relevium", "vendor_name": "Landlord LLC"}
+    )
+    assert out["our_company"] == "ACA Relevium"
+    assert out["vendor_name"] == "Landlord LLC"
+
+
+def test_normalize_document_role_and_obligations():
+    out = normalize_contract_extraction(
+        {
+            "document_role": "Amendment",
+            "related_agreement_hint": "Office Lease dated 2022",
+            "obligations": [
+                {
+                    "kind": "rent_increase",
+                    "title": "3% annual bump",
+                    "due_date": "01/01/2027",
+                    "notes": "Section 4.2",
+                },
+                {"kind": "coi", "due_date": "2026-12-01", "notes": "GL $1M"},
+                {"kind": "unknown_thing"},
+            ],
+        }
+    )
+    assert out["document_role"] == "amendment"
+    assert out["related_agreement_hint"] == "Office Lease dated 2022"
+    kinds = {item["kind"] for item in out["obligations"]}
+    assert "rent_escalation" in kinds
+    assert "insurance_coi" in kinds
+    assert all(item["due_date"] or item["notes"] for item in out["obligations"])
+    bump = next(item for item in out["obligations"] if item["kind"] == "rent_escalation")
+    assert bump["due_date"] == "2027-01-01"

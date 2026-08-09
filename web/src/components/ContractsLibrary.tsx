@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import type { Contract, ContractGroup, Vendor } from "@/lib/contractsDb";
+import type { Contract, ContractEntity, ContractGroup, Vendor } from "@/lib/contractTypes";
+import { familyRoleLabel } from "@/lib/contractLabels";
 
 function statusClass(status: string) {
   switch (status) {
@@ -27,6 +28,11 @@ function formatDate(value?: string | null) {
   return value.slice(0, 10);
 }
 
+function stripSnippet(value?: string | null): string {
+  if (!value) return "";
+  return value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+}
+
 function formatMoney(amount?: number | null, currency = "USD") {
   if (amount == null) return "—";
   try {
@@ -45,17 +51,20 @@ export function ContractsLibrary({
   initialTotal,
   groups,
   vendors,
+  entities,
 }: {
   initialContracts: Contract[];
   initialTotal: number;
   groups: ContractGroup[];
   vendors: Vendor[];
+  entities: ContractEntity[];
 }) {
   const [contracts, setContracts] = useState(initialContracts);
   const [total, setTotal] = useState(initialTotal);
   const [q, setQ] = useState("");
   const [groupId, setGroupId] = useState("");
   const [vendorId, setVendorId] = useState("");
+  const [entityId, setEntityId] = useState("");
   const [status, setStatus] = useState("");
   const [expiringSoon, setExpiringSoon] = useState(false);
   const [needsReview, setNeedsReview] = useState(false);
@@ -71,6 +80,7 @@ export function ContractsLibrary({
     q?: string;
     groupId?: string;
     vendorId?: string;
+    entityId?: string;
     status?: string;
     expiringSoon?: boolean;
     needsReview?: boolean;
@@ -80,12 +90,14 @@ export function ContractsLibrary({
       const query = next?.q ?? q;
       const g = next?.groupId ?? groupId;
       const v = next?.vendorId ?? vendorId;
+      const entity = next?.entityId ?? entityId;
       const s = next?.status ?? status;
       const exp = next?.expiringSoon ?? expiringSoon;
       const review = next?.needsReview ?? needsReview;
       if (query) params.set("q", query);
       if (g) params.set("groupId", g);
       if (v) params.set("vendorId", v);
+      if (entity) params.set("entityId", entity);
       if (s) params.set("status", s);
       if (exp) params.set("expiringSoon", "1");
       if (review) params.set("needsReview", "1");
@@ -128,8 +140,8 @@ export function ContractsLibrary({
           </p>
           <h1 className="mt-1 font-display text-3xl text-ink">Contract library</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            All agreements in one place — filter by group, vendor, status, or what’s
-            expiring in the next 90 days.
+            All agreements in one place — search the text, filter by company,
+            group, vendor, status, or what’s expiring in the next 90 days.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -152,7 +164,7 @@ export function ContractsLibrary({
       </div>
 
       <form
-        className="mb-6 grid gap-3 rounded-2xl border border-line bg-white/70 p-4 sm:grid-cols-2 lg:grid-cols-6"
+        className="mb-6 grid gap-3 rounded-2xl border border-line bg-white/70 p-4 sm:grid-cols-2 lg:grid-cols-7"
         onSubmit={(e) => {
           e.preventDefault();
           reload();
@@ -161,9 +173,21 @@ export function ContractsLibrary({
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search title or vendor"
+          placeholder="Search title, vendor, or contract text"
           className="rounded-lg border border-line px-3 py-2 text-sm lg:col-span-2"
         />
+        <select
+          value={entityId}
+          onChange={(e) => setEntityId(e.target.value)}
+          className="rounded-lg border border-line px-3 py-2 text-sm"
+        >
+          <option value="">All companies</option>
+          {entities.map((entity) => (
+            <option key={entity.id} value={entity.id}>
+              {entity.name}
+            </option>
+          ))}
+        </select>
         <select
           value={groupId}
           onChange={(e) => setGroupId(e.target.value)}
@@ -208,7 +232,7 @@ export function ContractsLibrary({
             </option>
           ))}
         </select>
-        <div className="flex flex-wrap items-center gap-3 lg:col-span-6">
+        <div className="flex flex-wrap items-center gap-3 lg:col-span-7">
           <label className="flex items-center gap-2 text-sm text-ink-soft">
             <input
               type="checkbox"
@@ -242,6 +266,7 @@ export function ContractsLibrary({
           <thead className="border-b border-line bg-wash/60 text-ink-soft">
             <tr>
               <th className="px-4 py-3 font-semibold">Contract</th>
+              <th className="px-4 py-3 font-semibold">Our company</th>
               <th className="px-4 py-3 font-semibold">Vendor</th>
               <th className="px-4 py-3 font-semibold">Group</th>
               <th className="px-4 py-3 font-semibold">Effective</th>
@@ -253,7 +278,7 @@ export function ContractsLibrary({
           <tbody>
             {contracts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-ink-soft">
+                <td colSpan={8} className="px-4 py-10 text-center text-ink-soft">
                   No contracts yet.{" "}
                   <Link href="/contracts/upload" className="font-semibold text-accent">
                     Upload a folder of PDFs
@@ -271,8 +296,19 @@ export function ContractsLibrary({
                     >
                       {c.title || c.original_filename || "Untitled"}
                     </Link>
-                    <div className="text-xs text-ink-soft">{c.original_filename}</div>
+                    <div className="text-xs text-ink-soft">
+                      {c.family_role && c.family_role !== "standalone"
+                        ? `${familyRoleLabel(c.family_role)} · `
+                        : ""}
+                      {c.original_filename}
+                    </div>
+                    {c.search_snippet ? (
+                      <div className="mt-1 text-xs text-ink-soft">
+                        {stripSnippet(c.search_snippet)}
+                      </div>
+                    ) : null}
                   </td>
+                  <td className="px-4 py-3 text-ink-soft">{c.entity_name || "—"}</td>
                   <td className="px-4 py-3 text-ink-soft">{c.vendor_name || "—"}</td>
                   <td className="px-4 py-3 text-ink-soft">{c.group_name || "—"}</td>
                   <td className="px-4 py-3 text-ink-soft">

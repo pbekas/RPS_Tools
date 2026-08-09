@@ -12,6 +12,7 @@ export async function GET(req: Request) {
       q: searchParams.get("q") || undefined,
       groupId: searchParams.get("groupId") || undefined,
       vendorId: searchParams.get("vendorId") || undefined,
+      entityId: searchParams.get("entityId") || undefined,
       status: searchParams.get("status") || undefined,
       expiringSoon: searchParams.get("expiringSoon") === "1",
       needsReview: searchParams.get("needsReview") === "1",

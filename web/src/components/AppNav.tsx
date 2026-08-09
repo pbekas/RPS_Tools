@@ -110,6 +110,12 @@ export function AppNav() {
                 Library
               </Link>
               <Link
+                href="/contracts/calendar"
+                className={navClass(pathname.startsWith("/contracts/calendar"))}
+              >
+                Calendar
+              </Link>
+              <Link
                 href="/contracts/upload"
                 className={navClass(pathname.startsWith("/contracts/upload"))}
               >
@@ -122,12 +128,20 @@ export function AppNav() {
                 Vendors
               </Link>
               {admin ? (
-                <Link
-                  href="/contracts/groups"
-                  className={navClass(pathname.startsWith("/contracts/groups"))}
-                >
-                  Groups
-                </Link>
+                <>
+                  <Link
+                    href="/contracts/companies"
+                    className={navClass(pathname.startsWith("/contracts/companies"))}
+                  >
+                    Companies
+                  </Link>
+                  <Link
+                    href="/contracts/groups"
+                    className={navClass(pathname.startsWith("/contracts/groups"))}
+                  >
+                    Groups
+                  </Link>
+                </>
               ) : null}
             </nav>
           ) : null}

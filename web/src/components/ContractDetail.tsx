@@ -2,18 +2,42 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { Contract, ContractGroup, Vendor } from "@/lib/contractsDb";
+import type { AccessAuditEvent } from "@/lib/accessAuditTypes";
+import type {
+  Contract,
+  ContractAssignee,
+  ContractEntity,
+  ContractGroup,
+  ContractObligation,
+  Vendor,
+} from "@/lib/contractTypes";
+import { familyRoleLabel } from "@/lib/contractLabels";
+import { ContractAuditPanel } from "@/components/ContractAuditPanel";
+import { ContractFamilyPanel } from "@/components/ContractFamilyPanel";
+import { ContractObligationsPanel } from "@/components/ContractObligationsPanel";
 
 export function ContractDetail({
   initialContract,
   documentUrl,
   groups,
   vendors,
+  entities,
+  obligations,
+  familyMembers,
+  vendorSiblings,
+  assignees,
+  auditEvents,
 }: {
   initialContract: Contract;
   documentUrl: string;
   groups: ContractGroup[];
   vendors: Vendor[];
+  entities: ContractEntity[];
+  obligations: ContractObligation[];
+  familyMembers: Contract[];
+  vendorSiblings: Contract[];
+  assignees: ContractAssignee[];
+  auditEvents: AccessAuditEvent[];
 }) {
   const [contract, setContract] = useState(initialContract);
   const [message, setMessage] = useState("");
@@ -31,6 +55,7 @@ export function ContractDetail({
         body: JSON.stringify({
           title: contract.title,
           vendor_id: contract.vendor_id || null,
+          entity_id: contract.entity_id || null,
           group_id: contract.group_id || null,
           effective_date: contract.effective_date || null,
           has_defined_term: !!contract.has_defined_term,
@@ -90,9 +115,19 @@ export function ContractDetail({
             {contract.extraction_confidence != null
               ? ` · confidence ${(Number(contract.extraction_confidence) * 100).toFixed(0)}%`
               : ""}
+            {contract.family_role && contract.family_role !== "standalone"
+              ? ` · ${familyRoleLabel(contract.family_role)}`
+              : ""}
+            {contract.family_name ? ` · ${contract.family_name}` : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <a
+            href={`/api/contracts/${contract.id}/download`}
+            className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
+          >
+            Download PDF
+          </a>
           <button
             type="button"
             disabled={pending}
@@ -151,6 +186,21 @@ export function ContractDetail({
               value={contract.title || ""}
               onChange={(e) => field("title", e.target.value)}
             />
+          </label>
+          <label className="block text-sm">
+            <span className="font-semibold text-ink-soft">Our company</span>
+            <select
+              className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+              value={contract.entity_id || ""}
+              onChange={(e) => field("entity_id", e.target.value || null)}
+            >
+              <option value="">Unassigned</option>
+              {entities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block text-sm">
             <span className="font-semibold text-ink-soft">Vendor</span>
@@ -324,6 +374,24 @@ export function ContractDetail({
               </pre>
             </details>
           ) : null}
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <ContractObligationsPanel
+          contractId={contract.id}
+          initialObligations={obligations}
+          assignees={assignees}
+          refreshKey={contract.updated_at}
+        />
+        <div className="space-y-6">
+          <ContractFamilyPanel
+            contract={contract}
+            initialMembers={familyMembers}
+            vendorSiblings={vendorSiblings}
+            onContractChange={setContract}
+          />
+          <ContractAuditPanel events={auditEvents} />
         </div>
       </div>
     </div>

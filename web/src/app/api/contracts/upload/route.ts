@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiRequireModule } from "@/lib/requireAccess";
+import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
 import { createContractUpload } from "@/lib/contractsDb";
 import { uploadContractObject } from "@/lib/s3";
 import { pollerJson, PollerError } from "@/lib/poller";
@@ -34,8 +35,26 @@ export async function POST(req: Request) {
   if (error) return error;
 
   try {
-    const form = await req.formData();
-    const files = form.getAll("files").filter((f): f is File => f instanceof File);
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch (parseErr) {
+      const hint =
+        parseErr instanceof Error ? parseErr.message : "Failed to parse body as FormData";
+      return NextResponse.json(
+        {
+          error:
+            hint.includes("FormData") || hint.includes("parse")
+              ? "Could not read the upload. Try one PDF at a time (max 40MB)."
+              : hint,
+        },
+        { status: 400 }
+      );
+    }
+    const files = form
+      .getAll("files")
+      .concat(form.getAll("file"))
+      .filter((f): f is File => typeof File !== "undefined" && f instanceof File);
     if (!files.length) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });
     }
@@ -70,6 +89,14 @@ export async function POST(req: Request) {
           s3_uri: uploaded.uri,
           created_by: session!.user!.email!,
           byte_size: file.size,
+        });
+        await writeAccessAudit({
+          actorEmail: session!.user!.email,
+          action: "contract.upload",
+          resourceType: "contract",
+          resourceId: contract.id,
+          sourceIp: clientIpFromRequest(req),
+          metadata: { filename, byte_size: file.size },
         });
         created.push(contract);
       } catch (e) {

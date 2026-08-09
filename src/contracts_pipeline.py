@@ -9,6 +9,7 @@ from typing import Any
 from src import database as db
 from src.config import get_settings
 from src.contract_analyst import extract_contract_fields
+from src.contract_obligations import build_derived_obligations
 from src.textract_docs import extract_text_from_s3
 
 logger = logging.getLogger(__name__)
@@ -71,9 +72,11 @@ def process_contract_sync(contract_id: str) -> dict[str, Any]:
             raise RuntimeError("Contract has no S3 URI/key")
 
         text = extract_text_from_s3(s3_uri=s3_uri)
+        entities = db.list_contract_entities(active_only=True)
         extracted = extract_contract_fields(
             text,
             original_filename=contract.get("original_filename"),
+            known_entities=[str(e.get("name") or "") for e in entities],
         )
 
         vendor_id = contract.get("vendor_id")
@@ -81,6 +84,12 @@ def process_contract_sync(contract_id: str) -> dict[str, Any]:
         if not vendor_id and vendor_name:
             vendor = db.find_or_create_vendor(vendor_name)
             vendor_id = vendor.get("id")
+
+        entity_id = contract.get("entity_id")
+        if not entity_id:
+            matched = db.match_contract_entity(extracted.get("our_company") or "")
+            if matched:
+                entity_id = matched.get("id")
 
         group_id = contract.get("group_id")
         if not group_id:
@@ -99,12 +108,14 @@ def process_contract_sync(contract_id: str) -> dict[str, Any]:
             or not vendor_name
         )
 
+        role = extracted.get("document_role") or "standalone"
         updates: dict[str, Any] = {
             "title": extracted.get("title")
             or contract.get("title")
             or contract.get("original_filename")
             or "Untitled contract",
             "vendor_id": vendor_id,
+            "entity_id": entity_id,
             "group_id": group_id,
             "effective_date": extracted.get("effective_date"),
             "has_defined_term": bool(extracted.get("has_defined_term")),
@@ -124,7 +135,21 @@ def process_contract_sync(contract_id: str) -> dict[str, Any]:
             "status": "needs_review" if needs_review else "active",
             "error_message": None,
         }
-        return db.update_contract(contract_id, updates)
+        if not contract.get("family_id") and role != "standalone":
+            updates["family_role"] = role
+        updated = db.update_contract(contract_id, updates)
+        db.replace_auto_obligations(
+            contract_id,
+            extracted=extracted.get("obligations") or [],
+            derived=build_derived_obligations(
+                expiration_date=extracted.get("expiration_date"),
+                term_end_date=extracted.get("term_end_date"),
+                notice_period_days=extracted.get("notice_period_days"),
+                auto_renews=bool(extracted.get("auto_renews")),
+                next_payment_date=extracted.get("next_payment_date"),
+            ),
+        )
+        return updated
     except Exception as exc:  # noqa: BLE001
         db.update_contract(
             contract_id,

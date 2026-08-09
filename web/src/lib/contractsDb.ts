@@ -3,6 +3,48 @@ import "server-only";
 import { randomUUID } from "crypto";
 import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
+import type {
+  Contract,
+  ContractAssignee,
+  ContractEntity,
+  ContractFamily,
+  ContractGroup,
+  ContractListFilters,
+  ContractObligation,
+  FamilyRole,
+  ObligationKind,
+  ObligationStatus,
+  Vendor,
+  VendorContact,
+} from "@/lib/contractTypes";
+import {
+  FAMILY_ROLES,
+  OBLIGATION_KINDS,
+  OBLIGATION_STATUSES,
+} from "@/lib/contractTypes";
+
+export type {
+  Contract,
+  ContractAssignee,
+  ContractDocument,
+  ContractEntity,
+  ContractFamily,
+  ContractGroup,
+  ContractListFilters,
+  ContractObligation,
+  ContractStatus,
+  CostFrequency,
+  FamilyRole,
+  ObligationKind,
+  ObligationStatus,
+  Vendor,
+  VendorContact,
+} from "@/lib/contractTypes";
+export {
+  FAMILY_ROLES,
+  OBLIGATION_KINDS,
+  OBLIGATION_STATUSES,
+} from "@/lib/contractTypes";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -48,109 +90,6 @@ function serializePgValue(value: unknown, key = ""): unknown {
 function serializeRow<T>(row: QueryResultRow): T {
   return serializePgValue(row) as T;
 }
-
-export type ContractGroup = {
-  id: string;
-  name: string;
-  slug: string;
-  sort_order: number;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type Vendor = {
-  id: string;
-  name: string;
-  notes?: string;
-  active?: boolean;
-  created_at?: string;
-  updated_at?: string;
-  contact_count?: number;
-  contract_count?: number;
-};
-
-export type VendorContact = {
-  id: string;
-  vendor_id: string;
-  name: string;
-  email?: string;
-  phone?: string;
-  title?: string;
-  is_primary?: boolean;
-  created_at?: string;
-  updated_at?: string;
-};
-
-export type ContractStatus =
-  | "pending"
-  | "processing"
-  | "needs_review"
-  | "active"
-  | "expired"
-  | "terminated"
-  | "error";
-
-export type CostFrequency = "monthly" | "annual" | "one_time" | "unknown";
-
-export type Contract = {
-  id: string;
-  title: string;
-  vendor_id?: string | null;
-  group_id?: string | null;
-  effective_date?: string | null;
-  has_defined_term?: boolean;
-  term_end_date?: string | null;
-  expiration_date?: string | null;
-  notice_period_days?: number | null;
-  auto_renews?: boolean;
-  cost_amount?: number | null;
-  cost_currency?: string;
-  cost_frequency?: CostFrequency;
-  next_payment_date?: string | null;
-  cost_notes?: string;
-  summary?: string;
-  status: ContractStatus;
-  s3_key?: string;
-  s3_uri?: string;
-  original_filename?: string;
-  content_type?: string;
-  extracted_json?: Record<string, unknown>;
-  extraction_confidence?: number | null;
-  extracted_text?: string;
-  error_message?: string | null;
-  created_by?: string | null;
-  deleted_at?: string | null;
-  created_at?: string;
-  updated_at?: string;
-  vendor_name?: string | null;
-  group_name?: string | null;
-  group_slug?: string | null;
-};
-
-export type ContractDocument = {
-  id: string;
-  contract_id: string;
-  version: number;
-  s3_key: string;
-  s3_uri?: string;
-  original_filename?: string;
-  content_type?: string;
-  byte_size?: number | null;
-  is_primary?: boolean;
-  uploaded_by?: string | null;
-  created_at?: string;
-};
-
-export type ContractListFilters = {
-  q?: string;
-  groupId?: string;
-  vendorId?: string;
-  status?: string;
-  expiringSoon?: boolean;
-  needsReview?: boolean;
-  limit?: number;
-  offset?: number;
-};
 
 function emptyToNull(value: string | null | undefined): string | null {
   if (value == null) return null;
@@ -229,6 +168,76 @@ export async function upsertContractGroup(input: {
     [name, slug, sortOrder]
   );
   return serializeRow<ContractGroup>(rows[0]);
+}
+
+export async function listContractEntities(input?: {
+  activeOnly?: boolean;
+}): Promise<ContractEntity[]> {
+  requirePostgres();
+  const where = input?.activeOnly === false ? "" : "WHERE e.active = true";
+  const rows = await query(
+    `SELECT e.*,
+            (SELECT count(*)::int FROM contracts ct
+              WHERE ct.entity_id = e.id AND ct.deleted_at IS NULL) AS contract_count
+     FROM contract_entities e
+     ${where}
+     ORDER BY e.sort_order ASC, e.name ASC`
+  );
+  return rows.map((row) => serializeRow<ContractEntity>(row));
+}
+
+export async function upsertContractEntity(input: {
+  id?: string;
+  name: string;
+  slug?: string;
+  aliases?: string[];
+  sort_order?: number;
+  active?: boolean;
+}): Promise<ContractEntity> {
+  requirePostgres();
+  const name = input.name.trim();
+  if (!name) throw new Error("Company name is required");
+  const slug =
+    (input.slug || name)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "company";
+  const aliases = (input.aliases || [])
+    .map((a) => String(a).trim())
+    .filter(Boolean);
+  const sortOrder = input.sort_order ?? 50;
+  if (input.id) {
+    const rows = await query(
+      `UPDATE contract_entities
+       SET name = $2, slug = $3, aliases = $4, sort_order = $5,
+           active = COALESCE($6, active), updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [input.id, name, slug, aliases, sortOrder, input.active ?? null]
+    );
+    if (!rows[0]) throw new Error("Company not found");
+    return serializeRow<ContractEntity>(rows[0]);
+  }
+  const rows = await query(
+    `INSERT INTO contract_entities (name, slug, aliases, sort_order, active)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (slug) DO UPDATE SET
+       name = EXCLUDED.name,
+       aliases = EXCLUDED.aliases,
+       sort_order = EXCLUDED.sort_order,
+       active = EXCLUDED.active,
+       updated_at = now()
+     RETURNING *`,
+    [name, slug, aliases, sortOrder, input.active ?? true]
+  );
+  return serializeRow<ContractEntity>(rows[0]);
+}
+
+export async function deleteContractEntity(id: string): Promise<void> {
+  requirePostgres();
+  await query("UPDATE contracts SET entity_id = NULL WHERE entity_id = $1", [id]);
+  await query("DELETE FROM contract_entities WHERE id = $1", [id]);
 }
 
 export async function deleteContractGroup(id: string): Promise<void> {
@@ -392,19 +401,43 @@ export async function deleteVendorContact(id: string): Promise<void> {
   await query("DELETE FROM vendor_contacts WHERE id = $1", [id]);
 }
 
+const CONTRACT_LIST_COLUMNS = `
+  c.id, c.title, c.vendor_id, c.entity_id, c.group_id, c.family_id, c.family_role,
+  c.effective_date, c.has_defined_term, c.term_end_date, c.expiration_date,
+  c.notice_period_days, c.auto_renews, c.cost_amount, c.cost_currency, c.cost_frequency,
+  c.next_payment_date, c.cost_notes, c.summary, c.status, c.s3_key, c.s3_uri,
+  c.original_filename, c.content_type, c.extraction_confidence, c.error_message,
+  c.created_by, c.deleted_at, c.created_at, c.updated_at,
+  v.name AS vendor_name,
+  e.name AS entity_name,
+  g.name AS group_name,
+  g.slug AS group_slug,
+  f.name AS family_name
+`;
+
 export async function listContracts(
   filters: ContractListFilters = {}
 ): Promise<{ contracts: Contract[]; total: number }> {
   requirePostgres();
   const params: unknown[] = [];
   const where: string[] = ["c.deleted_at IS NULL"];
+  const searchText = filters.q?.trim() || "";
+  let searchParam = 0;
+  let likeParam = 0;
 
-  if (filters.q?.trim()) {
-    params.push(`%${filters.q.trim().toLowerCase()}%`);
+  if (searchText) {
+    params.push(searchText);
+    searchParam = params.length;
+    params.push(`%${searchText.toLowerCase()}%`);
+    likeParam = params.length;
     where.push(
-      `(lower(c.title) LIKE $${params.length}
-        OR lower(coalesce(v.name, '')) LIKE $${params.length}
-        OR lower(coalesce(c.original_filename, '')) LIKE $${params.length})`
+      `(c.search_tsv @@ websearch_to_tsquery('english', $${searchParam})
+        OR lower(c.title) LIKE $${likeParam}
+        OR lower(coalesce(v.name, '')) LIKE $${likeParam}
+        OR lower(coalesce(e.name, '')) LIKE $${likeParam}
+        OR lower(coalesce(f.name, '')) LIKE $${likeParam}
+        OR lower(coalesce(c.original_filename, '')) LIKE $${likeParam}
+        OR lower(coalesce(c.summary, '')) LIKE $${likeParam})`
     );
   }
   if (filters.groupId) {
@@ -414,6 +447,10 @@ export async function listContracts(
   if (filters.vendorId) {
     params.push(filters.vendorId);
     where.push(`c.vendor_id = $${params.length}`);
+  }
+  if (filters.entityId) {
+    params.push(filters.entityId);
+    where.push(`c.entity_id = $${params.length}`);
   }
   if (filters.status) {
     params.push(filters.status);
@@ -440,24 +477,37 @@ export async function listContracts(
   const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
   const offset = Math.max(filters.offset ?? 0, 0);
   params.push(limit, offset);
+  const snippetSql = searchParam
+    ? `, ts_headline(
+         'english',
+         left(c.extracted_text, 20000),
+         websearch_to_tsquery('english', $${searchParam}),
+         'MaxWords=28, MinWords=10, ShortWord=2, MaxFragments=1'
+       ) AS search_snippet`
+    : `, NULL::text AS search_snippet`;
+  const orderSql = searchParam
+    ? `ORDER BY ts_rank_cd(c.search_tsv, websearch_to_tsquery('english', $${searchParam})) DESC, c.created_at DESC`
+    : `ORDER BY c.created_at DESC`;
 
   const countRows = await query(
     `SELECT count(*)::int AS total
      FROM contracts c
      LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
      ${whereSql}`,
     params.slice(0, -2)
   );
   const rows = await query(
-    `SELECT c.*,
-            v.name AS vendor_name,
-            g.name AS group_name,
-            g.slug AS group_slug
+    `SELECT ${CONTRACT_LIST_COLUMNS}
+            ${snippetSql}
      FROM contracts c
      LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
      LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
      ${whereSql}
-     ORDER BY c.created_at DESC
+     ${orderSql}
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
@@ -472,11 +522,15 @@ export async function getContract(id: string): Promise<Contract | null> {
   const rows = await query(
     `SELECT c.*,
             v.name AS vendor_name,
+            e.name AS entity_name,
             g.name AS group_name,
-            g.slug AS group_slug
+            g.slug AS group_slug,
+            f.name AS family_name
      FROM contracts c
      LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
      LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
      WHERE c.id = $1 AND c.deleted_at IS NULL
      LIMIT 1`,
     [id]
@@ -547,6 +601,7 @@ export async function updateContract(
     `UPDATE contracts SET
        title = COALESCE($2, title),
        vendor_id = CASE WHEN $3::boolean THEN $4::uuid ELSE vendor_id END,
+       entity_id = CASE WHEN $26::boolean THEN $27::uuid ELSE entity_id END,
        group_id = CASE WHEN $5::boolean THEN $6::uuid ELSE group_id END,
        effective_date = CASE WHEN $7::boolean THEN $8::date ELSE effective_date END,
        has_defined_term = COALESCE($9, has_defined_term),
@@ -590,9 +645,12 @@ export async function updateContract(
       patch.cost_notes != null ? String(patch.cost_notes) : null,
       patch.summary != null ? String(patch.summary) : null,
       status,
+      Object.prototype.hasOwnProperty.call(patch, "entity_id"),
+      emptyToNull(patch.entity_id as string | null | undefined),
     ]
   );
   if (!rows[0]) throw new Error("Contract not found");
+  await syncDerivedObligations(id);
   const updated = await getContract(id);
   if (!updated) throw new Error("Contract not found");
   return updated;
@@ -644,4 +702,520 @@ export async function acceptContractsReview(ids?: string[]): Promise<number> {
      RETURNING id`
   );
   return rows.length;
+}
+
+function isObligationKind(value: string): value is ObligationKind {
+  return (OBLIGATION_KINDS as readonly string[]).includes(value);
+}
+
+function isObligationStatus(value: string): value is ObligationStatus {
+  return (OBLIGATION_STATUSES as readonly string[]).includes(value);
+}
+
+function isFamilyRole(value: string): value is FamilyRole {
+  return (FAMILY_ROLES as readonly string[]).includes(value);
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function earliestIsoDate(
+  ...values: Array<string | null | undefined>
+): string | null {
+  const dates = values
+    .map((value) => (value ? String(value).slice(0, 10) : ""))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value));
+  if (!dates.length) return null;
+  return dates.sort()[0];
+}
+
+export async function syncDerivedObligations(contractId: string): Promise<void> {
+  requirePostgres();
+  const contract = await getContract(contractId);
+  if (!contract) return;
+  const end = earliestIsoDate(contract.expiration_date, contract.term_end_date);
+  const derived: Array<{
+    kind: ObligationKind;
+    title: string;
+    due_date: string;
+    notes: string;
+  }> = [];
+  if (end) {
+    derived.push({
+      kind: "expiration",
+      title: "Expiration / term end",
+      due_date: end,
+      notes: "",
+    });
+    if (contract.notice_period_days != null && contract.notice_period_days >= 0) {
+      const noticeDue = addDaysIso(end, -Number(contract.notice_period_days));
+      derived.push({
+        kind: "notice_window",
+        title: `${contract.notice_period_days}-day notice deadline`,
+        due_date: noticeDue,
+        notes: "",
+      });
+      if (contract.auto_renews) {
+        derived.push({
+          kind: "auto_renew",
+          title: "Auto-renewal decision",
+          due_date: noticeDue,
+          notes: "Give notice before this date to avoid auto-renewal.",
+        });
+      }
+    } else if (contract.auto_renews) {
+      derived.push({
+        kind: "auto_renew",
+        title: "Auto-renewal decision",
+        due_date: end,
+        notes: "",
+      });
+    }
+  }
+  if (contract.next_payment_date) {
+    derived.push({
+      kind: "payment",
+      title: "Next payment",
+      due_date: contract.next_payment_date.slice(0, 10),
+      notes: "",
+    });
+  }
+
+  const keep = derived.map((item) => item.kind);
+  if (keep.length) {
+    await query(
+      `DELETE FROM contract_obligations
+       WHERE contract_id = $1 AND source = 'derived' AND NOT (kind = ANY($2::text[]))`,
+      [contractId, keep]
+    );
+  } else {
+    await query(
+      `DELETE FROM contract_obligations
+       WHERE contract_id = $1 AND source = 'derived'`,
+      [contractId]
+    );
+  }
+  for (const item of derived) {
+    await query(
+      `INSERT INTO contract_obligations (
+         contract_id, kind, title, due_date, notes, source, status
+       ) VALUES ($1, $2, $3, $4, $5, 'derived', 'open')
+       ON CONFLICT (contract_id, kind) WHERE source = 'derived'
+       DO UPDATE SET
+         title = EXCLUDED.title,
+         due_date = EXCLUDED.due_date,
+         notes = EXCLUDED.notes,
+         updated_at = now()`,
+      [contractId, item.kind, item.title, item.due_date, item.notes]
+    );
+  }
+}
+
+export async function listContractAssignees(): Promise<ContractAssignee[]> {
+  requirePostgres();
+  const rows = await query(
+    `SELECT email::text AS email, coalesce(nullif(name, ''), email::text) AS name
+     FROM users
+     ORDER BY coalesce(nullif(name, ''), email::text), email
+     LIMIT 300`
+  );
+  return rows.map((row) => ({
+    email: String(row.email),
+    name: String(row.name || row.email),
+  }));
+}
+
+export type ObligationListFilters = {
+  contractId?: string;
+  kind?: string;
+  entityId?: string;
+  ownerEmail?: string;
+  status?: "open" | "done" | "dismissed" | "snoozed" | "overdue" | "upcoming";
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
+export async function listContractObligations(
+  filters: ObligationListFilters = {}
+): Promise<ContractObligation[]> {
+  requirePostgres();
+  const params: unknown[] = [];
+  const where = ["ct.deleted_at IS NULL"];
+  if (filters.contractId) {
+    params.push(filters.contractId);
+    where.push(`o.contract_id = $${params.length}`);
+  }
+  if (filters.kind && isObligationKind(filters.kind)) {
+    params.push(filters.kind);
+    where.push(`o.kind = $${params.length}`);
+  }
+  if (filters.entityId) {
+    params.push(filters.entityId);
+    where.push(`ct.entity_id = $${params.length}`);
+  }
+  if (filters.ownerEmail) {
+    params.push(filters.ownerEmail);
+    where.push(`o.owner_email = $${params.length}`);
+  }
+  if (filters.status === "overdue") {
+    where.push(`o.status = 'open' AND o.due_date < CURRENT_DATE`);
+  } else if (filters.status === "upcoming") {
+    where.push(`o.status = 'open' AND o.due_date >= CURRENT_DATE`);
+  } else if (filters.status && isObligationStatus(filters.status)) {
+    params.push(filters.status);
+    where.push(`o.status = $${params.length}`);
+  }
+  const from = toDateOrNull(filters.from);
+  if (from) {
+    params.push(from);
+    where.push(`o.due_date >= $${params.length}::date`);
+  }
+  const to = toDateOrNull(filters.to);
+  if (to) {
+    params.push(to);
+    where.push(`o.due_date <= $${params.length}::date`);
+  }
+  const limit = Math.min(Math.max(filters.limit ?? 250, 1), 500);
+  params.push(limit);
+  const rows = await query(
+    `SELECT o.*,
+            u.name AS owner_name,
+            ct.title AS contract_title,
+            ct.entity_id,
+            v.name AS vendor_name,
+            e.name AS entity_name
+     FROM contract_obligations o
+     JOIN contracts ct ON ct.id = o.contract_id
+     LEFT JOIN users u ON u.email = o.owner_email
+     LEFT JOIN vendors v ON v.id = ct.vendor_id
+     LEFT JOIN contract_entities e ON e.id = ct.entity_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY o.due_date ASC NULLS LAST, o.created_at ASC
+     LIMIT $${params.length}`,
+    params
+  );
+  return rows.map((row) => serializeRow<ContractObligation>(row));
+}
+
+export async function upsertContractObligation(input: {
+  id?: string;
+  contract_id: string;
+  kind: string;
+  title?: string;
+  due_date?: string | null;
+  owner_email?: string | null;
+  status?: string;
+  notes?: string;
+  source?: "extracted" | "derived" | "manual";
+}): Promise<ContractObligation> {
+  requirePostgres();
+  const kind = isObligationKind(input.kind) ? input.kind : "other";
+  const status = input.status && isObligationStatus(input.status) ? input.status : "open";
+  const title = (input.title || "").trim() || kind.replace(/_/g, " ");
+  const owner = emptyToNull(input.owner_email);
+  const due = toDateOrNull(input.due_date);
+  const notes = input.notes ?? "";
+  if (input.id) {
+    const rows = await query(
+      `UPDATE contract_obligations
+       SET kind = $2,
+           title = $3,
+           due_date = $4,
+           owner_email = $5,
+           status = $6,
+           notes = $7,
+           updated_at = now()
+       WHERE id = $1 AND contract_id = $8
+       RETURNING *`,
+      [input.id, kind, title, due, owner, status, notes, input.contract_id]
+    );
+    if (!rows[0]) throw new Error("Obligation not found");
+    return serializeRow<ContractObligation>(rows[0]);
+  }
+  const source = input.source || "manual";
+  const rows = await query(
+    `INSERT INTO contract_obligations (
+       contract_id, kind, title, due_date, owner_email, status, notes, source
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING *`,
+    [input.contract_id, kind, title, due, owner, status, notes, source]
+  );
+  return serializeRow<ContractObligation>(rows[0]);
+}
+
+export async function deleteContractObligation(
+  id: string,
+  contractId?: string
+): Promise<void> {
+  requirePostgres();
+  if (contractId) {
+    await query(
+      "DELETE FROM contract_obligations WHERE id = $1 AND contract_id = $2",
+      [id, contractId]
+    );
+    return;
+  }
+  await query("DELETE FROM contract_obligations WHERE id = $1", [id]);
+}
+
+export async function listFamilyMembers(familyId: string): Promise<Contract[]> {
+  requirePostgres();
+  const rows = await query(
+    `SELECT ${CONTRACT_LIST_COLUMNS}, NULL::text AS search_snippet
+     FROM contracts c
+     LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
+     LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
+     WHERE c.deleted_at IS NULL AND c.family_id = $1
+     ORDER BY
+       CASE c.family_role
+         WHEN 'original' THEN 0
+         WHEN 'amendment' THEN 1
+         WHEN 'addendum' THEN 2
+         WHEN 'assignment' THEN 3
+         WHEN 'sublease' THEN 4
+         WHEN 'renewal' THEN 5
+         ELSE 9
+       END,
+       c.effective_date ASC NULLS LAST,
+       c.created_at ASC`,
+    [familyId]
+  );
+  return rows.map((row) => serializeRow<Contract>(row));
+}
+
+export async function listVendorSiblingContracts(
+  contractId: string,
+  vendorId?: string | null
+): Promise<Contract[]> {
+  requirePostgres();
+  if (!vendorId) return [];
+  const rows = await query(
+    `SELECT ${CONTRACT_LIST_COLUMNS}, NULL::text AS search_snippet
+     FROM contracts c
+     LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
+     LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
+     WHERE c.deleted_at IS NULL
+       AND c.id <> $1
+       AND c.vendor_id = $2
+     ORDER BY c.created_at DESC
+     LIMIT 12`,
+    [contractId, vendorId]
+  );
+  return rows.map((row) => serializeRow<Contract>(row));
+}
+
+export async function searchContractsForLink(
+  q: string,
+  excludeId?: string
+): Promise<Contract[]> {
+  requirePostgres();
+  const needle = q.trim().toLowerCase();
+  if (!needle) return [];
+  const rows = await query(
+    `SELECT ${CONTRACT_LIST_COLUMNS}, NULL::text AS search_snippet
+     FROM contracts c
+     LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
+     LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
+     WHERE c.deleted_at IS NULL
+       AND ($2::uuid IS NULL OR c.id <> $2)
+       AND (
+         lower(c.title) LIKE $1
+         OR lower(coalesce(v.name, '')) LIKE $1
+         OR lower(coalesce(c.original_filename, '')) LIKE $1
+       )
+     ORDER BY c.created_at DESC
+     LIMIT 12`,
+    [`%${needle}%`, excludeId || null]
+  );
+  return rows.map((row) => serializeRow<Contract>(row));
+}
+
+export async function updateContractFamilyRole(
+  contractId: string,
+  role: string
+): Promise<Contract> {
+  requirePostgres();
+  const familyRole = isFamilyRole(role) ? role : "standalone";
+  const rows = await query(
+    `UPDATE contracts
+     SET family_role = $2, updated_at = now()
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id`,
+    [contractId, familyRole]
+  );
+  if (!rows[0]) throw new Error("Contract not found");
+  const updated = await getContract(contractId);
+  if (!updated) throw new Error("Contract not found");
+  return updated;
+}
+
+export async function renameContractFamily(
+  familyId: string,
+  name: string
+): Promise<ContractFamily> {
+  requirePostgres();
+  const cleaned = name.trim();
+  if (!cleaned) throw new Error("Family name is required");
+  const rows = await query(
+    `UPDATE contract_families
+     SET name = $2, updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [familyId, cleaned]
+  );
+  if (!rows[0]) throw new Error("Family not found");
+  return serializeRow<ContractFamily>(rows[0]);
+}
+
+export async function linkContractsIntoFamily(input: {
+  contractId: string;
+  otherContractId: string;
+  thisRole?: string;
+  otherRole?: string;
+  familyName?: string;
+}): Promise<{ family: ContractFamily; members: Contract[] }> {
+  requirePostgres();
+  if (input.contractId === input.otherContractId) {
+    throw new Error("Choose a different agreement to link");
+  }
+  const left = await getContract(input.contractId);
+  const right = await getContract(input.otherContractId);
+  if (!left || !right) throw new Error("Contract not found");
+
+  const leftRole = isFamilyRole(input.thisRole || "")
+    ? input.thisRole!
+    : left.family_role && left.family_role !== "standalone"
+      ? left.family_role
+      : "original";
+  const rightRole = isFamilyRole(input.otherRole || "")
+    ? input.otherRole!
+    : right.family_role && right.family_role !== "standalone"
+      ? right.family_role
+      : "amendment";
+
+  let familyId = left.family_id || right.family_id || null;
+  if (left.family_id && right.family_id && left.family_id !== right.family_id) {
+    await query(
+      `UPDATE contracts SET family_id = $1, updated_at = now()
+       WHERE family_id = $2 AND deleted_at IS NULL`,
+      [left.family_id, right.family_id]
+    );
+    await query("DELETE FROM contract_families WHERE id = $1", [right.family_id]);
+    familyId = left.family_id;
+  }
+  if (!familyId) {
+    const name =
+      (input.familyName || "").trim() ||
+      `${left.vendor_name || left.title || "Agreement"} family`;
+    const created = await query(
+      `INSERT INTO contract_families (name) VALUES ($1) RETURNING *`,
+      [name]
+    );
+    familyId = String(created[0].id);
+  } else if (input.familyName?.trim()) {
+    await query(
+      `UPDATE contract_families SET name = $2, updated_at = now() WHERE id = $1`,
+      [familyId, input.familyName.trim()]
+    );
+  }
+
+  await query(
+    `UPDATE contracts
+     SET family_id = $2, family_role = $3, updated_at = now()
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [left.id, familyId, leftRole]
+  );
+  await query(
+    `UPDATE contracts
+     SET family_id = $2, family_role = $3, updated_at = now()
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [right.id, familyId, rightRole]
+  );
+
+  const familyRows = await query(
+    "SELECT * FROM contract_families WHERE id = $1 LIMIT 1",
+    [familyId]
+  );
+  return {
+    family: serializeRow<ContractFamily>(familyRows[0]),
+    members: await listFamilyMembers(familyId),
+  };
+}
+
+export async function unlinkContractFromFamily(contractId: string): Promise<Contract> {
+  requirePostgres();
+  const existing = await getContract(contractId);
+  if (!existing) throw new Error("Contract not found");
+  const familyId = existing.family_id;
+  await query(
+    `UPDATE contracts
+     SET family_id = NULL, family_role = 'standalone', updated_at = now()
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [contractId]
+  );
+  if (familyId) {
+    const remaining = await query(
+      `SELECT count(*)::int AS n FROM contracts
+       WHERE family_id = $1 AND deleted_at IS NULL`,
+      [familyId]
+    );
+    if (Number(remaining[0]?.n || 0) < 2) {
+      await query(
+        `UPDATE contracts
+         SET family_id = NULL, family_role = 'standalone', updated_at = now()
+         WHERE family_id = $1 AND deleted_at IS NULL`,
+        [familyId]
+      );
+      await query("DELETE FROM contract_families WHERE id = $1", [familyId]);
+    }
+  }
+  const updated = await getContract(contractId);
+  if (!updated) throw new Error("Contract not found");
+  return updated;
+}
+
+export function diffContractFields(
+  before: Contract,
+  after: Contract
+): Record<string, { from: unknown; to: unknown }> {
+  const keys: Array<keyof Contract> = [
+    "title",
+    "vendor_id",
+    "entity_id",
+    "group_id",
+    "family_id",
+    "family_role",
+    "effective_date",
+    "has_defined_term",
+    "term_end_date",
+    "expiration_date",
+    "notice_period_days",
+    "auto_renews",
+    "cost_amount",
+    "cost_currency",
+    "cost_frequency",
+    "next_payment_date",
+    "cost_notes",
+    "summary",
+    "status",
+  ];
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of keys) {
+    const prev = before[key] ?? null;
+    const next = after[key] ?? null;
+    if (String(prev ?? "") !== String(next ?? "")) {
+      changes[key] = { from: prev, to: next };
+    }
+  }
+  return changes;
 }

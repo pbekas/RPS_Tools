@@ -570,9 +570,21 @@ def find_or_create_vendor(name: str):
     raise RuntimeError("Contracts require DB_BACKEND=postgres")
 
 
+def list_contract_entities(*, active_only: bool = True):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def match_contract_entity(name: str):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
 def get_contract_group_by_slug(slug: str):
     raise RuntimeError("Contracts require DB_BACKEND=postgres")
 
 
 def list_contracts_for_expiry_alerts(*, within_days: int = 90) -> list[dict]:
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def replace_auto_obligations(*args, **kwargs):
     raise RuntimeError("Contracts require DB_BACKEND=postgres")

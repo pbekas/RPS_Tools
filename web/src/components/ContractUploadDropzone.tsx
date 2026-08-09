@@ -21,60 +21,75 @@ export function ContractUploadDropzone() {
     if (!files.length) return;
     setBusy(true);
     setSummary("");
-    setRows(files.map((f) => ({ filename: f.name, status: "uploading" })));
+    setRows(files.map((f) => ({ filename: f.name, status: "queued" })));
 
-    const form = new FormData();
-    for (const file of files) form.append("files", file);
-
+    let uploaded = 0;
     try {
-      const res = await fetch("/api/contracts/upload", {
-        method: "POST",
-        body: form,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-
-      const created = new Map(
-        (data.created || []).map((c: { id: string; original_filename?: string }) => [
-          c.original_filename || "",
-          c.id,
-        ])
-      );
-      const failed = new Map(
-        (data.failures || []).map((f: { filename: string; error: string }) => [
-          f.filename,
-          f.error,
-        ])
-      );
-
-      setRows(
-        files.map((f) => {
-          if (failed.has(f.name)) {
-            return {
-              filename: f.name,
-              status: "error" as const,
-              error: String(failed.get(f.name) || "Upload failed"),
-            };
-          }
-          return {
-            filename: f.name,
-            status: "done" as const,
-            id: created.get(f.name) as string | undefined,
-          };
-        })
-      );
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setRows((prev) =>
+          prev.map((row, idx) =>
+            idx === i ? { ...row, status: "uploading" } : row
+          )
+        );
+        const form = new FormData();
+        form.append("files", file, file.name);
+        const res = await fetch("/api/contracts/upload", {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const message = String(data.error || "Upload failed");
+          setRows((prev) =>
+            prev.map((row, idx) =>
+              idx === i ? { ...row, status: "error", error: message } : row
+            )
+          );
+          continue;
+        }
+        const failure = Array.isArray(data.failures) ? data.failures[0] : null;
+        const created = Array.isArray(data.created) ? data.created[0] : null;
+        if (failure) {
+          setRows((prev) =>
+            prev.map((row, idx) =>
+              idx === i
+                ? {
+                    ...row,
+                    status: "error",
+                    error: String(failure.error || "Upload failed"),
+                  }
+                : row
+            )
+          );
+          continue;
+        }
+        uploaded += 1;
+        setRows((prev) =>
+          prev.map((row, idx) =>
+            idx === i
+              ? {
+                  ...row,
+                  status: "done",
+                  id: created?.id as string | undefined,
+                }
+              : row
+          )
+        );
+      }
       setSummary(
-        `Uploaded ${data.count || 0} file(s). Extraction will run via Bedrock shortly.`
+        uploaded
+          ? `Uploaded ${uploaded} file(s). Extraction will run via Bedrock shortly.`
+          : "No files uploaded."
       );
     } catch (e) {
-      setRows(
-        files.map((f) => ({
-          filename: f.name,
-          status: "error",
-          error: e instanceof Error ? e.message : "Upload failed",
-        }))
+      const message = e instanceof Error ? e.message : "Upload failed";
+      setRows((prev) =>
+        prev.map((row) =>
+          row.status === "done" ? row : { ...row, status: "error", error: message }
+        )
       );
-      setSummary(e instanceof Error ? e.message : "Upload failed");
+      setSummary(message);
     } finally {
       setBusy(false);
     }

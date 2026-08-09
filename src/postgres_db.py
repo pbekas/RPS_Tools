@@ -1007,10 +1007,12 @@ def get_contract(contract_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT c.*, v.name AS vendor_name, g.name AS group_name, g.slug AS group_slug
+            SELECT c.*, v.name AS vendor_name, g.name AS group_name, g.slug AS group_slug,
+                   e.name AS entity_name
             FROM contracts c
             LEFT JOIN vendors v ON v.id = c.vendor_id
             LEFT JOIN contract_groups g ON g.id = c.group_id
+            LEFT JOIN contract_entities e ON e.id = c.entity_id
             WHERE c.id = %s AND c.deleted_at IS NULL
             LIMIT 1
             """,
@@ -1023,6 +1025,7 @@ def update_contract(contract_id: str, updates: dict[str, Any]) -> dict[str, Any]
     allowed = {
         "title",
         "vendor_id",
+        "entity_id",
         "group_id",
         "effective_date",
         "has_defined_term",
@@ -1045,6 +1048,8 @@ def update_contract(contract_id: str, updates: dict[str, Any]) -> dict[str, Any]
         "extraction_confidence",
         "extracted_text",
         "error_message",
+        "family_id",
+        "family_role",
     }
     cols = []
     values: list[Any] = []
@@ -1081,6 +1086,46 @@ def update_contract(contract_id: str, updates: dict[str, Any]) -> dict[str, Any]
     return updated
 
 
+def list_contract_entities(*, active_only: bool = True) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        if active_only:
+            rows = conn.execute(
+                """
+                SELECT * FROM contract_entities
+                WHERE active = true
+                ORDER BY sort_order ASC, name ASC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM contract_entities
+                ORDER BY sort_order ASC, name ASC
+                """
+            ).fetchall()
+    return [_serialize_contract_row(row) for row in rows]
+
+
+def match_contract_entity(name: str) -> dict[str, Any] | None:
+    needle = (name or "").strip().lower()
+    if not needle:
+        return None
+    entities = list_contract_entities(active_only=True)
+    for entity in entities:
+        labels = [str(entity.get("name") or "").strip().lower()]
+        aliases = entity.get("aliases") or []
+        if isinstance(aliases, list):
+            labels.extend(str(a).strip().lower() for a in aliases if str(a).strip())
+        for label in labels:
+            if not label:
+                continue
+            if needle == label:
+                return entity
+            if len(label) >= 4 and (label in needle or needle in label):
+                return entity
+    return None
+
+
 def find_or_create_vendor(name: str) -> dict[str, Any]:
     cleaned = (name or "").strip()
     if not cleaned:
@@ -1115,6 +1160,83 @@ def get_contract_group_by_slug(slug: str) -> dict[str, Any] | None:
             ((slug or "other").strip().lower(),),
         ).fetchone()
     return _serialize_contract_row(row) if row else None
+
+
+def replace_auto_obligations(
+    contract_id: str,
+    *,
+    extracted: list[dict[str, Any]] | None = None,
+    derived: list[dict[str, Any]] | None = None,
+) -> None:
+    """Replace pipeline-owned obligations; leave manual rows untouched."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM contract_obligations
+            WHERE contract_id = %s AND source = 'extracted'
+            """,
+            (contract_id,),
+        )
+        for item in extracted or []:
+            conn.execute(
+                """
+                INSERT INTO contract_obligations (
+                    contract_id, kind, title, due_date, notes, source, status, extracted_json
+                ) VALUES (%s, %s, %s, %s, %s, 'extracted', 'open', %s)
+                """,
+                (
+                    contract_id,
+                    item.get("kind") or "other",
+                    (item.get("title") or "Obligation")[:240],
+                    item.get("due_date"),
+                    item.get("notes") or "",
+                    Jsonb(item if isinstance(item, dict) else {}),
+                ),
+            )
+        keep_kinds: list[str] = []
+        for item in derived or []:
+            kind = str(item.get("kind") or "")
+            if not kind:
+                continue
+            keep_kinds.append(kind)
+            conn.execute(
+                """
+                INSERT INTO contract_obligations (
+                    contract_id, kind, title, due_date, notes, source, status
+                ) VALUES (%s, %s, %s, %s, %s, 'derived', 'open')
+                ON CONFLICT (contract_id, kind) WHERE source = 'derived'
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    due_date = EXCLUDED.due_date,
+                    notes = EXCLUDED.notes,
+                    updated_at = now()
+                """,
+                (
+                    contract_id,
+                    kind,
+                    (item.get("title") or kind)[:240],
+                    item.get("due_date"),
+                    item.get("notes") or "",
+                ),
+            )
+        if keep_kinds:
+            conn.execute(
+                """
+                DELETE FROM contract_obligations
+                WHERE contract_id = %s
+                  AND source = 'derived'
+                  AND NOT (kind = ANY(%s))
+                """,
+                (contract_id, keep_kinds),
+            )
+        else:
+            conn.execute(
+                """
+                DELETE FROM contract_obligations
+                WHERE contract_id = %s AND source = 'derived'
+                """,
+                (contract_id,),
+            )
 
 
 def list_contracts_for_expiry_alerts(*, within_days: int = 90) -> list[dict[str, Any]]:

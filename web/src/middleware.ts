@@ -23,6 +23,5 @@ export const config = {
     "/api/qa/:path*",
     "/api/users/:path*",
     "/api/topics/:path*",
-    "/api/contracts/:path*",
   ],
 };
