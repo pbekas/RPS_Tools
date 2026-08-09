@@ -79,12 +79,30 @@ cd "$ROOT/infra/aws"
 npx cdk bootstrap "aws://$ACCOUNT/$REGION"
 
 echo "==> CDK deploy $STACK"
+DB_ARGS=()
+if [[ -n "${DB_BACKEND:-}" ]]; then
+  DB_ARGS+=(-c "dbBackend=$DB_BACKEND")
+fi
+if [[ -n "${ENABLE_RDS:-}" ]]; then
+  DB_ARGS+=(-c "enableRds=$ENABLE_RDS")
+fi
+if [[ -n "${RDS_MULTI_AZ:-}" ]]; then
+  DB_ARGS+=(-c "rdsMultiAz=$RDS_MULTI_AZ")
+fi
+if [[ -n "${DATABASE_SECRET_ARN:-}" ]]; then
+  DB_ARGS+=(-c "databaseSecretArn=$DATABASE_SECRET_ARN")
+fi
+if [[ -n "${DATABASE_KEY_ARN:-}" ]]; then
+  DB_ARGS+=(-c "databaseKeyArn=$DATABASE_KEY_ARN")
+fi
+
 npx cdk deploy "$STACK" --require-approval never \
   -c "account=$ACCOUNT" \
   -c "region=$REGION" \
   -c "domainName=$DOMAIN" \
   -c "recordingsBucketName=$BUCKET" \
-  -c "certificateArn=$CERT_ARN"
+  -c "certificateArn=$CERT_ARN" \
+  "${DB_ARGS[@]}"
 
 echo
 echo "==> Done. Point Cloudflare DNS:"

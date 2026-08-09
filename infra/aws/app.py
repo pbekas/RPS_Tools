@@ -196,15 +196,13 @@ class RpsCallQaStack(Stack):
                     database_secret, "password"
                 ),
             }
-        firestore_secrets = (
-            {
-                "FIREBASE_SERVICE_ACCOUNT": ecs.Secret.from_secrets_manager(
-                    app_secret, "FIREBASE_SERVICE_ACCOUNT"
-                )
-            }
-            if db_backend == "firestore"
-            else {}
-        )
+        # Keep Firebase credentials injected after Postgres cutover so rollback
+        # to DB_BACKEND=firestore does not require a secret-wiring change.
+        firestore_secrets = {
+            "FIREBASE_SERVICE_ACCOUNT": ecs.Secret.from_secrets_manager(
+                app_secret, "FIREBASE_SERVICE_ACCOUNT"
+            )
+        }
 
         if cert_arn:
             certificate = acm.Certificate.from_certificate_arn(
