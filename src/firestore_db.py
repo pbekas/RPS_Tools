@@ -549,3 +549,30 @@ def _is_missed_result(result: Any) -> bool:
     if not text:
         return False
     return text not in {"answered", "connected"}
+
+
+# ── Contracts stubs (Postgres-only feature) ────────────────────────────
+
+
+def list_pending_contracts(*, limit: int = 10) -> list[dict]:
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def get_contract(contract_id: str):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def update_contract(contract_id: str, updates: dict):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def find_or_create_vendor(name: str):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def get_contract_group_by_slug(slug: str):
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")
+
+
+def list_contracts_for_expiry_alerts(*, within_days: int = 90) -> list[dict]:
+    raise RuntimeError("Contracts require DB_BACKEND=postgres")

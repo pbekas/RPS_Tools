@@ -96,6 +96,32 @@ def run_sync_cycle(
             summary.get("skipped_short"),
             len(summary.get("errors") or []),
         )
+
+        # Opportunistic contracts maintenance (pending extraction + expiry alerts)
+        try:
+            from src.contracts_pipeline import process_pending_contracts
+            from src.notify import check_contract_expiry_alerts
+            from src.config import get_settings
+
+            settings = get_settings()
+            contracts_summary = process_pending_contracts(limit=5)
+            expiry_summary = check_contract_expiry_alerts(
+                within_days=int(settings.contract_alert_days or 90)
+            )
+            return {
+                **summary,
+                "call_logs": cdr_summary,
+                "contracts": contracts_summary,
+                "contract_expiry": expiry_summary,
+            }
+        except Exception as contracts_exc:  # noqa: BLE001
+            logger.exception("Contracts maintenance during poll cycle failed")
+            return {
+                **summary,
+                "call_logs": cdr_summary,
+                "contracts_error": str(contracts_exc),
+            }
+
         return {**summary, "call_logs": cdr_summary}
     except Exception as exc:  # noqa: BLE001
         with _lock:

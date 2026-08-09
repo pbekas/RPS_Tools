@@ -462,6 +462,7 @@ export type UserDoc = {
   last_coaching_at?: string | null;
   provisional?: boolean;
   active?: boolean;
+  modules?: string[];
 };
 
 function serializeValue(value: unknown): unknown {
@@ -664,6 +665,18 @@ export async function setUserActive(email: string, active: boolean): Promise<Use
   const snap = await ref.get();
   if (!snap.exists) throw new Error("User not found");
   await ref.update({ active, updated_at: new Date() });
+  const next = await ref.get();
+  return serializeDoc<UserDoc>(next.id, next.data());
+}
+
+export async function setUserModules(
+  email: string,
+  modules: string[]
+): Promise<UserDoc> {
+  const ref = getDb().collection("users").doc(email.toLowerCase());
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("User not found");
+  await ref.update({ modules, updated_at: new Date() });
   const next = await ref.get();
   return serializeDoc<UserDoc>(next.id, next.data());
 }

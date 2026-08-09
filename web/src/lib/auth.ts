@@ -53,8 +53,10 @@ export const authOptions: NextAuthOptions = {
           const u = await getUser(email);
           token.role = u?.role || "Agent";
           token.name = u?.name || token.name;
+          token.modules = Array.isArray(u?.modules) ? u.modules : [];
         } catch {
           token.role = token.role || "Agent";
+          token.modules = token.modules || [];
         }
       }
       return token;
@@ -63,7 +65,8 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.email = token.email as string;
         session.user.name = (token.name as string) || session.user.name;
-        (session.user as { role?: string }).role = (token.role as string) || "Agent";
+        session.user.role = (token.role as string) || "Agent";
+        session.user.modules = Array.isArray(token.modules) ? token.modules : [];
       }
       return session;
     },

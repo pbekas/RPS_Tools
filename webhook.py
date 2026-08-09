@@ -58,6 +58,13 @@ async def lifespan(_app: FastAPI):
     status = autostart_from_env()
     if status:
         logger.info("VBC poller autostarted: %s", status)
+    try:
+        from src.contracts_pipeline import ensure_worker_started
+
+        ensure_worker_started()
+        logger.info("Contracts worker started")
+    except Exception:
+        logger.exception("Failed to start contracts worker")
     yield
     stop_poller()
 
@@ -151,6 +158,47 @@ async def ops_upload(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Upload enqueue failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
+
+
+@app.post("/ops/contracts/process-pending")
+async def ops_contracts_process_pending(request: Request) -> JSONResponse:
+    """Process pending contract uploads (Textract + Bedrock extraction)."""
+    _require_ops_token(request)
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        from src.contracts_pipeline import process_pending_contracts
+
+        result = process_pending_contracts(limit=int(body.get("limit") or 10))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Contract processing failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
+
+
+@app.post("/ops/check-contract-expiry")
+async def ops_check_contract_expiry(request: Request) -> JSONResponse:
+    """Scan contracts for upcoming expiry / notice deadlines and alert GChat."""
+    _require_ops_token(request)
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        from src.config import get_settings
+        from src.notify import check_contract_expiry_alerts
+
+        settings = get_settings()
+        days = int(body.get("within_days") or settings.contract_alert_days or 90)
+        result = check_contract_expiry_alerts(within_days=days)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Contract expiry scan failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return JSONResponse({"status": "ok", **result})
 

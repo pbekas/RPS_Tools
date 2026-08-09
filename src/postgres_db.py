@@ -984,3 +984,204 @@ def list_call_logs(
 def _is_missed_result(result: Any) -> bool:
     text = (str(result) if result is not None else "").strip().lower()
     return bool(text) and text not in {"answered", "connected"}
+
+
+# ── Contracts module ───────────────────────────────────────────────────
+
+
+def list_pending_contracts(*, limit: int = 10) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM contracts
+            WHERE deleted_at IS NULL AND status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT %s
+            """,
+            (max(1, min(limit, 50)),),
+        ).fetchall()
+    return [_serialize_contract_row(row) for row in rows]
+
+
+def get_contract(contract_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT c.*, v.name AS vendor_name, g.name AS group_name, g.slug AS group_slug
+            FROM contracts c
+            LEFT JOIN vendors v ON v.id = c.vendor_id
+            LEFT JOIN contract_groups g ON g.id = c.group_id
+            WHERE c.id = %s AND c.deleted_at IS NULL
+            LIMIT 1
+            """,
+            (contract_id,),
+        ).fetchone()
+    return _serialize_contract_row(row) if row else None
+
+
+def update_contract(contract_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "title",
+        "vendor_id",
+        "group_id",
+        "effective_date",
+        "has_defined_term",
+        "term_end_date",
+        "expiration_date",
+        "notice_period_days",
+        "auto_renews",
+        "cost_amount",
+        "cost_currency",
+        "cost_frequency",
+        "next_payment_date",
+        "cost_notes",
+        "summary",
+        "status",
+        "s3_key",
+        "s3_uri",
+        "original_filename",
+        "content_type",
+        "extracted_json",
+        "extraction_confidence",
+        "extracted_text",
+        "error_message",
+    }
+    cols = []
+    values: list[Any] = []
+    for key, value in updates.items():
+        if key not in allowed:
+            continue
+        cols.append(sql.Identifier(key))
+        if key == "extracted_json":
+            values.append(Jsonb(_json_value(value if isinstance(value, dict) else {})))
+        else:
+            values.append(value)
+    if not cols:
+        existing = get_contract(contract_id)
+        if not existing:
+            raise LookupError(f"Contract not found: {contract_id}")
+        return existing
+    assignments = sql.SQL(", ").join(
+        sql.SQL("{} = %s").format(col) for col in cols
+    )
+    values.extend([_now(), contract_id])
+    with get_connection() as conn:
+        row = conn.execute(
+            sql.SQL(
+                "UPDATE contracts SET {}, updated_at = %s "
+                "WHERE id = %s AND deleted_at IS NULL RETURNING id"
+            ).format(assignments),
+            values,
+        ).fetchone()
+    if not row:
+        raise LookupError(f"Contract not found: {contract_id}")
+    updated = get_contract(contract_id)
+    if not updated:
+        raise LookupError(f"Contract not found: {contract_id}")
+    return updated
+
+
+def find_or_create_vendor(name: str) -> dict[str, Any]:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise ValueError("Vendor name required")
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM vendors
+            WHERE lower(name) = lower(%s)
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (cleaned,),
+        ).fetchone()
+        if row:
+            return _serialize_contract_row(row)
+        row = conn.execute(
+            """
+            INSERT INTO vendors (name, notes, active)
+            VALUES (%s, '', true)
+            RETURNING *
+            """,
+            (cleaned,),
+        ).fetchone()
+    return _serialize_contract_row(row)
+
+
+def get_contract_group_by_slug(slug: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM contract_groups WHERE slug = %s LIMIT 1",
+            ((slug or "other").strip().lower(),),
+        ).fetchone()
+    return _serialize_contract_row(row) if row else None
+
+
+def list_contracts_for_expiry_alerts(*, within_days: int = 90) -> list[dict[str, Any]]:
+    days = max(1, int(within_days))
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*,
+                   v.name AS vendor_name,
+                   LEAST(
+                     COALESCE(c.expiration_date, DATE '9999-12-31'),
+                     COALESCE(c.term_end_date, DATE '9999-12-31')
+                   ) AS relevant_end_date,
+                   CASE
+                     WHEN c.notice_period_days IS NULL THEN NULL
+                     ELSE (
+                       LEAST(
+                         COALESCE(c.expiration_date, DATE '9999-12-31'),
+                         COALESCE(c.term_end_date, DATE '9999-12-31')
+                       ) - (c.notice_period_days * INTERVAL '1 day')
+                     )::date
+                   END AS notice_deadline
+            FROM contracts c
+            LEFT JOIN vendors v ON v.id = c.vendor_id
+            WHERE c.deleted_at IS NULL
+              AND c.status = 'active'
+              AND (
+                (
+                  LEAST(
+                    COALESCE(c.expiration_date, DATE '9999-12-31'),
+                    COALESCE(c.term_end_date, DATE '9999-12-31')
+                  ) BETWEEN CURRENT_DATE AND (CURRENT_DATE + (%s * INTERVAL '1 day'))
+                )
+                OR (
+                  c.notice_period_days IS NOT NULL
+                  AND (
+                    LEAST(
+                      COALESCE(c.expiration_date, DATE '9999-12-31'),
+                      COALESCE(c.term_end_date, DATE '9999-12-31')
+                    ) - (c.notice_period_days * INTERVAL '1 day')
+                  )::date BETWEEN CURRENT_DATE AND (CURRENT_DATE + (%s * INTERVAL '1 day'))
+                )
+              )
+            ORDER BY relevant_end_date ASC NULLS LAST
+            """,
+            (days, days),
+        ).fetchall()
+    return [_serialize_contract_row(row) for row in rows]
+
+
+def _serialize_contract_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row:
+        return {}
+    out: dict[str, Any] = {}
+    for key, value in row.items():
+        if value is None:
+            out[key] = None
+        elif isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            out[key] = value.astimezone(timezone.utc).isoformat()
+        elif isinstance(value, date):
+            out[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            out[key] = float(value)
+        elif type(value).__name__ == "UUID":
+            out[key] = str(value)
+        else:
+            out[key] = value
+    return out

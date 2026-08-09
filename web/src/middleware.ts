@@ -12,6 +12,8 @@ export const config = {
     "/ops",
     "/coaching",
     "/settings",
+    "/contracts",
+    "/contracts/:path*",
     "/api/calls/:path*",
     "/api/call-logs/:path*",
     "/api/coaching/:path*",
@@ -20,5 +22,6 @@ export const config = {
     "/api/qa/:path*",
     "/api/users/:path*",
     "/api/topics/:path*",
+    "/api/contracts/:path*",
   ],
 };

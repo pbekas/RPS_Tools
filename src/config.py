@@ -47,6 +47,8 @@ class Settings:
     allowed_email_domain: str
     gchat_webhook_url: str
     alerts_enabled: bool
+    contract_alerts_enabled: bool
+    contract_alert_days: int
     missed_alert_window_minutes: int
     missed_alert_threshold: int
     ops_internal_token: str
@@ -129,6 +131,10 @@ class Settings:
             "yes",
             "on",
         } and bool(self.gchat_webhook_url)
+        self.contract_alerts_enabled = os.getenv(
+            "CONTRACT_ALERTS_ENABLED", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self.contract_alert_days = int(os.getenv("CONTRACT_ALERT_DAYS", "90"))
         self.missed_alert_window_minutes = int(
             os.getenv("MISSED_ALERT_WINDOW_MINUTES", "30")
         )

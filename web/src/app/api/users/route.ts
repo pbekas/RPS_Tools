@@ -120,6 +120,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, ...result });
     }
 
+    if (action === "set_modules") {
+      const { setUserModules } = await import("@/lib/database");
+      const email = String(body.email || "")
+        .trim()
+        .toLowerCase();
+      const modules = Array.isArray(body.modules)
+        ? body.modules.map((m: unknown) => String(m))
+        : [];
+      const user = await setUserModules(email, modules);
+      return NextResponse.json({ ok: true, user });
+    }
+
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (e) {
     return NextResponse.json(

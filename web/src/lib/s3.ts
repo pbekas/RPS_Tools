@@ -1,5 +1,20 @@
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+function s3Client() {
+  const region = process.env.AWS_REGION || "us-east-1";
+  return new S3Client({ region });
+}
+
+function bucketName(): string {
+  const bucket = (process.env.S3_BUCKET || "").trim();
+  if (!bucket) throw new Error("S3_BUCKET is not configured");
+  return bucket;
+}
 
 function parseS3Uri(uri: string): { bucket: string; key: string } | null {
   const m = uri.match(/^s3:\/\/([^/]+)\/(.+)$/);
@@ -15,8 +30,7 @@ export async function resolveRecordingUrl(call: {
   const parsed = uri.startsWith("s3://") ? parseS3Uri(uri) : null;
   if (parsed) {
     try {
-      const region = process.env.AWS_REGION || "us-east-1";
-      const client = new S3Client({ region });
+      const client = s3Client();
       const command = new GetObjectCommand({
         Bucket: parsed.bucket,
         Key: parsed.key,
@@ -27,4 +41,39 @@ export async function resolveRecordingUrl(call: {
     }
   }
   return call.recording_url || "";
+}
+
+export async function uploadContractObject(input: {
+  key: string;
+  body: Buffer | Uint8Array;
+  contentType: string;
+}): Promise<{ bucket: string; key: string; uri: string }> {
+  const bucket = bucketName();
+  const client = s3Client();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: input.key,
+      Body: input.body,
+      ContentType: input.contentType,
+    })
+  );
+  return { bucket, key: input.key, uri: `s3://${bucket}/${input.key}` };
+}
+
+export async function resolveObjectUrl(input: {
+  s3Uri?: string;
+  s3Key?: string;
+  expiresIn?: number;
+}): Promise<string> {
+  const parsed = input.s3Uri?.startsWith("s3://") ? parseS3Uri(input.s3Uri) : null;
+  const bucket = parsed?.bucket || bucketName();
+  const key = parsed?.key || input.s3Key || "";
+  if (!key) return "";
+  const client = s3Client();
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn: input.expiresIn ?? 60 * 60 * 6 }
+  );
 }

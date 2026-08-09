@@ -470,6 +470,18 @@ class RpsCallQaStack(Stack):
                     resources=["*"],
                 )
             )
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "textract:DetectDocumentText",
+                        "textract:StartDocumentTextDetection",
+                        "textract:GetDocumentTextDetection",
+                        "textract:StartDocumentAnalysis",
+                        "textract:GetDocumentAnalysis",
+                    ],
+                    resources=["*"],
+                )
+            )
 
         CfnOutput(self, "LoadBalancerDNS", value=web.load_balancer.load_balancer_dns_name)
         CfnOutput(self, "AppURL", value=f"https://{domain}")

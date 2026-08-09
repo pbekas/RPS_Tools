@@ -553,7 +553,10 @@ export async function getUser(email: string): Promise<UserDoc | null> {
   const rows = await query("SELECT * FROM users WHERE email = $1 LIMIT 1", [
     email.trim().toLowerCase(),
   ]);
-  return rows[0] ? serializeRow<UserDoc>(rows[0]) : null;
+  if (!rows[0]) return null;
+  const user = serializeRow<UserDoc>(rows[0]);
+  user.modules = Array.isArray(rows[0].modules) ? rows[0].modules : [];
+  return user;
 }
 
 export async function upsertUser(input: {
@@ -592,7 +595,11 @@ export async function listUsers(): Promise<UserDoc[]> {
     "SELECT * FROM users ORDER BY coalesce(nullif(name, ''), email::text), email LIMIT $1",
     [200]
   );
-  return rows.map((row) => serializeRow<UserDoc>(row));
+  return rows.map((row) => {
+    const user = serializeRow<UserDoc>(row);
+    user.modules = Array.isArray(row.modules) ? row.modules : [];
+    return user;
+  });
 }
 
 export async function setUserActive(email: string, active: boolean): Promise<UserDoc> {
@@ -931,3 +938,32 @@ export async function listFeedbackForAgent(
     serializeRow<{ id: string; text?: string; created_at?: string }>(row)
   );
 }
+
+export async function setUserModules(
+  email: string,
+  modules: string[]
+): Promise<UserDoc> {
+  const cleaned = Array.from(
+    new Set(modules.map((m) => String(m).trim()).filter(Boolean))
+  );
+  if (!usePostgres()) return firestore.setUserModules(email, cleaned);
+  const rows = await query(
+    `UPDATE users
+     SET modules = $2::text[], updated_at = now()
+     WHERE email = $1
+     RETURNING *`,
+    [email.trim().toLowerCase(), cleaned]
+  );
+  if (!rows[0]) throw new Error("User not found");
+  const user = serializeRow<UserDoc>(rows[0]);
+  user.modules = Array.isArray(rows[0].modules) ? rows[0].modules : cleaned;
+  return user;
+}
+
+export type {
+  Contract,
+  ContractGroup,
+  Vendor,
+  VendorContact,
+} from "@/lib/contractsDb";
+

@@ -21,6 +21,7 @@ export function AgentSettings({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Agent");
+  const [contractsModule, setContractsModule] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
@@ -127,10 +128,19 @@ export function AgentSettings({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
+      const modules = contractsModule ? ["contracts"] : [];
+      const modRes = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_modules", email, modules }),
+      });
+      const modData = await modRes.json();
+      if (!modRes.ok) throw new Error(modData.error || "Module save failed");
       setMsg(`Saved ${data.user.email}`);
       setName("");
       setEmail("");
       setRole("Agent");
+      setContractsModule(false);
       await refresh();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
@@ -162,7 +172,27 @@ export function AgentSettings({
     setName(user.name || "");
     setEmail(user.email);
     setRole(user.role || "Agent");
+    setContractsModule((user.modules || []).includes("contracts"));
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function toggleContractsModule(user: UserDoc) {
+    setMsg("");
+    const has = (user.modules || []).includes("contracts");
+    const modules = has
+      ? (user.modules || []).filter((m) => m !== "contracts")
+      : [...(user.modules || []), "contracts"];
+    const res = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_modules", email: user.email, modules }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setMsg(data.error || "Module update failed");
+      return;
+    }
+    await refresh();
   }
 
   return (
@@ -327,6 +357,14 @@ export function AgentSettings({
             <option value="Admin">Admin</option>
           </select>
         </label>
+        <label className="mt-3 flex items-center gap-2 text-sm text-ink-soft">
+          <input
+            type="checkbox"
+            checked={contractsModule}
+            onChange={(e) => setContractsModule(e.target.checked)}
+          />
+          Grant Contracts module
+        </label>
         <button
           type="submit"
           disabled={saving}
@@ -353,6 +391,7 @@ export function AgentSettings({
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Modules</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -360,13 +399,14 @@ export function AgentSettings({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-ink-soft">
+                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
                   No agents in the directory yet.
                 </td>
               </tr>
             ) : (
               filtered.map((u) => {
                 const active = u.active !== false;
+                const hasContracts = (u.modules || []).includes("contracts");
                 return (
                   <tr key={u.email} className="border-b border-line/70 last:border-0">
                     <td className="px-4 py-3 font-semibold text-ink">
@@ -374,6 +414,23 @@ export function AgentSettings({
                     </td>
                     <td className="px-4 py-3 text-ink-soft">{u.email}</td>
                     <td className="px-4 py-3">{u.role || "Agent"}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleContractsModule(u)}
+                        className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+                          hasContracts || (u.role || "").toLowerCase() === "admin"
+                            ? "bg-wash text-accent"
+                            : "bg-paper text-ink-soft"
+                        }`}
+                      >
+                        {(u.role || "").toLowerCase() === "admin"
+                          ? "all"
+                          : hasContracts
+                            ? "contracts"
+                            : "none"}
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
