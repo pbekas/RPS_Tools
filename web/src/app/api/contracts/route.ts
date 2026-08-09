@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
+import { apiRequireContracts } from "@/lib/requireAccess";
 import { acceptContractsReview, listContracts } from "@/lib/contractsDb";
 
 export async function GET(req: Request) {
-  const { error } = await apiRequireModule("contracts");
+  const { access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canViewAgreements) {
+    return NextResponse.json({ contracts: [], total: 0 });
+  }
 
   try {
     const { searchParams } = new URL(req.url);
@@ -16,6 +19,7 @@ export async function GET(req: Request) {
       status: searchParams.get("status") || undefined,
       expiringSoon: searchParams.get("expiringSoon") === "1",
       needsReview: searchParams.get("needsReview") === "1",
+      allowedGroupIds: access.allowedGroupIds,
       limit: Number(searchParams.get("limit") || 100),
       offset: Number(searchParams.get("offset") || 0),
     });
@@ -29,8 +33,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { error } = await apiRequireModule("contracts");
+  const { access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canViewAgreements) {
+    return NextResponse.json({ error: "No access to agreements" }, { status: 403 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");

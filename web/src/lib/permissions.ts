@@ -46,10 +46,13 @@ export function effectiveModules(
   user: SessionUserLike | null | undefined
 ): string[] {
   if (!user?.email) return [];
-  if (isAdmin(user)) return [...ALL_TOOLSET_IDS, "users"];
-  const modules = (user.modules || []).map((m) => String(m).trim()).filter(Boolean);
-  if (!modules.length) return ["call_qa"];
-  return Array.from(new Set(modules));
+  const modules = (user.modules || [])
+    .map((m) => String(m).trim())
+    .filter(Boolean)
+    .filter((m) => m !== "users");
+  const toolsets = modules.length ? Array.from(new Set(modules)) : ["call_qa"];
+  if (isAdmin(user)) return Array.from(new Set([...toolsets, "users"]));
+  return toolsets;
 }
 
 export function hasModule(
@@ -57,8 +60,12 @@ export function hasModule(
   moduleId: ModuleId
 ): boolean {
   if (!user?.email) return false;
-  if (isAdmin(user)) return true;
-  if (moduleId === "users") return false;
+  if (moduleId === "users") return isAdmin(user);
+  if (moduleId === "contracts") {
+    return effectiveModules(user).some(
+      (m) => m === "contracts" || m.startsWith("contracts:")
+    );
+  }
   return effectiveModules(user).includes(moduleId);
 }
 
@@ -97,7 +104,14 @@ export function defaultHrefForUser(
 ): string {
   const sets = grantedToolsets(user);
   if (sets.includes("call_qa")) return TOOLSETS.call_qa.href;
-  if (sets.includes("contracts")) return TOOLSETS.contracts.href;
+  if (sets.includes("contracts")) {
+    const mods = effectiveModules(user);
+    const hasAgreementGrant =
+      mods.includes("contracts") ||
+      mods.some((m) => m.startsWith("contracts:group:"));
+    if (!hasAgreementGrant) return "/contracts/vendors";
+    return TOOLSETS.contracts.href;
+  }
   return "/login";
 }
 
@@ -107,4 +121,17 @@ export function normalizeToolsetGrants(modules: string[]): ToolsetId[] {
     .map((m) => String(m).trim())
     .filter((m): m is ToolsetId => allowed.has(m));
   return Array.from(new Set(cleaned));
+}
+
+export function normalizeModuleGrants(modules: string[]): string[] {
+  const toolsets = normalizeToolsetGrants(modules);
+  const extras = modules
+    .map((m) => String(m).trim())
+    .filter(
+      (m) =>
+        m.startsWith("contracts:group:") ||
+        m === "contracts:vendor_contacts" ||
+        m === "contracts:vendor_files"
+    );
+  return Array.from(new Set([...toolsets, ...extras]));
 }

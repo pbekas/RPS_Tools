@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
+import { canAccessContractGroup } from "@/lib/contractAccess";
+import { requireModule, contractAccessForUser } from "@/lib/requireAccess";
 import { listResourceAudit, writeAccessAudit } from "@/lib/accessAudit";
 import {
   getContract,
@@ -19,9 +20,13 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export default async function ContractDetailPage({ params }: Ctx) {
   const session = await requireModule("contracts");
+  const access = await contractAccessForUser(session.user);
   const { id } = await params;
   const contract = await getContract(id);
   if (!contract) notFound();
+  if (!access.canViewAgreements || !canAccessContractGroup(access, contract.group_slug)) {
+    notFound();
+  }
 
   const hdrs = await headers();
   const sourceIp =

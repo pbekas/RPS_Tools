@@ -3,11 +3,16 @@ import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import {
+  resolveContractAccess,
+  type ContractAccess,
+} from "@/lib/contractAccess";
+import {
   defaultHrefForUser,
   hasModule,
   isAdmin,
   type ModuleId,
 } from "@/lib/permissions";
+import { listContractGroups } from "@/lib/contractsDb";
 
 export async function requireSession() {
   const session = await getServerSession(authOptions);
@@ -44,6 +49,29 @@ export async function apiRequireModule(moduleId: ModuleId) {
     };
   }
   return { session, error: null };
+}
+
+export async function apiRequireContracts() {
+  const result = await apiRequireModule("contracts");
+  if (result.error || !result.session) {
+    return { session: null, error: result.error, access: null };
+  }
+  const access = await contractAccessForUser(result.session.user);
+  return { session: result.session, error: null, access };
+}
+
+export async function contractAccessForUser(
+  user: { email?: string | null; role?: string | null; modules?: string[] | null }
+): Promise<ContractAccess & { allowedGroupIds: string[] | null }> {
+  const access = resolveContractAccess(user);
+  if (access.allGroups) return { ...access, allowedGroupIds: null };
+  if (!access.groupSlugs.length) return { ...access, allowedGroupIds: [] };
+  const groups = await listContractGroups();
+  const allowed = new Set(access.groupSlugs);
+  return {
+    ...access,
+    allowedGroupIds: groups.filter((g) => allowed.has(g.slug)).map((g) => g.id),
+  };
 }
 
 export async function apiRequireAdmin() {

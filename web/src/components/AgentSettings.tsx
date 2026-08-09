@@ -2,10 +2,15 @@
 
 import { useMemo, useState } from "react";
 import type { UnmappedAgentRow, UserDoc } from "@/lib/database";
+import type { ContractGroup } from "@/lib/contractTypes";
+import {
+  buildModuleGrants,
+  parseContractGrantState,
+} from "@/lib/contractAccess";
 import {
   ALL_TOOLSET_IDS,
   TOOLSETS,
-  isAdmin,
+  normalizeModuleGrants,
   normalizeToolsetGrants,
   type ToolsetId,
 } from "@/lib/permissions";
@@ -15,10 +20,10 @@ type Props = {
   initialUnmapped: UnmappedAgentRow[];
   domain: string;
   embedded?: boolean;
+  contractGroups?: ContractGroup[];
 };
 
 function toolsetsForUser(user: UserDoc): ToolsetId[] {
-  if (isAdmin(user)) return [...ALL_TOOLSET_IDS];
   const grants = normalizeToolsetGrants(user.modules || []);
   return grants.length ? grants : ["call_qa"];
 }
@@ -28,6 +33,7 @@ export function AgentSettings({
   initialUnmapped,
   domain,
   embedded = false,
+  contractGroups = [],
 }: Props) {
   const [users, setUsers] = useState(initialUsers);
   const [unmapped, setUnmapped] = useState(initialUnmapped);
@@ -35,6 +41,12 @@ export function AgentSettings({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Agent");
   const [toolsets, setToolsets] = useState<ToolsetId[]>(["call_qa"]);
+  const [allContractTypes, setAllContractTypes] = useState(true);
+  const [groupSlugs, setGroupSlugs] = useState<string[]>(
+    contractGroups.map((g) => g.slug)
+  );
+  const [vendorContacts, setVendorContacts] = useState(true);
+  const [vendorFiles, setVendorFiles] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
@@ -146,12 +158,14 @@ export function AgentSettings({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
-      const modules =
-        role === "Admin"
-          ? [...ALL_TOOLSET_IDS]
-          : normalizeToolsetGrants(toolsets).length
-            ? normalizeToolsetGrants(toolsets)
-            : ["call_qa"];
+      const modules = buildModuleGrants({
+        toolsets,
+        allContractTypes,
+        groupSlugs,
+        knownGroupSlugs: contractGroups.map((g) => g.slug),
+        vendorContacts,
+        vendorFiles,
+      });
       const modRes = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -164,6 +178,10 @@ export function AgentSettings({
       setEmail("");
       setRole("Agent");
       setToolsets(["call_qa"]);
+      setAllContractTypes(true);
+      setGroupSlugs(contractGroups.map((g) => g.slug));
+      setVendorContacts(true);
+      setVendorFiles(true);
       await refresh();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
@@ -195,19 +213,26 @@ export function AgentSettings({
     setName(user.name || "");
     setEmail(user.email);
     setRole(user.role || "Agent");
-    setToolsets(toolsetsForUser(user));
+    const parsed = parseContractGrantState(user, contractGroups);
+    setToolsets(parsed.toolsets.length ? parsed.toolsets : toolsetsForUser(user));
+    setAllContractTypes(parsed.allContractTypes);
+    setGroupSlugs(
+      parsed.groupSlugs.length ? parsed.groupSlugs : contractGroups.map((g) => g.slug)
+    );
+    setVendorContacts(parsed.vendorContacts);
+    setVendorFiles(parsed.vendorFiles);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function setUserToolsets(user: UserDoc, next: ToolsetId[]) {
-    if (isAdmin(user)) {
-      setMsg("Admins always have access to every tool set");
-      return;
-    }
     setMsg("");
-    const modules = normalizeToolsetGrants(next).length
+    const existing = (user.modules || []).filter((m) => String(m).startsWith("contracts:"));
+    const base = normalizeToolsetGrants(next).length
       ? normalizeToolsetGrants(next)
       : ["call_qa"];
+    const modules = next.includes("contracts")
+      ? normalizeModuleGrants([...base, ...existing])
+      : base;
     const res = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -230,8 +255,8 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Users & access</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            Control who can use each tool set. Admins get Call QA and Contracts.
-            Agents need explicit grants.
+            Control who can use each tool set. Admins can manage users; tool sets
+            are granted per person.
           </p>
         </div>
       ) : (
@@ -347,7 +372,8 @@ export function AgentSettings({
       >
         <h2 className="font-display text-2xl text-ink">Add / update person</h2>
         <p className="mt-1 text-sm text-ink-soft">
-          Set role and which tool sets they can open. Admins always get both.
+          Set role, tool sets, and contract visibility. You can grant vendor
+          contacts without agreement details.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
@@ -382,11 +408,7 @@ export function AgentSettings({
           </span>
           <select
             value={role}
-            onChange={(e) => {
-              const next = e.target.value;
-              setRole(next);
-              if (next === "Admin") setToolsets([...ALL_TOOLSET_IDS]);
-            }}
+            onChange={(e) => setRole(e.target.value)}
             className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
           >
             <option value="Agent">Agent</option>
@@ -402,19 +424,73 @@ export function AgentSettings({
               <label key={id} className="flex items-center gap-2 text-sm text-ink">
                 <input
                   type="checkbox"
-                  checked={role === "Admin" || toolsets.includes(id)}
-                  disabled={role === "Admin"}
+                  checked={toolsets.includes(id)}
                   onChange={() => toggleFormToolset(id)}
                 />
                 {TOOLSETS[id].label}
               </label>
             ))}
           </div>
-          {role === "Admin" ? (
-            <p className="mt-2 text-xs text-ink-soft">
-              Admin role includes every tool set automatically.
-            </p>
+        </fieldset>
+        <fieldset className="mt-4 rounded-xl border border-line bg-paper/50 p-4">
+          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            Contract permissions
+          </legend>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              checked={allContractTypes && toolsets.includes("contracts")}
+              disabled={!toolsets.includes("contracts")}
+              onChange={(e) => setAllContractTypes(e.target.checked)}
+            />
+            All agreement types
+          </label>
+          {contractGroups.length ? (
+            <div className="mt-2 flex flex-wrap gap-3">
+              {contractGroups.map((group) => (
+                <label key={group.id} className="flex items-center gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    disabled={!toolsets.includes("contracts") || allContractTypes}
+                    checked={
+                      toolsets.includes("contracts") &&
+                      (allContractTypes || groupSlugs.includes(group.slug))
+                    }
+                    onChange={() =>
+                      setGroupSlugs((prev) =>
+                        prev.includes(group.slug)
+                          ? prev.filter((s) => s !== group.slug)
+                          : [...prev, group.slug]
+                      )
+                    }
+                  />
+                  {group.name}
+                </label>
+              ))}
+            </div>
           ) : null}
+          <div className="mt-3 flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={vendorContacts}
+                onChange={(e) => setVendorContacts(e.target.checked)}
+              />
+              Vendor contacts
+            </label>
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                checked={vendorFiles}
+                onChange={(e) => setVendorFiles(e.target.checked)}
+              />
+              Vendor files (W-9 / COI)
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-ink-soft">
+            Contacts without agreement types lets someone see people, not PDFs or
+            commercial terms.
+          </p>
         </fieldset>
         <button
           type="submit"
@@ -473,24 +549,21 @@ export function AgentSettings({
                             <button
                               key={id}
                               type="button"
-                              disabled={isAdmin(u)}
                               onClick={() => {
                                 const next = on
                                   ? granted.filter((x) => x !== id)
                                   : [...granted, id];
                                 void setUserToolsets(u, next);
                               }}
-                              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold disabled:cursor-default ${
+                              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
                                 on
                                   ? "bg-wash text-accent"
                                   : "bg-paper text-ink-soft"
                               }`}
                               title={
-                                isAdmin(u)
-                                  ? "Admins always have access"
-                                  : on
-                                    ? `Revoke ${TOOLSETS[id].label}`
-                                    : `Grant ${TOOLSETS[id].label}`
+                                on
+                                  ? `Revoke ${TOOLSETS[id].label}`
+                                  : `Grant ${TOOLSETS[id].label}`
                               }
                             >
                               {TOOLSETS[id].label}

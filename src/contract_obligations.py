@@ -93,6 +93,8 @@ def normalize_extracted_obligations(raw: Any) -> list[dict[str, Any]]:
         kind = aliases.get(kind, kind)
         if kind not in OBLIGATION_KINDS:
             kind = "other"
+        if kind == "payment":
+            continue
         title = str(item.get("title") or "").strip() or _KIND_TITLES[kind]
         notes = str(item.get("notes") or item.get("detail") or "").strip()
         due = _parse_date(item.get("due_date") or item.get("date"))
@@ -116,8 +118,9 @@ def build_derived_obligations(
     term_end_date: str | None = None,
     notice_period_days: int | None = None,
     auto_renews: bool = False,
-    next_payment_date: str | None = None,
+    next_payment_date: str | None = None,  # cost field only; not a calendar item
 ) -> list[dict[str, Any]]:
+    _ = next_payment_date
     end = _earliest_date(expiration_date, term_end_date)
     derived: list[dict[str, Any]] = []
     if end:
@@ -161,17 +164,6 @@ def build_derived_obligations(
                     "source": "derived",
                 }
             )
-    pay = _parse_date(next_payment_date)
-    if pay:
-        derived.append(
-            {
-                "kind": "payment",
-                "title": "Next payment",
-                "due_date": pay,
-                "notes": "",
-                "source": "derived",
-            }
-        )
     return derived
 
 

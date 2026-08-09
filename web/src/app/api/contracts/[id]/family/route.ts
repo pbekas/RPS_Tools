@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
+import { requireAgreement } from "@/lib/assertContractAgreement";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
 import {
   linkContractsIntoFamily,
@@ -14,9 +14,9 @@ import {
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, ctx: Ctx) {
-  const { error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
   try {
     const { searchParams } = new URL(req.url);
     const q = searchParams.get("q") || "";
@@ -41,9 +41,10 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
-  const { session, error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
+  const session = gate.session;
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");

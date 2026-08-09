@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
+import { apiRequireContracts } from "@/lib/requireAccess";
 import {
   deleteVendorContact,
   getVendor,
+  listContracts,
   listVendorContacts,
+  listVendorDocuments,
   listVendors,
   upsertVendor,
   upsertVendorContact,
 } from "@/lib/contractsDb";
 
 export async function GET(req: Request) {
-  const { error } = await apiRequireModule("contracts");
+  const { access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canOpenVendors) {
+    return NextResponse.json({ error: "No vendor access" }, { status: 403 });
+  }
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
@@ -20,14 +25,35 @@ export async function GET(req: Request) {
       if (!vendor) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      const contacts = await listVendorContacts(id);
-      return NextResponse.json({ vendor, contacts });
+      const contacts = access.canViewVendorContacts
+        ? await listVendorContacts(id)
+        : [];
+      const documents = access.canManageVendorFiles
+        ? await listVendorDocuments(id)
+        : [];
+      const contracts = access.canViewAgreements
+        ? (
+            await listContracts({
+              vendorId: id,
+              allowedGroupIds: access.allowedGroupIds,
+              limit: 50,
+            })
+          ).contracts
+        : [];
+      return NextResponse.json({ vendor, contacts, documents, contracts });
     }
     const vendors = await listVendors({
       q: searchParams.get("q") || undefined,
       activeOnly: searchParams.get("all") !== "1",
     });
-    return NextResponse.json({ vendors });
+    return NextResponse.json({
+      vendors,
+      access: {
+        canViewVendorContacts: access.canViewVendorContacts,
+        canManageVendorFiles: access.canManageVendorFiles,
+        canViewAgreements: access.canViewAgreements,
+      },
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to list vendors" },
@@ -37,8 +63,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { error } = await apiRequireModule("contracts");
+  const { access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canOpenVendors) {
+    return NextResponse.json({ error: "No vendor access" }, { status: 403 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "upsert_vendor");
@@ -54,6 +83,9 @@ export async function POST(req: Request) {
     }
 
     if (action === "upsert_contact") {
+      if (!access.canViewVendorContacts) {
+        return NextResponse.json({ error: "No access to contacts" }, { status: 403 });
+      }
       const contact = await upsertVendorContact({
         id: body.id ? String(body.id) : undefined,
         vendor_id: String(body.vendor_id || ""),
@@ -67,6 +99,9 @@ export async function POST(req: Request) {
     }
 
     if (action === "delete_contact") {
+      if (!access.canViewVendorContacts) {
+        return NextResponse.json({ error: "No access to contacts" }, { status: 403 });
+      }
       await deleteVendorContact(String(body.id || ""));
       return NextResponse.json({ ok: true });
     }

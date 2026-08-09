@@ -1,4 +1,5 @@
-import { requireModule } from "@/lib/requireAccess";
+import { redirect } from "next/navigation";
+import { requireModule, contractAccessForUser } from "@/lib/requireAccess";
 import {
   listContractAssignees,
   listContractEntities,
@@ -7,7 +8,9 @@ import {
 import { ObligationsCalendar } from "@/components/ObligationsCalendar";
 
 export default async function ContractsCalendarPage() {
-  await requireModule("contracts");
+  const session = await requireModule("contracts");
+  const access = await contractAccessForUser(session.user);
+  if (!access.canViewAgreements) redirect("/contracts/vendors");
   const today = new Date();
   const to = new Date(today);
   to.setUTCMonth(to.getUTCMonth() + 18);
@@ -16,6 +19,7 @@ export default async function ContractsCalendarPage() {
     listContractObligations({
       status: "open",
       to: to.toISOString().slice(0, 10),
+      allowedGroupIds: access.allowedGroupIds,
       limit: 400,
     }),
     listContractEntities({ activeOnly: true }),

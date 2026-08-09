@@ -10,7 +10,7 @@ import {
   setUserModules,
   upsertUser,
 } from "@/lib/database";
-import { ALL_TOOLSET_IDS, normalizeToolsetGrants } from "@/lib/permissions";
+import { ALL_TOOLSET_IDS, normalizeModuleGrants } from "@/lib/permissions";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {
@@ -77,9 +77,6 @@ export async function POST(req: Request) {
         role,
         provisional: false,
       });
-      if (role === "Admin") {
-        await setUserModules(email, [...ALL_TOOLSET_IDS]);
-      }
       return NextResponse.json({ ok: true, user });
     }
 
@@ -99,8 +96,13 @@ export async function POST(req: Request) {
       const requested = Array.isArray(body.modules)
         ? body.modules.map((m: unknown) => String(m))
         : [];
-      const modules = normalizeToolsetGrants(requested);
-      if (!modules.length) {
+      const modules = normalizeModuleGrants(requested);
+      if (
+        !modules.length ||
+        !modules.some(
+          (m) => m === "call_qa" || m === "contracts" || m.startsWith("contracts:")
+        )
+      ) {
         return NextResponse.json(
           { error: "Grant at least one tool set (Call QA or Contracts)" },
           { status: 400 }

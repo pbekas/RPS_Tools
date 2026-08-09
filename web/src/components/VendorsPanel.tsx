@@ -2,24 +2,43 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { Vendor, VendorContact } from "@/lib/contractsDb";
+import type {
+  Contract,
+  Vendor,
+  VendorContact,
+  VendorDocKind,
+  VendorDocument,
+} from "@/lib/contractTypes";
+import { VENDOR_DOC_KINDS } from "@/lib/contractTypes";
+
+const KIND_LABELS: Record<VendorDocKind, string> = {
+  w9: "W-9",
+  coi: "COI",
+  insurance: "Insurance",
+  other: "Other",
+};
+
+type VendorAccess = {
+  canViewVendorContacts: boolean;
+  canManageVendorFiles: boolean;
+  canViewAgreements: boolean;
+};
 
 export function VendorsPanel({
   initialVendors,
-  initialVendor,
-  initialContacts,
+  access,
 }: {
   initialVendors: Vendor[];
-  initialVendor?: Vendor | null;
-  initialContacts?: VendorContact[];
+  access: VendorAccess;
 }) {
   const [vendors, setVendors] = useState(initialVendors);
-  const [selected, setSelected] = useState<Vendor | null>(initialVendor || null);
-  const [contacts, setContacts] = useState<VendorContact[]>(initialContacts || []);
-  const [vendorForm, setVendorForm] = useState({
-    name: "",
-    notes: "",
-  });
+  const [selected, setSelected] = useState<Vendor | null>(null);
+  const [contacts, setContacts] = useState<VendorContact[]>([]);
+  const [documents, setDocuments] = useState<VendorDocument[]>([]);
+  const [agreements, setAgreements] = useState<Contract[]>([]);
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [addingPerson, setAddingPerson] = useState(false);
   const [contactForm, setContactForm] = useState({
     name: "",
     email: "",
@@ -27,6 +46,7 @@ export function VendorsPanel({
     title: "",
     is_primary: false,
   });
+  const [docKind, setDocKind] = useState<VendorDocKind>("w9");
   const [message, setMessage] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -47,25 +67,26 @@ export function VendorsPanel({
         return;
       }
       setSelected(data.vendor);
+      setName(data.vendor.name || "");
+      setNotes(data.vendor.notes || "");
       setContacts(data.contacts || []);
-      setVendorForm({
-        name: data.vendor.name || "",
-        notes: data.vendor.notes || "",
-      });
+      setDocuments(data.documents || []);
+      setAgreements(data.contracts || []);
+      setAddingPerson(false);
       setMessage("");
     });
   }
 
-  function saveVendor() {
+  function saveVendor(create = false) {
     startTransition(async () => {
       const res = await fetch("/api/contracts/vendors", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "upsert_vendor",
-          id: selected?.id,
-          name: vendorForm.name,
-          notes: vendorForm.notes,
+          id: create ? undefined : selected?.id,
+          name,
+          notes,
         }),
       });
       const data = await res.json();
@@ -74,22 +95,24 @@ export function VendorsPanel({
         return;
       }
       setSelected(data.vendor);
-      setMessage("Vendor saved");
+      setMessage("Saved");
       refreshVendors();
+      if (data.vendor?.id) loadVendor(data.vendor.id);
     });
   }
 
-  function createVendor() {
+  function startCreate() {
     setSelected(null);
     setContacts([]);
-    setVendorForm({ name: "", notes: "" });
+    setDocuments([]);
+    setAgreements([]);
+    setName("");
+    setNotes("");
+    setAddingPerson(false);
   }
 
   function saveContact() {
-    if (!selected?.id) {
-      setMessage("Save the vendor first");
-      return;
-    }
+    if (!selected?.id) return;
     startTransition(async () => {
       const res = await fetch("/api/contracts/vendors", {
         method: "POST",
@@ -102,7 +125,7 @@ export function VendorsPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        setMessage(data.error || "Contact save failed");
+        setMessage(data.error || "Could not add person");
         return;
       }
       setContactForm({
@@ -112,24 +135,52 @@ export function VendorsPanel({
         title: "",
         is_primary: false,
       });
+      setAddingPerson(false);
       loadVendor(selected.id);
-      setMessage("Contact added");
     });
   }
 
   function deleteContact(id: string) {
+    if (!selected?.id) return;
     startTransition(async () => {
       const res = await fetch("/api/contracts/vendors", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "delete_contact", id }),
       });
+      if (res.ok) loadVendor(selected.id);
+    });
+  }
+
+  function uploadFile(file: File) {
+    if (!selected?.id) return;
+    startTransition(async () => {
+      const form = new FormData();
+      form.set("vendor_id", selected.id);
+      form.set("doc_kind", docKind);
+      form.set("file", file);
+      const res = await fetch("/api/contracts/vendors/documents", {
+        method: "POST",
+        body: form,
+      });
       const data = await res.json();
       if (!res.ok) {
-        setMessage(data.error || "Delete failed");
+        setMessage(data.error || "Upload failed");
         return;
       }
-      if (selected?.id) loadVendor(selected.id);
+      loadVendor(selected.id);
+    });
+  }
+
+  function deleteDocument(id: string) {
+    if (!selected?.id) return;
+    startTransition(async () => {
+      const res = await fetch("/api/contracts/vendors/documents", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "delete", id }),
+      });
+      if (res.ok) loadVendor(selected.id);
     });
   }
 
@@ -141,13 +192,14 @@ export function VendorsPanel({
             Contracts
           </p>
           <h1 className="mt-1 font-display text-3xl text-ink">Vendors</h1>
-          <p className="mt-2 text-ink-soft">
-            Counterparties and their contacts, linked to contracts.
+          <p className="mt-2 max-w-2xl text-ink-soft">
+            One profile per counterparty — people, W-9s, and the agreements they
+            belong to.
           </p>
         </div>
         <button
           type="button"
-          onClick={createVendor}
+          onClick={startCreate}
           className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep"
         >
           New vendor
@@ -155,7 +207,7 @@ export function VendorsPanel({
       </div>
       {message ? <p className="mb-4 text-sm text-ink-soft">{message}</p> : null}
 
-      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.2fr]">
         <div className="rounded-2xl border border-line bg-white/80">
           <ul className="divide-y divide-line">
             {vendors.map((v) => (
@@ -169,7 +221,23 @@ export function VendorsPanel({
                 >
                   <div className="font-semibold text-ink">{v.name}</div>
                   <div className="text-xs text-ink-soft">
-                    {v.contract_count || 0} contracts · {v.contact_count || 0} contacts
+                    {access.canViewAgreements
+                      ? `${v.contract_count || 0} contracts · `
+                      : ""}
+                    {access.canViewVendorContacts
+                      ? `${v.contact_count || 0} contacts`
+                      : ""}
+                    {access.canViewVendorContacts && access.canManageVendorFiles
+                      ? " · "
+                      : ""}
+                    {access.canManageVendorFiles
+                      ? `${v.document_count || 0} files`
+                      : ""}
+                    {!access.canViewAgreements &&
+                    !access.canViewVendorContacts &&
+                    !access.canManageVendorFiles
+                      ? "Vendor"
+                      : ""}
                   </div>
                 </button>
               </li>
@@ -182,135 +250,261 @@ export function VendorsPanel({
           </ul>
         </div>
 
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-line bg-white/80 p-4">
-            <h2 className="font-display text-xl text-ink">
-              {selected ? "Edit vendor" : "Create vendor"}
-            </h2>
-            <div className="mt-4 space-y-3">
+        <div className="rounded-2xl border border-line bg-white/80 p-5">
+          {!selected ? (
+            <div className="space-y-3">
+              <h2 className="font-display text-xl text-ink">New vendor</h2>
               <input
                 className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 placeholder="Vendor name"
-                value={vendorForm.name}
-                onChange={(e) =>
-                  setVendorForm((prev) => ({ ...prev, name: e.target.value }))
-                }
+                value={name}
+                onChange={(e) => setName(e.target.value)}
               />
               <textarea
                 className="w-full rounded-lg border border-line px-3 py-2 text-sm"
-                placeholder="Notes"
+                placeholder="Notes (optional)"
                 rows={3}
-                value={vendorForm.notes}
-                onChange={(e) =>
-                  setVendorForm((prev) => ({ ...prev, notes: e.target.value }))
-                }
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
               />
               <button
                 type="button"
-                disabled={pending}
-                onClick={saveVendor}
+                disabled={pending || !name.trim()}
+                onClick={() => saveVendor(true)}
                 className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
               >
-                Save vendor
+                Create vendor
               </button>
-              {selected ? (
-                <Link
-                  href={`/contracts?vendorId=${selected.id}`}
-                  className="ml-3 text-sm font-semibold text-accent"
-                >
-                  View contracts
-                </Link>
-              ) : null}
             </div>
-          </div>
-
-          {selected ? (
-            <div className="rounded-2xl border border-line bg-white/80 p-4">
-              <h2 className="font-display text-xl text-ink">Contacts</h2>
-              <ul className="mt-3 space-y-2">
-                {contacts.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex items-start justify-between gap-3 rounded-lg border border-line px-3 py-2 text-sm"
-                  >
-                    <div>
-                      <div className="font-semibold text-ink">
-                        {c.name}
-                        {c.is_primary ? (
-                          <span className="ml-2 text-xs text-accent">primary</span>
-                        ) : null}
-                      </div>
-                      <div className="text-ink-soft">
-                        {[c.title, c.email, c.phone].filter(Boolean).join(" · ")}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => deleteContact(c.id)}
-                      className="text-fail"
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          ) : (
+            <div className="space-y-8">
+              <div>
                 <input
-                  className="rounded-lg border border-line px-3 py-2 text-sm"
-                  placeholder="Name"
-                  value={contactForm.name}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({ ...prev, name: e.target.value }))
-                  }
+                  className="w-full border-0 bg-transparent p-0 font-display text-2xl text-ink outline-none focus:ring-0"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => {
+                    if (name.trim() && name !== selected.name) saveVendor();
+                  }}
                 />
-                <input
-                  className="rounded-lg border border-line px-3 py-2 text-sm"
-                  placeholder="Title"
-                  value={contactForm.title}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({ ...prev, title: e.target.value }))
-                  }
-                />
-                <input
-                  className="rounded-lg border border-line px-3 py-2 text-sm"
-                  placeholder="Email"
-                  value={contactForm.email}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                />
-                <input
-                  className="rounded-lg border border-line px-3 py-2 text-sm"
-                  placeholder="Phone"
-                  value={contactForm.phone}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({ ...prev, phone: e.target.value }))
-                  }
+                <textarea
+                  className="mt-2 w-full rounded-lg border border-transparent bg-transparent px-0 py-1 text-sm text-ink-soft hover:border-line focus:border-line"
+                  placeholder="Add notes…"
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  onBlur={() => {
+                    if (notes !== (selected.notes || "")) saveVendor();
+                  }}
                 />
               </div>
-              <label className="mt-2 flex items-center gap-2 text-sm text-ink-soft">
-                <input
-                  type="checkbox"
-                  checked={contactForm.is_primary}
-                  onChange={(e) =>
-                    setContactForm((prev) => ({
-                      ...prev,
-                      is_primary: e.target.checked,
-                    }))
-                  }
-                />
-                Primary contact
-              </label>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={saveContact}
-                className="mt-3 rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash disabled:opacity-60"
-              >
-                Add contact
-              </button>
+
+              {access.canViewVendorContacts ? (
+                <section>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-semibold text-ink">People</h3>
+                    <button
+                      type="button"
+                      onClick={() => setAddingPerson((v) => !v)}
+                      className="text-sm font-semibold text-accent"
+                    >
+                      {addingPerson ? "Cancel" : "Add person"}
+                    </button>
+                  </div>
+                  <ul className="space-y-2">
+                    {contacts.map((c) => (
+                      <li
+                        key={c.id}
+                        className="flex items-start justify-between gap-3 rounded-xl bg-wash/60 px-3 py-2 text-sm"
+                      >
+                        <div>
+                          <div className="font-semibold text-ink">
+                            {c.name}
+                            {c.is_primary ? (
+                              <span className="ml-2 text-xs font-semibold text-accent">
+                                primary
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-ink-soft">
+                            {[c.title, c.email, c.phone].filter(Boolean).join(" · ")}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteContact(c.id)}
+                          className="text-xs font-semibold text-fail"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                    {!contacts.length && !addingPerson ? (
+                      <li className="text-sm text-ink-soft">No people listed yet.</li>
+                    ) : null}
+                  </ul>
+                  {addingPerson ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <input
+                        className="rounded-lg border border-line px-3 py-2 text-sm"
+                        placeholder="Name"
+                        value={contactForm.name}
+                        onChange={(e) =>
+                          setContactForm((prev) => ({ ...prev, name: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="rounded-lg border border-line px-3 py-2 text-sm"
+                        placeholder="Title"
+                        value={contactForm.title}
+                        onChange={(e) =>
+                          setContactForm((prev) => ({ ...prev, title: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="rounded-lg border border-line px-3 py-2 text-sm"
+                        placeholder="Email"
+                        value={contactForm.email}
+                        onChange={(e) =>
+                          setContactForm((prev) => ({ ...prev, email: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="rounded-lg border border-line px-3 py-2 text-sm"
+                        placeholder="Phone"
+                        value={contactForm.phone}
+                        onChange={(e) =>
+                          setContactForm((prev) => ({ ...prev, phone: e.target.value }))
+                        }
+                      />
+                      <label className="flex items-center gap-2 text-sm text-ink-soft sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={contactForm.is_primary}
+                          onChange={(e) =>
+                            setContactForm((prev) => ({
+                              ...prev,
+                              is_primary: e.target.checked,
+                            }))
+                          }
+                        />
+                        Primary contact
+                      </label>
+                      <button
+                        type="button"
+                        disabled={pending || !contactForm.name.trim()}
+                        onClick={saveContact}
+                        className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
+                      >
+                        Save person
+                      </button>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {access.canManageVendorFiles ? (
+                <section>
+                  <h3 className="mb-3 font-semibold text-ink">Files</h3>
+                  <ul className="mb-3 space-y-2">
+                    {documents.map((doc) => (
+                      <li
+                        key={doc.id}
+                        className="flex items-center justify-between gap-3 rounded-xl bg-wash/60 px-3 py-2 text-sm"
+                      >
+                        <div>
+                          <a
+                            href={`/api/contracts/vendors/documents/${doc.id}/download`}
+                            className="font-semibold text-ink hover:text-accent"
+                          >
+                            {doc.title || doc.original_filename}
+                          </a>
+                          <div className="text-xs text-ink-soft">
+                            {KIND_LABELS[doc.doc_kind] || doc.doc_kind}
+                            {doc.original_filename ? ` · ${doc.original_filename}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteDocument(doc.id)}
+                          className="text-xs font-semibold text-fail"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                    {!documents.length ? (
+                      <li className="text-sm text-ink-soft">
+                        No W-9s or other files yet.
+                      </li>
+                    ) : null}
+                  </ul>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      className="rounded-lg border border-line px-3 py-2 text-sm"
+                      value={docKind}
+                      onChange={(e) => setDocKind(e.target.value as VendorDocKind)}
+                    >
+                      {VENDOR_DOC_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {KIND_LABELS[kind]}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink-soft hover:bg-wash">
+                      Upload file
+                      <input
+                        type="file"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadFile(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                </section>
+              ) : null}
+
+              <section>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="font-semibold text-ink">Agreements</h3>
+                  {access.canViewAgreements ? (
+                    <Link
+                      href={`/contracts?vendorId=${selected.id}`}
+                      className="text-sm font-semibold text-accent"
+                    >
+                      View in library
+                    </Link>
+                  ) : null}
+                </div>
+                {!access.canViewAgreements ? (
+                  <p className="text-sm text-ink-soft">
+                    You can see this vendor’s directory, but not agreement details.
+                  </p>
+                ) : agreements.length ? (
+                  <ul className="space-y-2">
+                    {agreements.map((c) => (
+                      <li key={c.id}>
+                        <Link
+                          href={`/contracts/${c.id}`}
+                          className="block rounded-xl bg-wash/60 px-3 py-2 hover:bg-wash"
+                        >
+                          <div className="font-semibold text-ink">{c.title}</div>
+                          <div className="text-xs text-ink-soft">
+                            {c.group_name || "Ungrouped"} · {c.status}
+                          </div>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-ink-soft">No agreements linked yet.</p>
+                )}
+              </section>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
     </div>

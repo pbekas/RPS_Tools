@@ -1,20 +1,16 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
-import { getContract } from "@/lib/contractsDb";
+import { requireAgreement } from "@/lib/assertContractAgreement";
 import { resolveObjectUrl } from "@/lib/s3";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, ctx: Ctx) {
-  const { session, error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
+  const { session, contract } = gate;
   try {
-    const contract = await getContract(id);
-    if (!contract) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
     const url = await resolveObjectUrl({
       s3Uri: contract.s3_uri,
       s3Key: contract.s3_key,

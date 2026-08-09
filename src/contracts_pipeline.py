@@ -146,7 +146,6 @@ def process_contract_sync(contract_id: str) -> dict[str, Any]:
                 term_end_date=extracted.get("term_end_date"),
                 notice_period_days=extracted.get("notice_period_days"),
                 auto_renews=bool(extracted.get("auto_renews")),
-                next_payment_date=extracted.get("next_payment_date"),
             ),
         )
         return updated

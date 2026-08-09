@@ -8,6 +8,7 @@ import {
   getQaRules,
   listUsers,
 } from "@/lib/database";
+import { listContractGroups } from "@/lib/contractsDb";
 import { SettingsShell } from "@/components/SettingsShell";
 
 export default async function SettingsPage() {
@@ -15,12 +16,15 @@ export default async function SettingsPage() {
   if (!session?.user?.email) redirect("/login");
   if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
 
-  const [users, unmapped, topicset, ruleset, flagset] = await Promise.all([
+  const [users, unmapped, topicset, ruleset, flagset, groups] = await Promise.all([
     listUsers(),
     discoverUnmappedAgents(),
     getCallTopics(),
     getQaRules(),
     getCallFlags(),
+    process.env.DB_BACKEND?.trim().toLowerCase() === "postgres"
+      ? listContractGroups().catch(() => [])
+      : Promise.resolve([]),
   ]);
   const domain = process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com";
 
@@ -32,6 +36,7 @@ export default async function SettingsPage() {
       initialRuleset={ruleset}
       initialFlagset={flagset}
       domain={domain}
+      contractGroups={groups}
     />
   );
 }

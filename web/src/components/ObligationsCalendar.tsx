@@ -8,7 +8,7 @@ import type {
   ContractObligation,
   ObligationKind,
 } from "@/lib/contractTypes";
-import { OBLIGATION_KINDS } from "@/lib/contractTypes";
+import { CALENDAR_OBLIGATION_KINDS } from "@/lib/contractTypes";
 import {
   formatIsoDate,
   obligationKindLabel,
@@ -150,7 +150,7 @@ export function ObligationsCalendar({
           onChange={(e) => setKind(e.target.value)}
         >
           <option value="">All kinds</option>
-          {OBLIGATION_KINDS.map((value) => (
+          {CALENDAR_OBLIGATION_KINDS.map((value) => (
             <option key={value} value={value}>
               {obligationKindLabel(value as ObligationKind)}
             </option>

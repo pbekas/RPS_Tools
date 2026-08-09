@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
+import { apiRequireContracts } from "@/lib/requireAccess";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
 import { createContractUpload } from "@/lib/contractsDb";
 import { uploadContractObject } from "@/lib/s3";
@@ -31,8 +31,11 @@ function guessContentType(filename: string, provided: string): string {
 }
 
 export async function POST(req: Request) {
-  const { session, error } = await apiRequireModule("contracts");
+  const { session, access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canViewAgreements) {
+    return NextResponse.json({ error: "No access to agreements" }, { status: 403 });
+  }
 
   try {
     let form: FormData;

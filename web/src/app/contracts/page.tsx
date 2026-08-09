@@ -1,4 +1,5 @@
-import { requireModule } from "@/lib/requireAccess";
+import { redirect } from "next/navigation";
+import { requireModule, contractAccessForUser } from "@/lib/requireAccess";
 import {
   listContractEntities,
   listContractGroups,
@@ -12,7 +13,9 @@ export default async function ContractsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireModule("contracts");
+  const session = await requireModule("contracts");
+  const access = await contractAccessForUser(session.user);
+  if (!access.canViewAgreements) redirect("/contracts/vendors");
   const params = await searchParams;
   const q = typeof params.q === "string" ? params.q : undefined;
   const groupId = typeof params.groupId === "string" ? params.groupId : undefined;
@@ -31,18 +34,22 @@ export default async function ContractsPage({
       status,
       expiringSoon,
       needsReview,
+      allowedGroupIds: access.allowedGroupIds,
       limit: 100,
     }),
     listContractGroups(),
     listVendors({ activeOnly: false }),
     listContractEntities({ activeOnly: true }),
   ]);
+  const visibleGroups = access.allGroups
+    ? groups
+    : groups.filter((g) => access.groupSlugs.includes(g.slug));
 
   return (
     <ContractsLibrary
       initialContracts={contracts}
       initialTotal={total}
-      groups={groups}
+      groups={visibleGroups}
       vendors={vendors}
       entities={entities}
     />

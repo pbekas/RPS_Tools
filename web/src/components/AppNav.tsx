@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname } from "next/navigation";
+import { resolveContractAccess } from "@/lib/contractAccess";
 import {
   TOOLSETS,
   activeToolset,
@@ -23,6 +24,7 @@ export function AppNav() {
   const admin = isAdmin(data.user);
   const toolsets = grantedToolsets(data.user);
   const current = activeToolset(pathname);
+  const contractAccess = resolveContractAccess(data.user);
   const onUsers =
     pathname.startsWith("/users") || pathname.startsWith("/settings");
   const brandHref = defaultHrefForUser(data.user);
@@ -100,33 +102,39 @@ export function AppNav() {
 
           {current === "contracts" ? (
             <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft md:flex">
-              <Link
-                href="/contracts"
-                className={navClass(
-                  pathname === "/contracts" ||
-                    /^\/contracts\/[0-9a-f-]{36}/i.test(pathname)
-                )}
-              >
-                Library
-              </Link>
-              <Link
-                href="/contracts/calendar"
-                className={navClass(pathname.startsWith("/contracts/calendar"))}
-              >
-                Calendar
-              </Link>
-              <Link
-                href="/contracts/upload"
-                className={navClass(pathname.startsWith("/contracts/upload"))}
-              >
-                Upload
-              </Link>
-              <Link
-                href="/contracts/vendors"
-                className={navClass(pathname.startsWith("/contracts/vendors"))}
-              >
-                Vendors
-              </Link>
+              {contractAccess.canViewAgreements ? (
+                <>
+                  <Link
+                    href="/contracts"
+                    className={navClass(
+                      pathname === "/contracts" ||
+                        /^\/contracts\/[0-9a-f-]{36}/i.test(pathname)
+                    )}
+                  >
+                    Library
+                  </Link>
+                  <Link
+                    href="/contracts/calendar"
+                    className={navClass(pathname.startsWith("/contracts/calendar"))}
+                  >
+                    Calendar
+                  </Link>
+                  <Link
+                    href="/contracts/upload"
+                    className={navClass(pathname.startsWith("/contracts/upload"))}
+                  >
+                    Upload
+                  </Link>
+                </>
+              ) : null}
+              {contractAccess.canOpenVendors ? (
+                <Link
+                  href="/contracts/vendors"
+                  className={navClass(pathname.startsWith("/contracts/vendors"))}
+                >
+                  Vendors
+                </Link>
+              ) : null}
               {admin ? (
                 <>
                   <Link

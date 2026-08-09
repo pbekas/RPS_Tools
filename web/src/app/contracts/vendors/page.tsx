@@ -1,9 +1,24 @@
-import { requireModule } from "@/lib/requireAccess";
+import { redirect } from "next/navigation";
+import { contractAccessForUser, requireModule } from "@/lib/requireAccess";
 import { listVendors } from "@/lib/contractsDb";
 import { VendorsPanel } from "@/components/VendorsPanel";
+import { defaultHrefForUser } from "@/lib/permissions";
 
 export default async function VendorsPage() {
-  await requireModule("contracts");
+  const session = await requireModule("contracts");
+  const access = await contractAccessForUser(session.user);
+  if (!access.canOpenVendors) {
+    redirect(defaultHrefForUser(session.user));
+  }
   const vendors = await listVendors({ activeOnly: false });
-  return <VendorsPanel initialVendors={vendors} />;
+  return (
+    <VendorsPanel
+      initialVendors={vendors}
+      access={{
+        canViewVendorContacts: access.canViewVendorContacts,
+        canManageVendorFiles: access.canManageVendorFiles,
+        canViewAgreements: access.canViewAgreements,
+      }}
+    />
+  );
 }

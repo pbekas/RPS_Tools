@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
+import { requireAgreement } from "@/lib/assertContractAgreement";
 import {
   diffContractFields,
   getContract,
@@ -14,14 +14,11 @@ import { resolveObjectUrl } from "@/lib/s3";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
-  const { error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
   try {
-    const contract = await getContract(id);
-    if (!contract) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const contract = gate.contract;
     const documentUrl = await resolveObjectUrl({
       s3Uri: contract.s3_uri,
       s3Key: contract.s3_key,
@@ -36,14 +33,12 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
-  const { session, error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
+  const session = gate.session;
   try {
-    const before = await getContract(id);
-    if (!before) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const before = gate.contract;
     const body = await req.json().catch(() => ({}));
     const contract = await updateContract(id, body);
     const changes = diffContractFields(before, contract);
@@ -67,9 +62,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 export async function DELETE(req: Request, ctx: Ctx) {
-  const { session, error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
+  const session = gate.session;
   try {
     await softDeleteContract(id);
     await writeAccessAudit({
@@ -90,9 +86,10 @@ export async function DELETE(req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
-  const { session, error } = await apiRequireModule("contracts");
-  if (error) return error;
   const { id } = await ctx.params;
+  const gate = await requireAgreement(id);
+  if (gate.error) return gate.error;
+  const session = gate.session;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || "");
 

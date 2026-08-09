@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { apiRequireModule } from "@/lib/requireAccess";
+import { canAccessContractGroup } from "@/lib/contractAccess";
+import { apiRequireContracts } from "@/lib/requireAccess";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
 import {
   deleteContractObligation,
@@ -9,8 +10,11 @@ import {
 } from "@/lib/contractsDb";
 
 export async function GET(req: Request) {
-  const { error } = await apiRequireModule("contracts");
+  const { access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canViewAgreements) {
+    return NextResponse.json({ obligations: [] });
+  }
   try {
     const { searchParams } = new URL(req.url);
     const obligations = await listContractObligations({
@@ -28,6 +32,7 @@ export async function GET(req: Request) {
         | undefined,
       from: searchParams.get("from") || undefined,
       to: searchParams.get("to") || undefined,
+      allowedGroupIds: access.allowedGroupIds,
       limit: Number(searchParams.get("limit") || 250),
     });
     return NextResponse.json({ obligations });
@@ -40,8 +45,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { session, error } = await apiRequireModule("contracts");
+  const { session, access, error } = await apiRequireContracts();
   if (error) return error;
+  if (!access?.canViewAgreements) {
+    return NextResponse.json({ error: "No access to agreements" }, { status: 403 });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "upsert");
@@ -68,6 +76,9 @@ export async function POST(req: Request) {
     const contract = await getContract(contractId);
     if (!contract) {
       return NextResponse.json({ error: "Contract not found" }, { status: 404 });
+    }
+    if (!canAccessContractGroup(access, contract.group_slug)) {
+      return NextResponse.json({ error: "No access to this agreement type" }, { status: 403 });
     }
     const obligation = await upsertContractObligation({
       id: body.id ? String(body.id) : undefined,

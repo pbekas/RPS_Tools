@@ -8,6 +8,7 @@ import type {
   UnmappedAgentRow,
   UserDoc,
 } from "@/lib/database";
+import type { ContractGroup } from "@/lib/contractTypes";
 import { AgentSettings } from "@/components/AgentSettings";
 import { FlagSettings } from "@/components/FlagSettings";
 import { RuleSettings } from "@/components/RuleSettings";
@@ -20,6 +21,7 @@ type Props = {
   initialRuleset: QaRuleset;
   initialFlagset: FlagSet;
   domain: string;
+  contractGroups?: ContractGroup[];
 };
 
 export function SettingsShell({
@@ -29,6 +31,7 @@ export function SettingsShell({
   initialRuleset,
   initialFlagset,
   domain,
+  contractGroups = [],
 }: Props) {
   const [tab, setTab] = useState<"agents" | "topics" | "rules" | "flags">(
     "agents"
@@ -71,6 +74,7 @@ export function SettingsShell({
           initialUsers={initialUsers}
           initialUnmapped={initialUnmapped}
           domain={domain}
+          contractGroups={contractGroups}
           embedded
         />
       ) : (

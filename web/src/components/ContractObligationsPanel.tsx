@@ -6,7 +6,7 @@ import type {
   ContractObligation,
   ObligationKind,
 } from "@/lib/contractTypes";
-import { OBLIGATION_KINDS } from "@/lib/contractTypes";
+import { CALENDAR_OBLIGATION_KINDS } from "@/lib/contractTypes";
 import {
   formatIsoDate,
   obligationKindLabel,
@@ -209,7 +209,7 @@ export function ContractObligationsPanel({
               setDraft((prev) => ({ ...prev, kind: e.target.value as ObligationKind }))
             }
           >
-            {OBLIGATION_KINDS.map((kind) => (
+            {CALENDAR_OBLIGATION_KINDS.map((kind) => (
               <option key={kind} value={kind}>
                 {obligationKindLabel(kind)}
               </option>

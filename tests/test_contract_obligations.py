@@ -28,10 +28,17 @@ def test_build_derived_notice_and_autorenew():
     assert by_kind["expiration"]["due_date"] == "2027-12-01"
     assert by_kind["notice_window"]["due_date"] == "2027-09-02"
     assert by_kind["auto_renew"]["due_date"] == "2027-09-02"
-    assert by_kind["payment"]["due_date"] == "2026-09-01"
+    assert "payment" not in by_kind
 
 
-def test_build_derived_without_end_keeps_payment():
-    rows = build_derived_obligations(next_payment_date="2026-10-01")
-    assert len(rows) == 1
-    assert rows[0]["kind"] == "payment"
+def test_build_derived_ignores_payment_date():
+    assert build_derived_obligations(next_payment_date="2026-10-01") == []
+
+
+def test_normalize_extracted_skips_payment():
+    assert (
+        normalize_extracted_obligations(
+            [{"kind": "payment", "due_date": "2026-10-01", "notes": "Rent"}]
+        )
+        == []
+    )

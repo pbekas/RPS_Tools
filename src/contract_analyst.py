@@ -39,7 +39,7 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
   "summary": "string — 3-6 sentence neutral summary of the agreement",
   "obligations": [
     {
-      "kind": "rent_escalation | insurance_coi | personal_guarantee | payment | notice_window | auto_renew | expiration | other",
+      "kind": "rent_escalation | insurance_coi | personal_guarantee | notice_window | auto_renew | expiration | other",
       "title": "short label",
       "due_date": "YYYY-MM-DD or null",
       "notes": "what must happen / amount / clause reference"
@@ -58,7 +58,7 @@ Rules:
 - cost_amount should be the best estimate of amount due per cost_frequency (e.g. monthly rent, annual SaaS fee).
 - If multiple fees exist, put the primary recurring obligation in cost_amount and explain others in cost_notes.
 - document_role: original/master agreement vs amendment, assignment, sublease, addendum, or renewal. Use standalone only when unclear.
-- obligations should include dated duties beyond base rent: rent escalations/bumps, insurance/COI renewals, personal guarantees, option/notice windows, and extra payment dates. Omit items with no date and no useful note.
+- obligations should include dated duties beyond base rent: rent escalations/bumps, insurance/COI renewals, personal guarantees, and option/notice windows. Do not include routine rent/payment dates (those belong in next_payment_date / cost fields). Omit items with no date and no useful note.
 - confidence should be lower when key dates or counterparty are missing/ambiguous.
 """
 

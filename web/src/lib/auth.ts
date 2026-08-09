@@ -95,7 +95,6 @@ export const authOptions: NextAuthOptions = {
                 role: "Admin",
               });
             }
-            await setUserModules(email, [...ALL_TOOLSET_IDS]);
           } else if (!Array.isArray(existing.modules) || !existing.modules.length) {
             await setUserModules(email, ["call_qa"]);
           }

@@ -28,6 +28,24 @@ export type Vendor = {
   updated_at?: string;
   contact_count?: number;
   contract_count?: number;
+  document_count?: number;
+};
+
+export const VENDOR_DOC_KINDS = ["w9", "coi", "insurance", "other"] as const;
+export type VendorDocKind = (typeof VENDOR_DOC_KINDS)[number];
+
+export type VendorDocument = {
+  id: string;
+  vendor_id: string;
+  doc_kind: VendorDocKind;
+  title: string;
+  s3_key: string;
+  s3_uri?: string;
+  original_filename?: string;
+  content_type?: string;
+  byte_size?: number | null;
+  uploaded_by?: string | null;
+  created_at?: string;
 };
 
 export type VendorContact = {
@@ -63,6 +81,10 @@ export const OBLIGATION_KINDS = [
   "payment",
   "other",
 ] as const;
+
+export const CALENDAR_OBLIGATION_KINDS = OBLIGATION_KINDS.filter(
+  (kind) => kind !== "payment"
+);
 
 export type ObligationKind = (typeof OBLIGATION_KINDS)[number];
 
@@ -178,6 +200,7 @@ export type ContractListFilters = {
   status?: string;
   expiringSoon?: boolean;
   needsReview?: boolean;
+  allowedGroupIds?: string[] | null;
   limit?: number;
   offset?: number;
 };

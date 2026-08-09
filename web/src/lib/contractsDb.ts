@@ -16,7 +16,10 @@ import type {
   ObligationStatus,
   Vendor,
   VendorContact,
+  VendorDocKind,
+  VendorDocument,
 } from "@/lib/contractTypes";
+import { VENDOR_DOC_KINDS } from "@/lib/contractTypes";
 import {
   FAMILY_ROLES,
   OBLIGATION_KINDS,
@@ -39,6 +42,8 @@ export type {
   ObligationStatus,
   Vendor,
   VendorContact,
+  VendorDocKind,
+  VendorDocument,
 } from "@/lib/contractTypes";
 export {
   FAMILY_ROLES,
@@ -265,7 +270,8 @@ export async function listVendors(input?: {
     `SELECT v.*,
             (SELECT count(*)::int FROM vendor_contacts c WHERE c.vendor_id = v.id) AS contact_count,
             (SELECT count(*)::int FROM contracts ct
-              WHERE ct.vendor_id = v.id AND ct.deleted_at IS NULL) AS contract_count
+              WHERE ct.vendor_id = v.id AND ct.deleted_at IS NULL) AS contract_count,
+            (SELECT count(*)::int FROM vendor_documents d WHERE d.vendor_id = v.id) AS document_count
      FROM vendors v
      ${whereSql}
      ORDER BY v.name ASC
@@ -277,7 +283,17 @@ export async function listVendors(input?: {
 
 export async function getVendor(id: string): Promise<Vendor | null> {
   requirePostgres();
-  const rows = await query("SELECT * FROM vendors WHERE id = $1 LIMIT 1", [id]);
+  const rows = await query(
+    `SELECT v.*,
+            (SELECT count(*)::int FROM vendor_contacts c WHERE c.vendor_id = v.id) AS contact_count,
+            (SELECT count(*)::int FROM contracts ct
+              WHERE ct.vendor_id = v.id AND ct.deleted_at IS NULL) AS contract_count,
+            (SELECT count(*)::int FROM vendor_documents d WHERE d.vendor_id = v.id) AS document_count
+     FROM vendors v
+     WHERE v.id = $1
+     LIMIT 1`,
+    [id]
+  );
   return rows[0] ? serializeRow<Vendor>(rows[0]) : null;
 }
 
@@ -401,6 +417,72 @@ export async function deleteVendorContact(id: string): Promise<void> {
   await query("DELETE FROM vendor_contacts WHERE id = $1", [id]);
 }
 
+function isVendorDocKind(value: string): value is VendorDocKind {
+  return (VENDOR_DOC_KINDS as readonly string[]).includes(value);
+}
+
+export async function listVendorDocuments(vendorId: string): Promise<VendorDocument[]> {
+  requirePostgres();
+  const rows = await query(
+    `SELECT * FROM vendor_documents
+     WHERE vendor_id = $1
+     ORDER BY created_at DESC`,
+    [vendorId]
+  );
+  return rows.map((row) => serializeRow<VendorDocument>(row));
+}
+
+export async function getVendorDocument(id: string): Promise<VendorDocument | null> {
+  requirePostgres();
+  const rows = await query(
+    "SELECT * FROM vendor_documents WHERE id = $1 LIMIT 1",
+    [id]
+  );
+  return rows[0] ? serializeRow<VendorDocument>(rows[0]) : null;
+}
+
+export async function createVendorDocument(input: {
+  vendor_id: string;
+  doc_kind?: string;
+  title?: string;
+  s3_key: string;
+  s3_uri: string;
+  original_filename: string;
+  content_type?: string;
+  byte_size?: number;
+  uploaded_by?: string | null;
+}): Promise<VendorDocument> {
+  requirePostgres();
+  const kind = input.doc_kind && isVendorDocKind(input.doc_kind) ? input.doc_kind : "other";
+  const title =
+    (input.title || "").trim() ||
+    input.original_filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() ||
+    kind.toUpperCase();
+  const rows = await query(
+    `INSERT INTO vendor_documents (
+       vendor_id, doc_kind, title, s3_key, s3_uri, original_filename, content_type, byte_size, uploaded_by
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      input.vendor_id,
+      kind,
+      title,
+      input.s3_key,
+      input.s3_uri,
+      input.original_filename,
+      input.content_type || "application/pdf",
+      input.byte_size ?? null,
+      input.uploaded_by || null,
+    ]
+  );
+  return serializeRow<VendorDocument>(rows[0]);
+}
+
+export async function deleteVendorDocument(id: string): Promise<void> {
+  requirePostgres();
+  await query("DELETE FROM vendor_documents WHERE id = $1", [id]);
+}
+
 const CONTRACT_LIST_COLUMNS = `
   c.id, c.title, c.vendor_id, c.entity_id, c.group_id, c.family_id, c.family_role,
   c.effective_date, c.has_defined_term, c.term_end_date, c.expiration_date,
@@ -419,6 +501,9 @@ export async function listContracts(
   filters: ContractListFilters = {}
 ): Promise<{ contracts: Contract[]; total: number }> {
   requirePostgres();
+  if (Array.isArray(filters.allowedGroupIds) && filters.allowedGroupIds.length === 0) {
+    return { contracts: [], total: 0 };
+  }
   const params: unknown[] = [];
   const where: string[] = ["c.deleted_at IS NULL"];
   const searchText = filters.q?.trim() || "";
@@ -443,6 +528,10 @@ export async function listContracts(
   if (filters.groupId) {
     params.push(filters.groupId);
     where.push(`c.group_id = $${params.length}`);
+  }
+  if (filters.allowedGroupIds?.length) {
+    params.push(filters.allowedGroupIds);
+    where.push(`c.group_id = ANY($${params.length}::uuid[])`);
   }
   if (filters.vendorId) {
     params.push(filters.vendorId);
@@ -775,15 +864,6 @@ export async function syncDerivedObligations(contractId: string): Promise<void> 
       });
     }
   }
-  if (contract.next_payment_date) {
-    derived.push({
-      kind: "payment",
-      title: "Next payment",
-      due_date: contract.next_payment_date.slice(0, 10),
-      notes: "",
-    });
-  }
-
   const keep = derived.map((item) => item.kind);
   if (keep.length) {
     await query(
@@ -836,6 +916,7 @@ export type ObligationListFilters = {
   status?: "open" | "done" | "dismissed" | "snoozed" | "overdue" | "upcoming";
   from?: string;
   to?: string;
+  allowedGroupIds?: string[] | null;
   limit?: number;
 };
 
@@ -843,8 +924,11 @@ export async function listContractObligations(
   filters: ObligationListFilters = {}
 ): Promise<ContractObligation[]> {
   requirePostgres();
+  if (Array.isArray(filters.allowedGroupIds) && filters.allowedGroupIds.length === 0) {
+    return [];
+  }
   const params: unknown[] = [];
-  const where = ["ct.deleted_at IS NULL"];
+  const where = ["ct.deleted_at IS NULL", "o.kind <> 'payment'"];
   if (filters.contractId) {
     params.push(filters.contractId);
     where.push(`o.contract_id = $${params.length}`);
@@ -856,6 +940,10 @@ export async function listContractObligations(
   if (filters.entityId) {
     params.push(filters.entityId);
     where.push(`ct.entity_id = $${params.length}`);
+  }
+  if (filters.allowedGroupIds?.length) {
+    params.push(filters.allowedGroupIds);
+    where.push(`ct.group_id = ANY($${params.length}::uuid[])`);
   }
   if (filters.ownerEmail) {
     params.push(filters.ownerEmail);
