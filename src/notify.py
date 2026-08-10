@@ -121,6 +121,94 @@ def alert_critical_flags(
             logger.exception("Failed to stamp critical_alert_sent_at")
     return sent
 
+def alert_missed_call(
+    *,
+    log_id: str,
+    direction: str | None,
+    result: str | None,
+    from_number: str | None,
+    to_number: str | None = None,
+    agent_name: str | None = None,
+    extension: str | None = None,
+    start: datetime | None = None,
+    is_missed: bool | None = None,
+    max_age_minutes: int | None = None,
+) -> bool:
+    """Post one Google Chat alert per missed inbound CDR (deduped by log id)."""
+    settings = get_settings()
+    if not settings.alerts_enabled:
+        return False
+
+    from src.twilio_sms import (
+        call_is_recent_enough,
+        is_qualifying_missed_inbound,
+    )
+
+    if not is_qualifying_missed_inbound(
+        direction=direction, result=result, is_missed=is_missed
+    ):
+        return False
+
+    age_limit = (
+        max_age_minutes
+        if max_age_minutes is not None
+        else max(1, int(settings.missed_alert_max_age_minutes))
+    )
+    if not call_is_recent_enough(start, max_age_minutes=age_limit):
+        return False
+
+    cid = (log_id or "").strip()
+    if not cid:
+        return False
+
+    key = f"missed_call_{cid}"
+    try:
+        from src import database as db
+
+        # Long cooldown: re-sync of the same CDR must not re-alert.
+        if db.alert_recently_sent(key, cooldown_minutes=7 * 24 * 60):
+            return False
+    except Exception:
+        logger.exception("Missed-call alert dedup failed")
+
+    agent = (agent_name or "").strip() or "Unknown"
+    ext = (extension or "").strip()
+    if ext and ext not in agent:
+        agent = f"{agent} (ext {ext})"
+    when = ""
+    if isinstance(start, datetime):
+        aware = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
+        when = aware.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    ops = f"{settings.app_url.rstrip('/')}/ops?days=1"
+    result_label = (result or "missed").strip() or "missed"
+    result_l = result_label.lower()
+    if "voicemail" in result_l or "voice mail" in result_l:
+        headline = "Inbound voicemail"
+    elif "abandon" in result_l:
+        headline = "Abandoned inbound call"
+    else:
+        headline = "Missed inbound call"
+    text = (
+        f"*{headline}*\n"
+        f"From: {_format_phone(from_number)}\n"
+        f"To: {(to_number or '').strip() or '—'}\n"
+        f"Agent / ext: {agent}\n"
+        f"Result: {result_label}\n"
+        f"When: {when or 'unknown'}\n"
+        f"Call ops: {ops}"
+    )
+    sent = notify_gchat(text)
+    if sent:
+        try:
+            from src import database as db
+
+            db.mark_alert_sent(key)
+        except Exception:
+            logger.exception("Failed to stamp missed-call alert_state")
+    return sent
+
+
 def alert_missed_spike(
     *,
     window_minutes: int,
@@ -128,6 +216,7 @@ def alert_missed_spike(
     threshold: int,
     answered_count: int,
 ) -> bool:
+    """Optional volume spike summary (kept for ops; per-call alerts are primary)."""
     settings = get_settings()
     if not settings.alerts_enabled:
         return False

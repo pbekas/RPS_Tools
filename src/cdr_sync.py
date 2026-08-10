@@ -54,6 +54,7 @@ def sync_call_logs(
         "missed": 0,
         "unrecorded": 0,
         "missed_sms_sent": 0,
+        "missed_alerts_sent": 0,
         "errors": [],
         "window_start": start_gte.isoformat(),
         "window_end": start_lte.isoformat(),
@@ -109,6 +110,32 @@ def sync_call_logs(
                 summary["missed_sms_sent"] += 1
         except Exception:
             logger.exception("Missed-call SMS hook failed for %s", log.log_id)
+
+        # Best-effort Google Chat alert for every missed inbound CDR.
+        try:
+            from src.notify import alert_missed_call
+
+            agent_name = (
+                log.destination_user_full_name
+                or log.destination_user
+                or log.source_user_full_name
+                or log.source_user
+            )
+            extension = log.destination_extension or log.source_extension
+            if alert_missed_call(
+                log_id=log.log_id,
+                direction=log.direction,
+                result=log.result,
+                from_number=log.from_number,
+                to_number=log.to_number,
+                agent_name=agent_name,
+                extension=extension,
+                start=log.start,
+                is_missed=log.is_missed,
+            ):
+                summary["missed_alerts_sent"] += 1
+        except Exception:
+            logger.exception("Missed-call Chat alert failed for %s", log.log_id)
 
     _maybe_alert_missed_spike(summary)
     return summary

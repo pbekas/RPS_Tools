@@ -35,10 +35,11 @@ Optional env:
 | `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
 | `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
 | `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
-| `GCHAT_WEBHOOK_URL` | empty | Google Chat incoming webhook for critical-flag + missed-call alerts |
+| `GCHAT_WEBHOOK_URL` | empty | Google Chat webhook for critical flags + each missed/abandoned/**voicemail** inbound CDR |
 | `GCHAT_CONTRACTS_WEBHOOK_URL` | empty | Optional separate Chat webhook for contract expiry (never uses the call webhook) |
-| `MISSED_ALERT_THRESHOLD` | `8` | Missed/non-answered CDRs in window before G Chat alert |
-| `MISSED_ALERT_WINDOW_MINUTES` | `30` | Rolling window for missed-call spike alerts |
+| `MISSED_ALERT_MAX_AGE_MINUTES` | `120` | Skip Chat alerts for older CDRs (avoids noise on backfill) |
+| `MISSED_ALERT_THRESHOLD` | `8` | Optional spike summary: missed/non-answered CDRs in window |
+| `MISSED_ALERT_WINDOW_MINUTES` | `30` | Rolling window for optional missed-call spike summary |
 | `TWILIO_MISSED_SMS_ENABLED` | off | SMS the caller on missed **inbound** CDRs (needs Twilio creds) |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | empty | Twilio REST credentials + From number (E.164) |
 | `TWILIO_MISSED_SMS_COOLDOWN_MINUTES` | `90` | Per-number dedup window (`alert_state`) |
