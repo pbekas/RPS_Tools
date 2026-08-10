@@ -574,9 +574,25 @@ export async function listContracts(
          'MaxWords=28, MinWords=10, ShortWord=2, MaxFragments=1'
        ) AS search_snippet`
     : `, NULL::text AS search_snippet`;
-  const orderSql = searchParam
-    ? `ORDER BY ts_rank_cd(c.search_tsv, websearch_to_tsquery('english', $${searchParam})) DESC, c.created_at DESC`
-    : `ORDER BY c.created_at DESC`;
+  const sortMap: Record<string, string> = {
+    title: "lower(c.title)",
+    entity: "lower(coalesce(e.name, ''))",
+    vendor: "lower(coalesce(v.name, ''))",
+    group: "lower(coalesce(g.name, ''))",
+    effective: "c.effective_date",
+    expires: "coalesce(c.expiration_date, c.term_end_date)",
+    cost: "c.cost_amount",
+    status: "c.status",
+    created: "c.created_at",
+  };
+  const sortCol = sortMap[filters.sort || ""] || "";
+  const sortDir = filters.dir === "asc" ? "ASC" : "DESC";
+  let orderSql = "ORDER BY c.created_at DESC";
+  if (sortCol) {
+    orderSql = `ORDER BY ${sortCol} ${sortDir} NULLS LAST, c.created_at DESC`;
+  } else if (searchParam) {
+    orderSql = `ORDER BY ts_rank_cd(c.search_tsv, websearch_to_tsquery('english', $${searchParam})) DESC, c.created_at DESC`;
+  }
 
   const countRows = await query(
     `SELECT count(*)::int AS total

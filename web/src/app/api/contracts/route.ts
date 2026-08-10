@@ -20,6 +20,8 @@ export async function GET(req: Request) {
       expiringSoon: searchParams.get("expiringSoon") === "1",
       needsReview: searchParams.get("needsReview") === "1",
       allowedGroupIds: access.allowedGroupIds,
+      sort: searchParams.get("sort") || undefined,
+      dir: searchParams.get("dir") === "asc" ? "asc" : searchParams.get("dir") === "desc" ? "desc" : undefined,
       limit: Number(searchParams.get("limit") || 100),
       offset: Number(searchParams.get("offset") || 0),
     });

@@ -201,6 +201,8 @@ export type ContractListFilters = {
   expiringSoon?: boolean;
   needsReview?: boolean;
   allowedGroupIds?: string[] | null;
+  sort?: string;
+  dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 };

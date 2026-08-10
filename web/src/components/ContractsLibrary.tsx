@@ -1,9 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { Contract, ContractEntity, ContractGroup, Vendor } from "@/lib/contractTypes";
 import { familyRoleLabel } from "@/lib/contractLabels";
+
+export type LibraryFilters = {
+  q: string;
+  groupId: string;
+  vendorId: string;
+  entityId: string;
+  status: string;
+  expiringSoon: boolean;
+  needsReview: boolean;
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+};
+
+const SORTABLE: Array<{ key: string; label: string; className: string }> = [
+  { key: "title", label: "Contract", className: "w-[28%]" },
+  { key: "entity", label: "Our company", className: "w-[14%]" },
+  { key: "vendor", label: "Vendor", className: "w-[16%]" },
+  { key: "group", label: "Group", className: "w-[10%]" },
+  { key: "effective", label: "Effective", className: "w-[9%]" },
+  { key: "expires", label: "Expires / term", className: "w-[10%]" },
+  { key: "cost", label: "Cost", className: "w-[8%]" },
+  { key: "status", label: "Status", className: "w-[8%]" },
+];
 
 function statusClass(status: string) {
   switch (status) {
@@ -49,71 +74,122 @@ function formatMoney(amount?: number | null, currency = "USD") {
 export function ContractsLibrary({
   initialContracts,
   initialTotal,
+  initialFilters,
+  pageSize,
   groups,
   vendors,
   entities,
 }: {
   initialContracts: Contract[];
   initialTotal: number;
+  initialFilters: LibraryFilters;
+  pageSize: number;
   groups: ContractGroup[];
   vendors: Vendor[];
   entities: ContractEntity[];
 }) {
+  const router = useRouter();
   const [contracts, setContracts] = useState(initialContracts);
   const [total, setTotal] = useState(initialTotal);
-  const [q, setQ] = useState("");
-  const [groupId, setGroupId] = useState("");
-  const [vendorId, setVendorId] = useState("");
-  const [entityId, setEntityId] = useState("");
-  const [status, setStatus] = useState("");
-  const [expiringSoon, setExpiringSoon] = useState(false);
-  const [needsReview, setNeedsReview] = useState(false);
+  const [q, setQ] = useState(initialFilters.q);
+  const [groupId, setGroupId] = useState(initialFilters.groupId);
+  const [vendorId, setVendorId] = useState(initialFilters.vendorId);
+  const [entityId, setEntityId] = useState(initialFilters.entityId);
+  const [status, setStatus] = useState(initialFilters.status);
+  const [expiringSoon, setExpiringSoon] = useState(initialFilters.expiringSoon);
+  const [needsReview, setNeedsReview] = useState(initialFilters.needsReview);
+  const [sort, setSort] = useState(initialFilters.sort);
+  const [dir, setDir] = useState<"asc" | "desc">(initialFilters.dir);
   const [message, setMessage] = useState("");
   const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setContracts(initialContracts);
+    setTotal(initialTotal);
+    setQ(initialFilters.q);
+    setGroupId(initialFilters.groupId);
+    setVendorId(initialFilters.vendorId);
+    setEntityId(initialFilters.entityId);
+    setStatus(initialFilters.status);
+    setExpiringSoon(initialFilters.expiringSoon);
+    setNeedsReview(initialFilters.needsReview);
+    setSort(initialFilters.sort);
+    setDir(initialFilters.dir);
+  }, [initialContracts, initialTotal, initialFilters]);
 
   const reviewCount = useMemo(
     () => contracts.filter((c) => c.status === "needs_review").length,
     [contracts]
   );
+  const page = Math.max(1, initialFilters.page || 1);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
 
-  function reload(next?: {
-    q?: string;
-    groupId?: string;
-    vendorId?: string;
-    entityId?: string;
-    status?: string;
-    expiringSoon?: boolean;
-    needsReview?: boolean;
-  }) {
-    startTransition(async () => {
-      const params = new URLSearchParams();
-      const query = next?.q ?? q;
-      const g = next?.groupId ?? groupId;
-      const v = next?.vendorId ?? vendorId;
-      const entity = next?.entityId ?? entityId;
-      const s = next?.status ?? status;
-      const exp = next?.expiringSoon ?? expiringSoon;
-      const review = next?.needsReview ?? needsReview;
-      if (query) params.set("q", query);
-      if (g) params.set("groupId", g);
-      if (v) params.set("vendorId", v);
-      if (entity) params.set("entityId", entity);
-      if (s) params.set("status", s);
-      if (exp) params.set("expiringSoon", "1");
-      if (review) params.set("needsReview", "1");
-      const res = await fetch(`/api/contracts?${params.toString()}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data.error || "Failed to load");
-        return;
-      }
-      setContracts(data.contracts || []);
-      setTotal(data.total || 0);
-      setMessage("");
+  function hrefFor(next: Partial<LibraryFilters>) {
+    const params = new URLSearchParams();
+    const query = next.q ?? q;
+    const g = next.groupId ?? groupId;
+    const v = next.vendorId ?? vendorId;
+    const entity = next.entityId ?? entityId;
+    const s = next.status ?? status;
+    const exp = next.expiringSoon ?? expiringSoon;
+    const review = next.needsReview ?? needsReview;
+    const nextSort = next.sort ?? sort;
+    const nextDir = next.dir ?? dir;
+    const nextPage = next.page ?? 1;
+    if (query) params.set("q", query);
+    if (g) params.set("groupId", g);
+    if (v) params.set("vendorId", v);
+    if (entity) params.set("entityId", entity);
+    if (s) params.set("status", s);
+    if (exp) params.set("expiringSoon", "1");
+    if (review) params.set("needsReview", "1");
+    if (nextSort) {
+      params.set("sort", nextSort);
+      params.set("dir", nextDir);
+    }
+    if (nextPage > 1) params.set("page", String(nextPage));
+    const qs = params.toString();
+    return qs ? `/contracts?${qs}` : "/contracts";
+  }
+
+  function navigate(next: Partial<LibraryFilters>) {
+    startTransition(() => {
+      router.push(hrefFor(next));
     });
   }
 
-  async function acceptAll() {
+  function toggleSort(key: string) {
+    if (sort === key) {
+      navigate({ sort: key, dir: dir === "asc" ? "desc" : "asc", page: 1 });
+      return;
+    }
+    navigate({
+      sort: key,
+      dir: key === "title" || key === "entity" || key === "vendor" || key === "group" ? "asc" : "desc",
+      page: 1,
+    });
+  }
+
+  function removeAgreement(contract: Contract) {
+    const label = contract.title || contract.original_filename || "this agreement";
+    if (!window.confirm(`Delete “${label}”? It will leave the library. This can’t be undone.`)) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await fetch(`/api/contracts/${contract.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(data.error || "Could not delete agreement");
+        return;
+      }
+      setMessage("Agreement deleted");
+      router.refresh();
+    });
+  }
+
+  function acceptAll() {
     startTransition(async () => {
       const acceptRes = await fetch("/api/contracts", {
         method: "POST",
@@ -126,8 +202,7 @@ export function ContractsLibrary({
         return;
       }
       setMessage(`Accepted ${data.count || 0} contract(s)`);
-      setNeedsReview(false);
-      reload({ needsReview: false });
+      router.push(hrefFor({ needsReview: false, page: 1 }));
     });
   }
 
@@ -167,7 +242,7 @@ export function ContractsLibrary({
         className="mb-6 grid gap-3 rounded-2xl border border-line bg-white/70 p-4 sm:grid-cols-2 lg:grid-cols-7"
         onSubmit={(e) => {
           e.preventDefault();
-          reload();
+          navigate({ page: 1 });
         }}
       >
         <input
@@ -256,29 +331,44 @@ export function ContractsLibrary({
           >
             {pending ? "Loading…" : "Apply filters"}
           </button>
-          <span className="text-sm text-ink-soft">{total} contracts</span>
+          <span className="text-sm text-ink-soft">
+            {total ? `${from}–${to} of ${total}` : "0 contracts"}
+          </span>
           {message ? <span className="text-sm text-warn">{message}</span> : null}
         </div>
       </form>
 
       <div className="overflow-x-auto rounded-2xl border border-line bg-white/80">
-        <table className="min-w-full text-left text-sm">
+        <table className="min-w-full table-fixed text-left text-sm">
           <thead className="border-b border-line bg-wash/60 text-ink-soft">
             <tr>
-              <th className="px-4 py-3 font-semibold">Contract</th>
-              <th className="px-4 py-3 font-semibold">Our company</th>
-              <th className="px-4 py-3 font-semibold">Vendor</th>
-              <th className="px-4 py-3 font-semibold">Group</th>
-              <th className="px-4 py-3 font-semibold">Effective</th>
-              <th className="px-4 py-3 font-semibold">Expires / term</th>
-              <th className="px-4 py-3 font-semibold">Cost</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
+              {SORTABLE.map((col) => {
+                const active = sort === col.key;
+                const arrow = !active ? "↕" : dir === "asc" ? "↑" : "↓";
+                return (
+                  <th key={col.key} className={`${col.className} px-3 py-2 font-semibold`}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      className={`inline-flex items-center gap-1 hover:text-ink ${
+                        active ? "text-ink" : ""
+                      }`}
+                    >
+                      {col.label}
+                      <span className="text-[10px] font-semibold">{arrow}</span>
+                    </button>
+                  </th>
+                );
+              })}
+              <th className="px-3 py-2 font-semibold">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {contracts.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-ink-soft">
+                <td colSpan={9} className="px-4 py-10 text-center text-ink-soft">
                   No contracts yet.{" "}
                   <Link href="/contracts/upload" className="font-semibold text-accent">
                     Upload a folder of PDFs
@@ -289,51 +379,60 @@ export function ContractsLibrary({
             ) : (
               contracts.map((c) => (
                 <tr key={c.id} className="border-b border-line/70 last:border-0">
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-1.5">
                     <Link
                       href={`/contracts/${c.id}`}
-                      className="font-semibold text-ink hover:text-accent"
+                      className="block truncate text-sm font-semibold leading-tight text-ink hover:text-accent"
                     >
                       {c.title || c.original_filename || "Untitled"}
                     </Link>
-                    <div className="text-xs text-ink-soft">
-                      {c.family_role && c.family_role !== "standalone"
-                        ? `${familyRoleLabel(c.family_role)} · `
-                        : ""}
-                      {c.original_filename}
-                    </div>
+                    {c.family_role && c.family_role !== "standalone" ? (
+                      <div className="truncate text-[11px] text-ink-soft">
+                        {familyRoleLabel(c.family_role)}
+                      </div>
+                    ) : null}
                     {c.search_snippet ? (
-                      <div className="mt-1 text-xs text-ink-soft">
+                      <div className="mt-0.5 truncate text-[11px] text-ink-soft">
                         {stripSnippet(c.search_snippet)}
                       </div>
                     ) : null}
                   </td>
-                  <td className="px-4 py-3 text-ink-soft">{c.entity_name || "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">{c.vendor_name || "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">{c.group_name || "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">
+                  <td className="truncate px-3 py-1.5 text-sm text-ink">
+                    {c.entity_name || "—"}
+                  </td>
+                  <td className="truncate px-3 py-1.5 text-sm text-ink">
+                    {c.vendor_name || "—"}
+                  </td>
+                  <td className="truncate px-3 py-1.5 text-sm text-ink">
+                    {c.group_name || "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-sm text-ink-soft">
                     {formatDate(c.effective_date)}
                   </td>
-                  <td className="px-4 py-3 text-ink-soft">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-sm text-ink-soft">
                     {formatDate(c.expiration_date || c.term_end_date)}
-                    {c.notice_period_days != null ? (
-                      <div className="text-xs">{c.notice_period_days}d notice</div>
-                    ) : null}
                   </td>
-                  <td className="px-4 py-3 text-ink-soft">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-sm text-ink-soft">
                     {formatMoney(c.cost_amount, c.cost_currency)}
-                    {c.cost_frequency && c.cost_frequency !== "unknown" ? (
-                      <div className="text-xs">{c.cost_frequency}</div>
-                    ) : null}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-1.5">
                     <span
-                      className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold ${statusClass(
+                      className={`inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${statusClass(
                         c.status
                       )}`}
                     >
                       {c.status}
                     </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => removeAgreement(c)}
+                      className="text-[11px] font-semibold text-fail hover:underline disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))
@@ -341,6 +440,30 @@ export function ContractsLibrary({
           </tbody>
         </table>
       </div>
+
+      {pageCount > 1 ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            disabled={pending || page <= 1}
+            onClick={() => navigate({ page: page - 1 })}
+            className="rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-soft hover:bg-wash disabled:opacity-60"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-ink-soft">
+            Page {page} of {pageCount}
+          </span>
+          <button
+            type="button"
+            disabled={pending || page >= pageCount}
+            onClick={() => navigate({ page: page + 1 })}
+            className="rounded-lg border border-line px-3 py-1.5 text-sm font-semibold text-ink-soft hover:bg-wash disabled:opacity-60"
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
