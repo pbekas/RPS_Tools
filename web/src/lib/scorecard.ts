@@ -67,6 +67,14 @@ type Identity = {
   extension: string | null;
 };
 
+function isScorecardUser(u: UserDoc): boolean {
+  const email = (u.email || "").trim().toLowerCase();
+  if (!email || u.active === false) return false;
+  if (email.startsWith("unmapped.") || u.provisional) return false;
+  if ((u.role || "Agent").toLowerCase() === "admin") return false;
+  return true;
+}
+
 function buildUserIndex(users: UserDoc[]): {
   byEmail: Map<string, UserDoc>;
   candidates: Array<{ email: string; name: string; local: string }>;
@@ -74,9 +82,8 @@ function buildUserIndex(users: UserDoc[]): {
   const byEmail = new Map<string, UserDoc>();
   const candidates: Array<{ email: string; name: string; local: string }> = [];
   for (const u of users) {
-    if (u.active === false) continue;
+    if (!isScorecardUser(u)) continue;
     const email = (u.email || "").trim().toLowerCase();
-    if (!email) continue;
     byEmail.set(email, u);
     candidates.push({
       email,
@@ -87,20 +94,23 @@ function buildUserIndex(users: UserDoc[]): {
   return { byEmail, candidates };
 }
 
+/** Resolve a CDR party to a known users-table agent, or null if unmapped. */
 function resolveIdentity(
   party: ReturnType<typeof partyFromLog>,
   log: CallLogDoc,
   callsById: Map<string, CallDoc>,
+  byEmail: Map<string, UserDoc>,
   candidates: Array<{ email: string; name: string; local: string }>
-): Identity {
+): Identity | null {
   const matchedId = (log.matched_call_id || "").trim();
   if (matchedId) {
     const call = callsById.get(matchedId);
     const email = (call?.agent_email || "").trim().toLowerCase();
-    if (email) {
+    if (email && byEmail.has(email)) {
+      const user = byEmail.get(email)!;
       return {
         key: `email:${email}`,
-        name: (call?.agent_name || "").trim() || party.name,
+        name: (user.name || call?.agent_name || "").trim() || party.name,
         email,
         extension: party.extension,
       };
@@ -122,12 +132,7 @@ function resolveIdentity(
     }
   }
 
-  return {
-    key: `cdr:${party.key}`,
-    name: party.name,
-    email: null,
-    extension: party.extension,
-  };
+  return null;
 }
 
 function median(values: number[]): number | null {
@@ -150,10 +155,6 @@ function assignTier(rows: AgentScorecardRow[]): void {
   const qMed = median(qualities) ?? 7.5;
 
   for (const row of rows) {
-    if (!row.email) {
-      row.tier = "unmapped";
-      continue;
-    }
     const thin = row.cdrCalls < 3 && row.qaCalls < 2;
     if (thin) {
       row.tier = "solid";
@@ -249,7 +250,14 @@ export function buildAgentScorecard(input: {
 
   for (const log of input.logs) {
     const party = partyFromLog(log);
-    const identity = resolveIdentity(party, log, callsById, candidates);
+    const identity = resolveIdentity(
+      party,
+      log,
+      callsById,
+      byEmail,
+      candidates
+    );
+    if (!identity) continue;
     const row = ensure(identity);
     row.partyKeys.add(party.key);
     row.cdrCalls += 1;
@@ -265,26 +273,21 @@ export function buildAgentScorecard(input: {
   for (const call of input.calls) {
     const email = (call.agent_email || "").trim().toLowerCase();
     const name = (call.agent_name || "").trim() || email || "Unknown";
-    let key: string;
-    let identityEmail: string | null = email || null;
+    let identityEmail: string | null = null;
 
-    if (email) {
-      key = `email:${email}`;
+    if (email && byEmail.has(email)) {
+      identityEmail = email;
     } else {
-      // Try to attach unnamed QA to a user by agent_name
+      // Attach unnamed / provisional QA only when it matches a users-table agent.
       const match = candidates.find(
         (c) => namesMatch(name, c.name) || namesMatch(name, c.local)
       );
-      if (match) {
-        key = `email:${match.email}`;
-        identityEmail = match.email;
-      } else {
-        key = `qa:${name.toLowerCase()}`;
-      }
+      if (match) identityEmail = match.email;
     }
+    if (!identityEmail) continue;
 
     const row = ensure({
-      key,
+      key: `email:${identityEmail}`,
       name,
       email: identityEmail,
       extension: null,
@@ -306,7 +309,12 @@ export function buildAgentScorecard(input: {
   }
 
   const rows: AgentScorecardRow[] = [...map.values()]
-    .filter((r) => r.cdrCalls > 0 || r.qaCalls > 0)
+    .filter(
+      (r) =>
+        !!r.email &&
+        byEmail.has(r.email) &&
+        (r.cdrCalls > 0 || r.qaCalls > 0)
+    )
     .map((r) => ({
       key: r.key,
       name: r.name,

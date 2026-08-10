@@ -139,7 +139,6 @@ export function AgentScorecard({
 }: Props) {
   const rockStars = rows.filter((r) => r.tier === "rock_star").length;
   const needsCoach = rows.filter((r) => r.tier === "coach").length;
-  const unmapped = rows.filter((r) => r.tier === "unmapped").length;
 
   return (
     <section className="mb-8 rounded-xl border border-line bg-white/80">
@@ -147,8 +146,8 @@ export function AgentScorecard({
         <div>
           <h2 className="font-display text-xl text-ink">Agent scorecard</h2>
           <p className="text-xs text-ink-soft">
-            CDR access + QA quality joined by name / matched recording · last{" "}
-            {days} days. Click a row to filter the CDR log.
+            Mapped Workspace agents only · CDR access + QA quality · last {days}{" "}
+            days. Click a row to filter the CDR log.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-semibold">
@@ -158,11 +157,6 @@ export function AgentScorecard({
           <span className="rounded-full bg-red-100 px-2.5 py-1 text-fail">
             {needsCoach} need coach
           </span>
-          {unmapped ? (
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-warn">
-              {unmapped} unmapped
-            </span>
-          ) : null}
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -191,7 +185,7 @@ export function AgentScorecard({
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={10} className="px-3 py-8 text-center text-ink-soft">
-                  No agent activity in this window.
+                  No mapped agent activity in this window.
                 </td>
               </tr>
             ) : (
@@ -210,9 +204,9 @@ export function AgentScorecard({
         </table>
       </div>
       <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
-        Rock star = high answer rate + high quality + no critical flags (relative
-        to team). Coach = weak access, quality/empathy, FCR, or flag volume.
-        Unmapped = CDR person not matched to a Workspace agent yet.
+        Only agents in Users are listed. Rock star = high answer rate + high
+        quality + no critical flags (relative to team). Coach = weak access,
+        quality/empathy, FCR, or flag volume.
       </p>
     </section>
   );
