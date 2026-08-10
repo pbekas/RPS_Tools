@@ -13,7 +13,8 @@ class MissedCallAlertTests(unittest.TestCase):
     def _settings(self, **overrides: object) -> MagicMock:
         s = MagicMock()
         s.alerts_enabled = True
-        s.gchat_webhook_url = "https://example.test/webhook"
+        s.gchat_webhook_url = "https://example.test/critical"
+        s.gchat_missed_calls_webhook_url = "https://example.test/missed"
         s.app_url = "https://tool.example.com"
         s.missed_alert_max_age_minutes = 120
         for k, v in overrides.items():
@@ -71,7 +72,28 @@ class MissedCallAlertTests(unittest.TestCase):
         body = notify_gchat.call_args.args[0]
         self.assertIn("Missed inbound call", body)
         self.assertIn("Dayana Flores", body)
+        self.assertEqual(
+            notify_gchat.call_args.kwargs.get("webhook_url"),
+            "https://example.test/missed",
+        )
         mark.assert_called_once_with("missed_call_cdr-1")
+
+    @patch("src.notify.notify_gchat")
+    @patch("src.notify.get_settings")
+    def test_skips_without_missed_webhook(
+        self, get_settings: MagicMock, notify_gchat: MagicMock
+    ) -> None:
+        get_settings.return_value = self._settings(gchat_missed_calls_webhook_url="")
+        ok = alert_missed_call(
+            log_id="cdr-4",
+            direction="Inbound",
+            result="Missed",
+            from_number="7025551212",
+            start=datetime.now(timezone.utc),
+            is_missed=True,
+        )
+        self.assertFalse(ok)
+        notify_gchat.assert_not_called()
 
     @patch("src.notify.notify_gchat")
     @patch("src.notify.get_settings")

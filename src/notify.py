@@ -75,7 +75,8 @@ def alert_critical_flags(
     flags: list[dict[str, Any]],
 ) -> bool:
     settings = get_settings()
-    if not settings.alerts_enabled:
+    # Critical / medical flags always use the Call Alerts webhook only.
+    if not settings.alerts_enabled or not (settings.gchat_webhook_url or "").strip():
         return False
     triggered = [f for f in flags if f.get("triggered") is not False]
     if not triggered:
@@ -108,7 +109,7 @@ def alert_critical_flags(
         f"Agent: {agent}\n"
         f"Review: {review}"
     )
-    sent = notify_gchat(text)
+    sent = notify_gchat(text, webhook_url=settings.gchat_webhook_url)
     if sent:
         try:
             from src import database as db
@@ -134,9 +135,13 @@ def alert_missed_call(
     is_missed: bool | None = None,
     max_age_minutes: int | None = None,
 ) -> bool:
-    """Post one Google Chat alert per missed inbound CDR (deduped by log id)."""
+    """Post one Google Chat alert per missed inbound CDR (deduped by log id).
+
+    Uses GCHAT_MISSED_CALLS_WEBHOOK_URL only — never the critical Call Alerts webhook.
+    """
     settings = get_settings()
-    if not settings.alerts_enabled:
+    missed_url = (settings.gchat_missed_calls_webhook_url or "").strip()
+    if not settings.alerts_enabled or not missed_url:
         return False
 
     from src.twilio_sms import (
@@ -198,7 +203,7 @@ def alert_missed_call(
         f"When: {when or 'unknown'}\n"
         f"Call ops: {ops}"
     )
-    sent = notify_gchat(text)
+    sent = notify_gchat(text, webhook_url=missed_url)
     if sent:
         try:
             from src import database as db
@@ -216,9 +221,10 @@ def alert_missed_spike(
     threshold: int,
     answered_count: int,
 ) -> bool:
-    """Optional volume spike summary (kept for ops; per-call alerts are primary)."""
+    """Optional volume spike summary to the missed-calls Chat space."""
     settings = get_settings()
-    if not settings.alerts_enabled:
+    missed_url = (settings.gchat_missed_calls_webhook_url or "").strip()
+    if not settings.alerts_enabled or not missed_url:
         return False
     if missed_count < threshold:
         return False
@@ -244,7 +250,7 @@ def alert_missed_spike(
         f"Answered in window: {answered_count} · miss share ~{rate:.0f}%\n"
         f"Call ops: {ops}"
     )
-    return notify_gchat(text)
+    return notify_gchat(text, webhook_url=missed_url)
 
 
 def alert_contract_expiry(

@@ -364,6 +364,9 @@ class RpsCallQaStack(Stack):
                 "GCHAT_WEBHOOK_URL": ecs.Secret.from_secrets_manager(
                     app_secret, "GCHAT_WEBHOOK_URL"
                 ),
+                "GCHAT_MISSED_CALLS_WEBHOOK_URL": ecs.Secret.from_secrets_manager(
+                    app_secret, "GCHAT_MISSED_CALLS_WEBHOOK_URL"
+                ),
                 "OPS_INTERNAL_TOKEN": ecs.Secret.from_secrets_manager(
                     app_secret, "OPS_INTERNAL_TOKEN"
                 ),

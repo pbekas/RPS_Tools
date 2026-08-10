@@ -46,6 +46,7 @@ class Settings:
     webhook_port: int
     allowed_email_domain: str
     gchat_webhook_url: str
+    gchat_missed_calls_webhook_url: str
     gchat_contracts_webhook_url: str
     alerts_enabled: bool
     contract_alerts_enabled: bool
@@ -122,10 +123,15 @@ class Settings:
         self.firebase_service_account = self._parse_service_account(
             os.getenv("FIREBASE_SERVICE_ACCOUNT", "")
         )
-        # Outbound alerts (Google Chat incoming webhook)
+        # Outbound alerts (Google Chat incoming webhooks)
         self.gchat_webhook_url = (
             os.getenv("GCHAT_WEBHOOK_URL", "").strip()
             or os.getenv("GOOGLE_CHAT_WEBHOOK_URL", "").strip()
+        )
+        # Missed / abandoned / voicemail CDRs — separate Chat space from critical flags
+        self.gchat_missed_calls_webhook_url = (
+            os.getenv("GCHAT_MISSED_CALLS_WEBHOOK_URL", "").strip()
+            or os.getenv("GCHAT_MISSED_WEBHOOK_URL", "").strip()
         )
         self.gchat_contracts_webhook_url = (
             os.getenv("GCHAT_CONTRACTS_WEBHOOK_URL", "").strip()
@@ -135,7 +141,7 @@ class Settings:
             "true",
             "yes",
             "on",
-        } and bool(self.gchat_webhook_url)
+        } and bool(self.gchat_webhook_url or self.gchat_missed_calls_webhook_url)
         self.contract_alerts_enabled = os.getenv(
             "CONTRACT_ALERTS_ENABLED", "1"
         ).strip().lower() in {"1", "true", "yes", "on"}

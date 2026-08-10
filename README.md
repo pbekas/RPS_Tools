@@ -35,7 +35,8 @@ Optional env:
 | `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
 | `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
 | `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
-| `GCHAT_WEBHOOK_URL` | empty | Google Chat webhook for critical flags + each missed/abandoned/**voicemail** inbound CDR |
+| `GCHAT_WEBHOOK_URL` | empty | Google Chat webhook for **critical / medical** Call Alerts only |
+| `GCHAT_MISSED_CALLS_WEBHOOK_URL` | empty | Separate Chat webhook for each missed/abandoned/**voicemail** inbound CDR |
 | `GCHAT_CONTRACTS_WEBHOOK_URL` | empty | Optional separate Chat webhook for contract expiry (never uses the call webhook) |
 | `MISSED_ALERT_MAX_AGE_MINUTES` | `120` | Skip Chat alerts for older CDRs (avoids noise on backfill) |
 | `MISSED_ALERT_THRESHOLD` | `8` | Optional spike summary: missed/non-answered CDRs in window |
