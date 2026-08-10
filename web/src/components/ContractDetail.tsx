@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { AccessAuditEvent } from "@/lib/accessAuditTypes";
 import type {
@@ -9,8 +10,10 @@ import type {
   ContractEntity,
   ContractGroup,
   ContractObligation,
+  ContractStatus,
   Vendor,
 } from "@/lib/contractTypes";
+import { LIFECYCLE_STATUSES } from "@/lib/contractTypes";
 import { familyRoleLabel } from "@/lib/contractLabels";
 import { ContractAuditPanel } from "@/components/ContractAuditPanel";
 import { ContractFamilyPanel } from "@/components/ContractFamilyPanel";
@@ -25,6 +28,7 @@ export function ContractDetail({
   obligations,
   familyMembers,
   vendorSiblings,
+  familySuggestions,
   assignees,
   auditEvents,
 }: {
@@ -36,9 +40,11 @@ export function ContractDetail({
   obligations: ContractObligation[];
   familyMembers: Contract[];
   vendorSiblings: Contract[];
+  familySuggestions: Contract[];
   assignees: ContractAssignee[];
   auditEvents: AccessAuditEvent[];
 }) {
+  const router = useRouter();
   const [contract, setContract] = useState(initialContract);
   const [message, setMessage] = useState("");
   const [pending, startTransition] = useTransition();
@@ -96,7 +102,24 @@ export function ContractDetail({
         return;
       }
       if (data.contract) setContract(data.contract);
-      setMessage(action === "reprocess" ? "Queued for re-extraction" : "Accepted");
+      setMessage("Accepted");
+    });
+  }
+
+  function removeAgreement() {
+    const label = contract.title || contract.original_filename || "this agreement";
+    if (!window.confirm(`Delete “${label}”? It will leave the library. This can’t be undone.`)) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await fetch(`/api/contracts/${contract.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(data.error || "Could not delete agreement");
+        return;
+      }
+      router.push("/contracts");
+      router.refresh();
     });
   }
 
@@ -146,13 +169,19 @@ export function ContractDetail({
               Accept extraction
             </button>
           ) : null}
+          <Link
+            href={`/contracts/upload?renewFrom=${contract.id}`}
+            className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
+          >
+            Renew
+          </Link>
           <button
             type="button"
             disabled={pending}
-            onClick={() => runAction("reprocess")}
-            className="rounded-lg border border-line bg-white px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
+            onClick={removeAgreement}
+            className="rounded-lg border border-fail/30 bg-white px-4 py-2 text-sm font-semibold text-fail hover:bg-fail/5 disabled:opacity-60"
           >
-            Re-run Bedrock
+            Delete
           </button>
         </div>
       </div>
@@ -186,6 +215,22 @@ export function ContractDetail({
               value={contract.title || ""}
               onChange={(e) => field("title", e.target.value)}
             />
+          </label>
+          <label className="block text-sm">
+            <span className="font-semibold text-ink-soft">Status</span>
+            <select
+              className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+              value={contract.status}
+              onChange={(e) => field("status", e.target.value as ContractStatus)}
+            >
+              {Array.from(
+                new Set<ContractStatus>([contract.status, ...LIFECYCLE_STATUSES])
+              ).map((status) => (
+                <option key={status} value={status}>
+                  {status.replace(/_/g, " ")}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block text-sm">
             <span className="font-semibold text-ink-soft">Our company</span>
@@ -389,6 +434,7 @@ export function ContractDetail({
             contract={contract}
             initialMembers={familyMembers}
             vendorSiblings={vendorSiblings}
+            familySuggestions={familySuggestions}
             onContractChange={setContract}
           />
           <ContractAuditPanel events={auditEvents} />

@@ -10,7 +10,11 @@ type UploadRow = {
   id?: string;
 };
 
-export function ContractUploadDropzone() {
+export function ContractUploadDropzone({
+  renewFrom,
+}: {
+  renewFrom?: { id: string; title: string } | null;
+}) {
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,6 +38,7 @@ export function ContractUploadDropzone() {
         );
         const form = new FormData();
         form.append("files", file, file.name);
+        if (renewFrom?.id) form.set("renew_from", renewFrom.id);
         const res = await fetch("/api/contracts/upload", {
           method: "POST",
           body: form,
@@ -93,7 +98,7 @@ export function ContractUploadDropzone() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [renewFrom?.id]);
 
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -108,10 +113,13 @@ export function ContractUploadDropzone() {
         <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
           Contracts
         </p>
-        <h1 className="mt-1 font-display text-3xl text-ink">Upload contracts</h1>
+        <h1 className="mt-1 font-display text-3xl text-ink">
+          {renewFrom ? "Upload renewal" : "Upload contracts"}
+        </h1>
         <p className="mt-2 text-ink-soft">
-          Drop a folder or multiple PDFs. We’ll store them in S3 and extract key terms
-          with Bedrock.
+          {renewFrom
+            ? `This file will be linked as a renewal of “${renewFrom.title}”. The current agreement will be marked expired.`
+            : "Drop a folder or multiple PDFs. We’ll store them in S3 and extract key terms with Bedrock."}
         </p>
       </div>
 

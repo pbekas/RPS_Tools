@@ -221,7 +221,9 @@ export function AgentSettings({
     );
     setVendorContacts(parsed.vendorContacts);
     setVendorFiles(parsed.vendorFiles);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    document
+      .getElementById("person-form")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function setUserToolsets(user: UserDoc, next: ToolsetId[]) {
@@ -255,8 +257,8 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Users & access</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            Control who can use each tool set. Admins can manage users; tool sets
-            are granted per person.
+            People first — search, edit access, then import anyone still missing
+            from call recordings.
           </p>
         </div>
       ) : (
@@ -275,98 +277,116 @@ export function AgentSettings({
         </p>
       ) : null}
 
-      <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
-        <h2 className="font-display text-2xl text-ink">Tool sets</h2>
-        <p className="mt-1 text-sm text-ink-soft">
-          People only see tool sets they are granted. The top nav toggle switches
-          between them.
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {ALL_TOOLSET_IDS.map((id) => (
-            <div
-              key={id}
-              className="rounded-xl border border-line bg-paper/50 px-4 py-3"
-            >
-              <div className="font-semibold text-ink">{TOOLSETS[id].label}</div>
-              <div className="text-sm text-ink-soft">{TOOLSETS[id].description}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-2xl text-ink">People</h2>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search name or email…"
+          className="rounded-xl border border-line bg-white px-3 py-2 text-sm"
+        />
+      </div>
 
-      <section className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="font-display text-2xl text-ink">Import & map</h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              Names detected on calls that still need a Workspace email.
-            </p>
-          </div>
-          {needsImport.length > 0 ? (
-            <button
-              type="button"
-              disabled={saving}
-              onClick={importAll}
-              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-            >
-              {saving ? "Importing…" : `Import all (${needsImport.length})`}
-            </button>
-          ) : null}
-        </div>
-
-        {needsImport.length === 0 ? (
-          <p className="mt-6 text-sm text-ink-soft">
-            No unmapped agents right now — everyone found on recent calls is mapped.
-          </p>
-        ) : (
-          <div className="mt-4 overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
-                <tr>
-                  <th className="px-3 py-2">Name on calls</th>
-                  <th className="px-3 py-2">Calls</th>
-                  <th className="px-3 py-2">Map to email</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {needsImport.map((row) => (
-                  <tr key={row.agent_name} className="border-b border-line/70 last:border-0">
-                    <td className="px-3 py-3 font-semibold text-ink">
-                      {row.agent_name}
+      <div className="mb-8 overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
+            <tr>
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Tool sets</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
+                  No people in the directory yet.
+                </td>
+              </tr>
+            ) : (
+              filtered.map((u) => {
+                const active = u.active !== false;
+                const granted = toolsetsForUser(u);
+                return (
+                  <tr key={u.email} className="border-b border-line/70 last:border-0">
+                    <td className="px-4 py-3 font-semibold text-ink">
+                      {u.name || "—"}
                     </td>
-                    <td className="px-3 py-3 text-ink-soft">{row.call_count}</td>
-                    <td className="px-3 py-3">
-                      <input
-                        value={edits[row.agent_name] ?? row.suggested_email}
-                        onChange={(e) =>
-                          setEdits((prev) => ({
-                            ...prev,
-                            [row.agent_name]: e.target.value,
-                          }))
-                        }
-                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
-                      />
+                    <td className="px-4 py-3 text-ink-soft">{u.email}</td>
+                    <td className="px-4 py-3">{u.role || "Agent"}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {ALL_TOOLSET_IDS.map((id) => {
+                          const on = granted.includes(id);
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => {
+                                const next = on
+                                  ? granted.filter((x) => x !== id)
+                                  : [...granted, id];
+                                void setUserToolsets(u, next);
+                              }}
+                              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+                                on
+                                  ? "bg-wash text-accent"
+                                  : "bg-paper text-ink-soft"
+                              }`}
+                              title={
+                                on
+                                  ? `Revoke ${TOOLSETS[id].label}`
+                                  : `Grant ${TOOLSETS[id].label}`
+                              }
+                            >
+                              {TOOLSETS[id].label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </td>
-                    <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => importOne(row)}
-                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                          active
+                            ? "bg-emerald-100 text-pass"
+                            : "bg-zinc-100 text-ink-soft"
+                        }`}
                       >
-                        Import & map
-                      </button>
+                        {active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => editUser(u)}
+                          className="text-xs font-semibold text-accent hover:underline"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleActive(u)}
+                          className="text-xs font-semibold text-ink-soft hover:underline"
+                        >
+                          {active ? "Deactivate" : "Activate"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
       <form
+        id="person-form"
         onSubmit={saveUser}
         className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
       >
@@ -501,113 +521,77 @@ export function AgentSettings({
         </button>
       </form>
 
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl text-ink">Directory</h2>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search…"
-          className="rounded-xl border border-line bg-white px-3 py-2 text-sm"
-        />
-      </div>
+      <section className="rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-2xl text-ink">Import from calls</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              Names detected on calls that still need a Workspace email.
+            </p>
+          </div>
+          {needsImport.length > 0 ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={importAll}
+              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+            >
+              {saving ? "Importing…" : `Import all (${needsImport.length})`}
+            </button>
+          ) : null}
+        </div>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
-            <tr>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Role</th>
-              <th className="px-4 py-3">Tool sets</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
-                  No people in the directory yet.
-                </td>
-              </tr>
-            ) : (
-              filtered.map((u) => {
-                const active = u.active !== false;
-                const granted = toolsetsForUser(u);
-                return (
-                  <tr key={u.email} className="border-b border-line/70 last:border-0">
-                    <td className="px-4 py-3 font-semibold text-ink">
-                      {u.name || "—"}
+        {needsImport.length === 0 ? (
+          <p className="mt-6 text-sm text-ink-soft">
+            No unmapped agents right now — everyone found on recent calls is mapped.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-hidden rounded-xl border border-line">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
+                <tr>
+                  <th className="px-3 py-2">Name on calls</th>
+                  <th className="px-3 py-2">Calls</th>
+                  <th className="px-3 py-2">Map to email</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {needsImport.map((row) => (
+                  <tr key={row.agent_name} className="border-b border-line/70 last:border-0">
+                    <td className="px-3 py-3 font-semibold text-ink">
+                      {row.agent_name}
                     </td>
-                    <td className="px-4 py-3 text-ink-soft">{u.email}</td>
-                    <td className="px-4 py-3">{u.role || "Agent"}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        {ALL_TOOLSET_IDS.map((id) => {
-                          const on = granted.includes(id);
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              onClick={() => {
-                                const next = on
-                                  ? granted.filter((x) => x !== id)
-                                  : [...granted, id];
-                                void setUserToolsets(u, next);
-                              }}
-                              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-                                on
-                                  ? "bg-wash text-accent"
-                                  : "bg-paper text-ink-soft"
-                              }`}
-                              title={
-                                on
-                                  ? `Revoke ${TOOLSETS[id].label}`
-                                  : `Grant ${TOOLSETS[id].label}`
-                              }
-                            >
-                              {TOOLSETS[id].label}
-                            </button>
-                          );
-                        })}
-                      </div>
+                    <td className="px-3 py-3 text-ink-soft">{row.call_count}</td>
+                    <td className="px-3 py-3">
+                      <input
+                        value={edits[row.agent_name] ?? row.suggested_email}
+                        onChange={(e) =>
+                          setEdits((prev) => ({
+                            ...prev,
+                            [row.agent_name]: e.target.value,
+                          }))
+                        }
+                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
+                      />
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                          active
-                            ? "bg-emerald-100 text-pass"
-                            : "bg-zinc-100 text-ink-soft"
-                        }`}
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => importOne(row)}
+                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
                       >
-                        {active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => editUser(u)}
-                          className="text-xs font-semibold text-accent hover:underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleActive(u)}
-                          className="text-xs font-semibold text-ink-soft hover:underline"
-                        >
-                          {active ? "Deactivate" : "Activate"}
-                        </button>
-                      </div>
+                        Import & map
+                      </button>
                     </td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

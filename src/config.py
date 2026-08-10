@@ -46,6 +46,7 @@ class Settings:
     webhook_port: int
     allowed_email_domain: str
     gchat_webhook_url: str
+    gchat_contracts_webhook_url: str
     alerts_enabled: bool
     contract_alerts_enabled: bool
     contract_alert_days: int
@@ -124,6 +125,9 @@ class Settings:
         self.gchat_webhook_url = (
             os.getenv("GCHAT_WEBHOOK_URL", "").strip()
             or os.getenv("GOOGLE_CHAT_WEBHOOK_URL", "").strip()
+        )
+        self.gchat_contracts_webhook_url = (
+            os.getenv("GCHAT_CONTRACTS_WEBHOOK_URL", "").strip()
         )
         self.alerts_enabled = os.getenv("ALERTS_ENABLED", "1").strip().lower() in {
             "1",

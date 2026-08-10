@@ -60,14 +60,24 @@ export type VendorContact = {
   updated_at?: string;
 };
 
-export type ContractStatus =
-  | "pending"
-  | "processing"
-  | "needs_review"
-  | "active"
-  | "expired"
-  | "terminated"
-  | "error";
+export const CONTRACT_STATUSES = [
+  "pending",
+  "processing",
+  "needs_review",
+  "active",
+  "expired",
+  "terminated",
+  "error",
+] as const;
+
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
+
+export const LIFECYCLE_STATUSES = [
+  "needs_review",
+  "active",
+  "expired",
+  "terminated",
+] as const;
 
 export type CostFrequency = "monthly" | "annual" | "one_time" | "unknown";
 

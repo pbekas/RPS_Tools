@@ -81,7 +81,7 @@ export function ContractObligationsPanel({
       <div className="space-y-3">
         {items.length === 0 ? (
           <p className="text-sm text-ink-soft">
-            No calendar items yet. Re-run Bedrock or add one below.
+            No calendar items yet. Add one below.
           </p>
         ) : (
           items.map((item) => (

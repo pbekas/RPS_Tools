@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "crypto";
 import type { QueryResultRow } from "pg";
-import { query } from "@/lib/postgres";
+import { query, withTransaction } from "@/lib/postgres";
 import type {
   Contract,
   ContractAssignee,
@@ -19,11 +19,12 @@ import type {
   VendorDocKind,
   VendorDocument,
 } from "@/lib/contractTypes";
-import { VENDOR_DOC_KINDS } from "@/lib/contractTypes";
 import {
+  CONTRACT_STATUSES,
   FAMILY_ROLES,
   OBLIGATION_KINDS,
   OBLIGATION_STATUSES,
+  VENDOR_DOC_KINDS,
 } from "@/lib/contractTypes";
 
 export type {
@@ -36,6 +37,7 @@ export type {
   ContractListFilters,
   ContractObligation,
   ContractStatus,
+  CONTRACT_STATUSES,
   CostFrequency,
   FamilyRole,
   ObligationKind,
@@ -297,6 +299,76 @@ export async function getVendor(id: string): Promise<Vendor | null> {
   return rows[0] ? serializeRow<Vendor>(rows[0]) : null;
 }
 
+export async function deleteVendor(id: string): Promise<void> {
+  requirePostgres();
+  const vendor = await getVendor(id);
+  if (!vendor) throw new Error("Vendor not found");
+  const rows = await query(
+    `SELECT
+       (SELECT count(*)::int FROM contracts WHERE vendor_id = $1) AS contracts,
+       (SELECT count(*)::int FROM vendor_contacts WHERE vendor_id = $1) AS contacts,
+       (SELECT count(*)::int FROM vendor_documents WHERE vendor_id = $1) AS documents`,
+    [id]
+  );
+  const contracts = Number(rows[0]?.contracts || 0);
+  const contacts = Number(rows[0]?.contacts || 0);
+  const documents = Number(rows[0]?.documents || 0);
+  if (contracts || contacts || documents) {
+    const parts: string[] = [];
+    if (contracts) {
+      parts.push(`${contracts} contract${contracts === 1 ? "" : "s"}`);
+    }
+    if (contacts) {
+      parts.push(`${contacts} contact${contacts === 1 ? "" : "s"}`);
+    }
+    if (documents) {
+      parts.push(`${documents} file${documents === 1 ? "" : "s"}`);
+    }
+    throw new Error(`Remove ${parts.join(", ")} before deleting this vendor.`);
+  }
+  await query("DELETE FROM vendors WHERE id = $1", [id]);
+}
+
+export async function mergeVendors(keepId: string, absorbId: string): Promise<Vendor> {
+  requirePostgres();
+  if (!keepId || !absorbId) throw new Error("Both vendors are required");
+  if (keepId === absorbId) throw new Error("Choose a different vendor to merge");
+  const keep = await getVendor(keepId);
+  const absorb = await getVendor(absorbId);
+  if (!keep || !absorb) throw new Error("Vendor not found");
+
+  await withTransaction(async (client) => {
+    await client.query(
+      "UPDATE contracts SET vendor_id = $1, updated_at = now() WHERE vendor_id = $2",
+      [keepId, absorbId]
+    );
+    await client.query(
+      `UPDATE vendor_contacts
+       SET is_primary = false, vendor_id = $1, updated_at = now()
+       WHERE vendor_id = $2`,
+      [keepId, absorbId]
+    );
+    await client.query(
+      "UPDATE vendor_documents SET vendor_id = $1 WHERE vendor_id = $2",
+      [keepId, absorbId]
+    );
+    const notes = [keep.notes?.trim(), absorb.notes?.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+    await client.query(
+      `UPDATE vendors
+       SET notes = $2, updated_at = now()
+       WHERE id = $1`,
+      [keepId, notes]
+    );
+    await client.query("DELETE FROM vendors WHERE id = $1", [absorbId]);
+  });
+
+  const merged = await getVendor(keepId);
+  if (!merged) throw new Error("Vendor not found");
+  return merged;
+}
+
 export async function upsertVendor(input: {
   id?: string;
   name: string;
@@ -516,7 +588,7 @@ export async function listContracts(
     params.push(`%${searchText.toLowerCase()}%`);
     likeParam = params.length;
     where.push(
-      `(c.search_tsv @@ websearch_to_tsquery('english', $${searchParam})
+      `(c.search_tsv @@ plainto_tsquery('english', $${searchParam})
         OR lower(c.title) LIKE $${likeParam}
         OR lower(coalesce(v.name, '')) LIKE $${likeParam}
         OR lower(coalesce(e.name, '')) LIKE $${likeParam}
@@ -570,7 +642,7 @@ export async function listContracts(
     ? `, ts_headline(
          'english',
          left(c.extracted_text, 20000),
-         websearch_to_tsquery('english', $${searchParam}),
+         plainto_tsquery('english', $${searchParam}),
          'MaxWords=28, MinWords=10, ShortWord=2, MaxFragments=1'
        ) AS search_snippet`
     : `, NULL::text AS search_snippet`;
@@ -591,7 +663,7 @@ export async function listContracts(
   if (sortCol) {
     orderSql = `ORDER BY ${sortCol} ${sortDir} NULLS LAST, c.created_at DESC`;
   } else if (searchParam) {
-    orderSql = `ORDER BY ts_rank_cd(c.search_tsv, websearch_to_tsquery('english', $${searchParam})) DESC, c.created_at DESC`;
+    orderSql = `ORDER BY ts_rank_cd(c.search_tsv, plainto_tsquery('english', $${searchParam})) DESC, c.created_at DESC`;
   }
 
   const countRows = await query(
@@ -689,6 +761,129 @@ export async function createContractUpload(input: {
   return serializeRow<Contract>(rows[0]);
 }
 
+export async function stampRenewalContract(
+  newId: string,
+  sourceId: string
+): Promise<Contract> {
+  requirePostgres();
+  const source = await getContract(sourceId);
+  if (!source) throw new Error("Source agreement not found");
+
+  let familyId = source.family_id || null;
+  if (!familyId) {
+    const name = `${source.vendor_name || source.title || "Agreement"} family`;
+    const created = await query(
+      `INSERT INTO contract_families (name) VALUES ($1) RETURNING id`,
+      [name]
+    );
+    familyId = String(created[0].id);
+    await query(
+      `UPDATE contracts
+       SET family_id = $2,
+           family_role = CASE
+             WHEN family_role IS NULL OR family_role = 'standalone' THEN 'original'
+             ELSE family_role
+           END,
+           updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [source.id, familyId]
+    );
+  }
+
+  await query(
+    `UPDATE contracts
+     SET family_id = $2,
+         family_role = 'renewal',
+         vendor_id = COALESCE($3::uuid, vendor_id),
+         entity_id = COALESCE($4::uuid, entity_id),
+         group_id = COALESCE($5::uuid, group_id),
+         updated_at = now()
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [
+      newId,
+      familyId,
+      source.vendor_id || null,
+      source.entity_id || null,
+      source.group_id || null,
+    ]
+  );
+
+  if (
+    source.status === "active" ||
+    source.status === "needs_review" ||
+    source.status === "pending" ||
+    source.status === "processing"
+  ) {
+    await query(
+      `UPDATE contracts
+       SET status = 'expired', updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [source.id]
+    );
+  }
+
+  const updated = await getContract(newId);
+  if (!updated) throw new Error("Renewal upload not found");
+  return updated;
+}
+
+export async function findRelatedAgreementCandidates(
+  contract: Contract,
+  limit = 5
+): Promise<Contract[]> {
+  requirePostgres();
+  if (contract.family_id) return [];
+  const extracted = (contract.extracted_json || {}) as Record<string, unknown>;
+  const hint = String(
+    extracted.related_agreement_hint || extracted.related_agreement || ""
+  )
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const role = String(contract.family_role || extracted.document_role || "");
+  if (!hint && (!role || role === "standalone")) return [];
+
+  const like = hint ? `%${hint.toLowerCase()}%` : "%";
+  const cap = Math.min(Math.max(limit, 1), 12);
+  const sql = `
+    SELECT ${CONTRACT_LIST_COLUMNS}, NULL::text AS search_snippet
+     FROM contracts c
+     LEFT JOIN vendors v ON v.id = c.vendor_id
+     LEFT JOIN contract_entities e ON e.id = c.entity_id
+     LEFT JOIN contract_groups g ON g.id = c.group_id
+     LEFT JOIN contract_families f ON f.id = c.family_id
+     WHERE c.deleted_at IS NULL
+       AND c.id <> $1
+       AND (
+         ($2 <> '' AND (
+           c.search_tsv @@ plainto_tsquery('english', $2)
+           OR lower(c.title) LIKE $3
+           OR lower(coalesce(c.original_filename, '')) LIKE $3
+           OR lower(coalesce(c.summary, '')) LIKE $3
+         ))
+         OR (
+           $2 = ''
+           AND c.vendor_id IS NOT NULL
+           AND c.vendor_id = $4::uuid
+         )
+       )
+     ORDER BY
+       CASE WHEN c.vendor_id IS NOT NULL AND c.vendor_id = $4::uuid THEN 0 ELSE 1 END,
+       CASE
+         WHEN $2 <> '' AND c.search_tsv @@ plainto_tsquery('english', $2) THEN 0
+         ELSE 1
+       END,
+       c.created_at DESC
+     LIMIT $5`;
+  const params = [contract.id, hint, like, contract.vendor_id || null, cap];
+  try {
+    const rows = await query(sql, params);
+    return rows.map((row) => serializeRow<Contract>(row));
+  } catch {
+    return [];
+  }
+}
+
 export async function updateContract(
   id: string,
   patch: Partial<Contract> & { accept_review?: boolean }
@@ -698,6 +893,9 @@ export async function updateContract(
   if (!existing) throw new Error("Contract not found");
 
   let status = patch.status ?? existing.status;
+  if (patch.status && !(CONTRACT_STATUSES as readonly string[]).includes(patch.status)) {
+    throw new Error("Invalid status");
+  }
   if (patch.accept_review && existing.status === "needs_review") {
     status = "active";
   }
@@ -763,12 +961,14 @@ export async function updateContract(
 
 export async function softDeleteContract(id: string): Promise<void> {
   requirePostgres();
-  await query(
+  const rows = await query(
     `UPDATE contracts
      SET deleted_at = now(), updated_at = now()
-     WHERE id = $1 AND deleted_at IS NULL`,
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id`,
     [id]
   );
+  if (!rows[0]) throw new Error("Contract not found");
 }
 
 export async function markContractForReprocess(id: string): Promise<Contract> {
@@ -976,7 +1176,9 @@ export async function listContractObligations(
   const from = toDateOrNull(filters.from);
   if (from) {
     params.push(from);
-    where.push(`o.due_date >= $${params.length}::date`);
+    where.push(
+      `(o.due_date IS NULL OR o.due_date >= $${params.length}::date)`
+    );
   }
   const to = toDateOrNull(filters.to);
   if (to) {

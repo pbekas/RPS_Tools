@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { apiRequireContracts } from "@/lib/requireAccess";
+import { canAccessContractGroup } from "@/lib/contractAccess";
 import { clientIpFromRequest, writeAccessAudit } from "@/lib/accessAudit";
-import { createContractUpload } from "@/lib/contractsDb";
+import {
+  createContractUpload,
+  getContract,
+  stampRenewalContract,
+} from "@/lib/contractsDb";
 import { uploadContractObject } from "@/lib/s3";
 import { pollerJson, PollerError } from "@/lib/poller";
 import { randomUUID } from "crypto";
@@ -84,7 +89,7 @@ export async function POST(req: Request) {
           body: buffer,
           contentType,
         });
-        const contract = await createContractUpload({
+        let contract = await createContractUpload({
           id,
           original_filename: filename,
           content_type: contentType,
@@ -93,6 +98,14 @@ export async function POST(req: Request) {
           created_by: session!.user!.email!,
           byte_size: file.size,
         });
+        const renewFrom = String(form.get("renew_from") || "").trim();
+        if (renewFrom) {
+          const source = await getContract(renewFrom);
+          if (!source || !canAccessContractGroup(access, source.group_slug)) {
+            throw new Error("No access to renew this agreement");
+          }
+          contract = await stampRenewalContract(contract.id, renewFrom);
+        }
         await writeAccessAudit({
           actorEmail: session!.user!.email,
           action: "contract.upload",

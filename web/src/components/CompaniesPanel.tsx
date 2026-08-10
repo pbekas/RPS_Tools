@@ -120,28 +120,45 @@ export function CompaniesPanel({
       <ul className="space-y-2">
         {entities.map((entity) => (
           <li
-            key={entity.id}
-            className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-white/80 px-4 py-3"
+            key={`${entity.id}:${(entity.aliases || []).join(",")}`}
+            className="space-y-2 rounded-xl border border-line bg-white/80 px-4 py-3"
           >
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                className="min-w-[10rem] flex-1 rounded-lg border border-line px-3 py-1.5 text-sm"
+                defaultValue={entity.name}
+                onBlur={(e) => {
+                  if (e.target.value.trim() && e.target.value !== entity.name) {
+                    updateEntity(entity, { name: e.target.value.trim() });
+                  }
+                }}
+              />
+              <span className="text-xs text-ink-soft">
+                {entity.contract_count || 0} contracts
+              </span>
+              <button
+                type="button"
+                onClick={() => removeEntity(entity.id)}
+                className="text-sm font-semibold text-fail"
+              >
+                Delete
+              </button>
+            </div>
             <input
-              className="min-w-[10rem] flex-1 rounded-lg border border-line px-3 py-1.5 text-sm"
-              defaultValue={entity.name}
+              className="w-full rounded-lg border border-line px-3 py-1.5 text-sm"
+              defaultValue={(entity.aliases || []).join(", ")}
+              placeholder="Aliases (FASC, Fort Apache, …) — helps extraction tag this company"
               onBlur={(e) => {
-                if (e.target.value.trim() && e.target.value !== entity.name) {
-                  updateEntity(entity, { name: e.target.value.trim() });
+                const aliases = e.target.value
+                  .split(",")
+                  .map((a) => a.trim())
+                  .filter(Boolean);
+                const prev = (entity.aliases || []).map((a) => a.trim()).filter(Boolean);
+                if (aliases.join("|") !== prev.join("|")) {
+                  updateEntity(entity, { aliases });
                 }
               }}
             />
-            <span className="text-xs text-ink-soft">
-              {entity.contract_count || 0} contracts
-            </span>
-            <button
-              type="button"
-              onClick={() => removeEntity(entity.id)}
-              className="text-sm font-semibold text-fail"
-            >
-              Delete
-            </button>
           </li>
         ))}
       </ul>

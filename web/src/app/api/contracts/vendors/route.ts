@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { apiRequireContracts } from "@/lib/requireAccess";
 import {
+  deleteVendor,
   deleteVendorContact,
   getVendor,
+  mergeVendors,
   listContracts,
   listVendorContacts,
   listVendorDocuments,
@@ -104,6 +106,19 @@ export async function POST(req: Request) {
       }
       await deleteVendorContact(String(body.id || ""));
       return NextResponse.json({ ok: true });
+    }
+
+    if (action === "delete_vendor") {
+      await deleteVendor(String(body.id || ""));
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === "merge_vendor") {
+      const vendor = await mergeVendors(
+        String(body.keep_id || body.id || ""),
+        String(body.absorb_id || "")
+      );
+      return NextResponse.json({ ok: true, vendor });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

@@ -63,6 +63,13 @@ export function ObligationsCalendar({
       if (entity) params.set("entityId", entity);
       if (owner) params.set("ownerEmail", owner);
       if (s) params.set("status", s);
+      const now = new Date();
+      const from = new Date(now);
+      from.setUTCDate(from.getUTCDate() - 90);
+      const to = new Date(now);
+      to.setUTCMonth(to.getUTCMonth() + 18);
+      params.set("from", from.toISOString().slice(0, 10));
+      params.set("to", to.toISOString().slice(0, 10));
       params.set("limit", "400");
       const res = await fetch(`/api/contracts/obligations?${params}`);
       const data = await res.json();
@@ -128,7 +135,7 @@ export function ObligationsCalendar({
           <h1 className="mt-1 font-display text-3xl text-ink">Obligation calendar</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
             Notice windows, auto-renewals, rent bumps, insurance, and guarantees —
-            not just expiration dates.
+            not just expiration dates. Due dates older than 90 days are hidden.
           </p>
         </div>
         <div className="text-sm text-ink-soft">

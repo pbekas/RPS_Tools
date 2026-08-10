@@ -10,11 +10,13 @@ export function ContractFamilyPanel({
   contract,
   initialMembers,
   vendorSiblings,
+  familySuggestions = [],
   onContractChange,
 }: {
   contract: Contract;
   initialMembers: Contract[];
   vendorSiblings: Contract[];
+  familySuggestions?: Contract[];
   onContractChange?: (contract: Contract) => void;
 }) {
   const [members, setMembers] = useState(initialMembers);
@@ -69,8 +71,17 @@ export function ContractFamilyPanel({
   }
 
   const visibleMembers = members.filter((item) => item.id !== contract.id);
-  const suggestions = vendorSiblings.filter(
+  const extracted = (contract.extracted_json || {}) as Record<string, unknown>;
+  const relatedHint = String(
+    extracted.related_agreement_hint || extracted.related_agreement || ""
+  ).trim();
+  const hinted = familySuggestions.filter(
     (item) => !members.some((member) => member.id === item.id)
+  );
+  const suggestions = vendorSiblings.filter(
+    (item) =>
+      !members.some((member) => member.id === item.id) &&
+      !hinted.some((member) => member.id === item.id)
   );
 
   return (
@@ -80,6 +91,50 @@ export function ContractFamilyPanel({
         Link the original, amendments, assignments, and subleases into one family.
       </p>
       {message ? <p className="mt-2 text-xs text-ink-soft">{message}</p> : null}
+
+      {!contract.family_id && hinted.length ? (
+        <div className="mt-3 rounded-xl border border-accent/30 bg-wash px-3 py-3">
+          <p className="text-sm font-semibold text-ink">
+            {relatedHint
+              ? `This looks related to “${relatedHint}”.`
+              : "This looks like it belongs with an existing agreement."}
+          </p>
+          <div className="mt-2 space-y-2">
+            {hinted.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2"
+              >
+                <div>
+                  <div className="text-sm font-semibold text-ink">{item.title}</div>
+                  <div className="text-xs text-ink-soft">
+                    {item.vendor_name || "No vendor"} ·{" "}
+                    {formatIsoDate(item.effective_date)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    run({
+                      action: "link",
+                      other_id: item.id,
+                      this_role:
+                        contract.family_role && contract.family_role !== "standalone"
+                          ? contract.family_role
+                          : "amendment",
+                      other_role: "original",
+                    })
+                  }
+                  className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-deep"
+                >
+                  Link
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <label className="mt-3 block text-sm">
         <span className="font-semibold text-ink-soft">This document is</span>

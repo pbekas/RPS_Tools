@@ -4,6 +4,7 @@ import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { resolveContractAccess } from "@/lib/contractAccess";
+import { ContractsSearch } from "@/components/ContractsSearch";
 import {
   TOOLSETS,
   activeToolset,
@@ -156,6 +157,13 @@ export function AppNav() {
         </div>
 
         <div className="flex items-center gap-3 text-sm">
+          {current === "contracts" &&
+          (contractAccess.canViewAgreements || contractAccess.canOpenVendors) ? (
+            <ContractsSearch
+              canViewAgreements={contractAccess.canViewAgreements}
+              canOpenVendors={contractAccess.canOpenVendors}
+            />
+          ) : null}
           {admin ? (
             <Link
               href="/users"

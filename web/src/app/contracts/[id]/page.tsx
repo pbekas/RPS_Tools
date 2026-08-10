@@ -9,6 +9,7 @@ import {
   listContractEntities,
   listContractGroups,
   listContractObligations,
+  findRelatedAgreementCandidates,
   listFamilyMembers,
   listVendorSiblingContracts,
   listVendors,
@@ -49,6 +50,7 @@ export default async function ContractDetailPage({ params }: Ctx) {
     obligations,
     familyMembers,
     vendorSiblings,
+    familySuggestions,
     assignees,
     auditEvents,
   ] = await Promise.all([
@@ -59,6 +61,7 @@ export default async function ContractDetailPage({ params }: Ctx) {
     listContractObligations({ contractId: id, limit: 200 }),
     contract.family_id ? listFamilyMembers(contract.family_id) : Promise.resolve([]),
     listVendorSiblingContracts(contract.id, contract.vendor_id),
+    findRelatedAgreementCandidates(contract),
     listContractAssignees(),
     listResourceAudit({ resourceType: "contract", resourceId: id, limit: 80 }),
   ]);
@@ -73,6 +76,7 @@ export default async function ContractDetailPage({ params }: Ctx) {
       obligations={obligations}
       familyMembers={familyMembers}
       vendorSiblings={vendorSiblings}
+      familySuggestions={familySuggestions}
       assignees={assignees}
       auditEvents={auditEvents}
     />

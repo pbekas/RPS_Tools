@@ -11,8 +11,8 @@ from src.notify import alert_contract_expiry, check_contract_expiry_alerts
 
 def test_alert_contract_expiry_respects_feature_flag():
     settings = MagicMock()
-    settings.alerts_enabled = True
     settings.contract_alerts_enabled = False
+    settings.gchat_contracts_webhook_url = "https://chat.example/contracts"
     settings.app_url = "http://localhost:3000"
     with patch("src.notify.get_settings", return_value=settings):
         assert (
@@ -26,11 +26,33 @@ def test_alert_contract_expiry_respects_feature_flag():
         )
 
 
+def test_alert_contract_expiry_skips_call_qa_webhook():
+    settings = MagicMock()
+    settings.contract_alerts_enabled = True
+    settings.gchat_webhook_url = "https://chat.example/calls"
+    settings.gchat_contracts_webhook_url = ""
+    settings.app_url = "http://localhost:3000"
+    with (
+        patch("src.notify.get_settings", return_value=settings),
+        patch("src.notify.notify_gchat") as post,
+    ):
+        assert (
+            alert_contract_expiry(
+                contract_id="c1",
+                title="Lease",
+                vendor_name="Vendor",
+                relevant_end_date="2026-12-01",
+            )
+            is False
+        )
+        post.assert_not_called()
+
+
 def test_check_contract_expiry_alerts_sends_notice_preferred():
     settings = MagicMock()
     settings.database_backend = "postgres"
-    settings.alerts_enabled = True
     settings.contract_alerts_enabled = True
+    settings.gchat_contracts_webhook_url = "https://chat.example/contracts"
     settings.contract_alert_days = 90
     settings.app_url = "http://localhost:3000"
 

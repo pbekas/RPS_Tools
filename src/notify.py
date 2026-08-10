@@ -13,12 +13,17 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def notify_gchat(text: str, *, card: dict[str, Any] | None = None) -> bool:
-    """Post to GCHAT_WEBHOOK_URL. Returns True if sent."""
+def notify_gchat(
+    text: str,
+    *,
+    card: dict[str, Any] | None = None,
+    webhook_url: str | None = None,
+) -> bool:
+    """Post to a Google Chat incoming webhook. Returns True if sent."""
     settings = get_settings()
-    url = (settings.gchat_webhook_url or "").strip()
+    url = (webhook_url if webhook_url is not None else settings.gchat_webhook_url or "").strip()
     if not url:
-        logger.debug("GCHAT_WEBHOOK_URL not set — skip alert")
+        logger.debug("Google Chat webhook not set — skip alert")
         return False
     payload: dict[str, Any]
     if card:
@@ -163,11 +168,13 @@ def alert_contract_expiry(
     days_left: int | None = None,
     alert_kind: str = "expiry",
 ) -> bool:
-    """Alert when a contract end date or notice deadline is within the window."""
+    """Alert when a contract end date or notice deadline is within the window.
+
+    Uses GCHAT_CONTRACTS_WEBHOOK_URL only — never the Call QA webhook.
+    """
     settings = get_settings()
-    if not settings.alerts_enabled:
-        return False
-    if not settings.contract_alerts_enabled:
+    contracts_url = (settings.gchat_contracts_webhook_url or "").strip()
+    if not settings.contract_alerts_enabled or not contracts_url:
         return False
 
     today = datetime.now(timezone.utc).date().isoformat()
@@ -199,7 +206,7 @@ def alert_contract_expiry(
         f"End date: {date_bit}{notice_bit}\n"
         f"Review: {link}"
     )
-    sent = notify_gchat(text)
+    sent = notify_gchat(text, webhook_url=contracts_url)
     if sent:
         try:
             from src import database as db
@@ -215,8 +222,10 @@ def check_contract_expiry_alerts(*, within_days: int = 90) -> dict[str, Any]:
     settings = get_settings()
     if settings.database_backend != "postgres":
         return {"sent": 0, "skipped": 0, "errors": ["postgres required"]}
-    if not settings.alerts_enabled or not settings.contract_alerts_enabled:
-        return {"sent": 0, "skipped": 0, "errors": ["alerts disabled"]}
+    if not settings.contract_alerts_enabled or not (
+        settings.gchat_contracts_webhook_url or ""
+    ).strip():
+        return {"sent": 0, "skipped": 0, "errors": ["contract alerts disabled"]}
 
     from src import database as db
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type {
   Contract,
   Vendor,
@@ -26,12 +26,17 @@ type VendorAccess = {
 
 export function VendorsPanel({
   initialVendors,
+  initialSelectedId,
+  initialQuery = "",
   access,
 }: {
   initialVendors: Vendor[];
+  initialSelectedId?: string;
+  initialQuery?: string;
   access: VendorAccess;
 }) {
   const [vendors, setVendors] = useState(initialVendors);
+  const [listQuery, setListQuery] = useState(initialQuery);
   const [selected, setSelected] = useState<Vendor | null>(null);
   const [contacts, setContacts] = useState<VendorContact[]>([]);
   const [documents, setDocuments] = useState<VendorDocument[]>([]);
@@ -47,8 +52,20 @@ export function VendorsPanel({
     is_primary: false,
   });
   const [docKind, setDocKind] = useState<VendorDocKind>("w9");
+  const [absorbId, setAbsorbId] = useState("");
   const [message, setMessage] = useState("");
   const [pending, startTransition] = useTransition();
+
+  const visibleVendors = useMemo(() => {
+    const needle = listQuery.trim().toLowerCase();
+    if (!needle) return vendors;
+    return vendors.filter((v) => v.name.toLowerCase().includes(needle));
+  }, [vendors, listQuery]);
+
+  useEffect(() => {
+    if (initialSelectedId) loadVendor(initialSelectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open deep link once
+  }, [initialSelectedId]);
 
   function refreshVendors() {
     startTransition(async () => {
@@ -109,6 +126,75 @@ export function VendorsPanel({
     setName("");
     setNotes("");
     setAddingPerson(false);
+  }
+
+  function vendorIsEmpty(vendor: Vendor) {
+    return (
+      !(vendor.contract_count || 0) &&
+      !(vendor.contact_count || 0) &&
+      !(vendor.document_count || 0)
+    );
+  }
+
+  function mergeIntoSelected() {
+    if (!selected?.id || !absorbId) return;
+    const other = vendors.find((v) => v.id === absorbId);
+    if (
+      !window.confirm(
+        `Merge “${other?.name || "that vendor"}” into “${selected.name}”? Contacts, files, and agreements move here. The other vendor is removed.`
+      )
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      const res = await fetch("/api/contracts/vendors", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "merge_vendor",
+          keep_id: selected.id,
+          absorb_id: absorbId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.error || "Merge failed");
+        return;
+      }
+      setAbsorbId("");
+      setMessage("Vendors merged");
+      refreshVendors();
+      if (data.vendor?.id) loadVendor(data.vendor.id);
+    });
+  }
+
+  function removeVendor() {
+    if (!selected?.id) return;
+    if (!vendorIsEmpty(selected)) {
+      setMessage("Remove contacts, files, and agreements before deleting.");
+      return;
+    }
+    if (!window.confirm(`Delete ${selected.name}? This can’t be undone.`)) return;
+    startTransition(async () => {
+      const res = await fetch("/api/contracts/vendors", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "delete_vendor", id: selected.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.error || "Could not delete vendor");
+        return;
+      }
+      setSelected(null);
+      setContacts([]);
+      setDocuments([]);
+      setAgreements([]);
+      setName("");
+      setNotes("");
+      setMessage("Vendor deleted");
+      refreshVendors();
+    });
   }
 
   function saveContact() {
@@ -209,8 +295,17 @@ export function VendorsPanel({
 
       <div className="grid gap-6 lg:grid-cols-[0.9fr_1.2fr]">
         <div className="rounded-2xl border border-line bg-white/80">
+          <div className="border-b border-line p-3">
+            <input
+              type="search"
+              value={listQuery}
+              onChange={(e) => setListQuery(e.target.value)}
+              placeholder="Filter vendors…"
+              className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+            />
+          </div>
           <ul className="divide-y divide-line">
-            {vendors.map((v) => (
+            {visibleVendors.map((v) => (
               <li key={v.id}>
                 <button
                   type="button"
@@ -242,9 +337,9 @@ export function VendorsPanel({
                 </button>
               </li>
             ))}
-            {!vendors.length ? (
+            {!visibleVendors.length ? (
               <li className="px-4 py-8 text-center text-sm text-ink-soft">
-                No vendors yet.
+                {vendors.length ? "No vendors match that search." : "No vendors yet."}
               </li>
             ) : null}
           </ul>
@@ -278,25 +373,33 @@ export function VendorsPanel({
             </div>
           ) : (
             <div className="space-y-8">
-              <div>
-                <input
-                  className="w-full border-0 bg-transparent p-0 font-display text-2xl text-ink outline-none focus:ring-0"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  onBlur={() => {
-                    if (name.trim() && name !== selected.name) saveVendor();
-                  }}
-                />
-                <textarea
-                  className="mt-2 w-full rounded-lg border border-transparent bg-transparent px-0 py-1 text-sm text-ink-soft hover:border-line focus:border-line"
-                  placeholder="Add notes…"
-                  rows={2}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  onBlur={() => {
-                    if (notes !== (selected.notes || "")) saveVendor();
-                  }}
-                />
+              <div className="space-y-3">
+                <label className="block text-sm">
+                  <span className="font-semibold text-ink-soft">Vendor name</span>
+                  <input
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="font-semibold text-ink-soft">Notes</span>
+                  <textarea
+                    className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm"
+                    placeholder="Add notes…"
+                    rows={3}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={pending || !name.trim()}
+                  onClick={() => saveVendor()}
+                  className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+                >
+                  Save vendor
+                </button>
               </div>
 
               {access.canViewVendorContacts ? (
@@ -503,6 +606,51 @@ export function VendorsPanel({
                   <p className="text-sm text-ink-soft">No agreements linked yet.</p>
                 )}
               </section>
+
+              <div className="border-t border-line pt-4 space-y-3">
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-ink">Merge duplicate</p>
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      className="min-w-[12rem] flex-1 rounded-lg border border-line px-3 py-2 text-sm"
+                      value={absorbId}
+                      onChange={(e) => setAbsorbId(e.target.value)}
+                    >
+                      <option value="">Select vendor to absorb…</option>
+                      {vendors
+                        .filter((v) => v.id !== selected.id)
+                        .map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={pending || !absorbId}
+                      onClick={mergeIntoSelected}
+                      className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink-soft hover:bg-wash disabled:opacity-60"
+                    >
+                      Merge into this vendor
+                    </button>
+                  </div>
+                </div>
+                {vendorIsEmpty(selected) ? (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={removeVendor}
+                    className="text-sm font-semibold text-fail hover:underline disabled:opacity-60"
+                  >
+                    Delete vendor
+                  </button>
+                ) : (
+                  <p className="text-xs text-ink-soft">
+                    Delete is available after contacts, files, and agreements are
+                    removed.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
