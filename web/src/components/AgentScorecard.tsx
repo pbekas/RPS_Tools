@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { AgentScorecardRow } from "@/lib/scorecard";
-import { scorecardTierLabel } from "@/lib/scorecard";
+import { mappedScorecardRows, scorecardTierLabel } from "@/lib/scorecard";
 import { formatDuration } from "@/lib/format";
 
 type Props = {
@@ -35,13 +35,6 @@ function TierPill({ tier }: { tier: AgentScorecardRow["tier"] }) {
   if (tier === "coach") {
     return (
       <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-fail">
-        {label}
-      </span>
-    );
-  }
-  if (tier === "unmapped") {
-    return (
-      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-warn">
         {label}
       </span>
     );
@@ -137,8 +130,9 @@ export function AgentScorecard({
   onSelect,
   days,
 }: Props) {
-  const rockStars = rows.filter((r) => r.tier === "rock_star").length;
-  const needsCoach = rows.filter((r) => r.tier === "coach").length;
+  const mappedRows = mappedScorecardRows(rows);
+  const rockStars = mappedRows.filter((r) => r.tier === "rock_star").length;
+  const needsCoach = mappedRows.filter((r) => r.tier === "coach").length;
 
   return (
     <section className="mb-8 rounded-xl border border-line bg-white/80">
@@ -182,14 +176,14 @@ export function AgentScorecard({
               onSelect={() => onSelect("")}
               emphasize
             />
-            {rows.length === 0 ? (
+            {mappedRows.length === 0 ? (
               <tr>
                 <td colSpan={10} className="px-3 py-8 text-center text-ink-soft">
                   No mapped agent activity in this window.
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              mappedRows.map((row) => (
                 <ScoreRow
                   key={row.key}
                   row={row}

@@ -10,7 +10,11 @@ import {
 import { CallOps } from "@/components/CallOps";
 import { QuotaNotice } from "@/components/QuotaNotice";
 import { buildCoachingQueue } from "@/lib/coachingQueue";
-import { buildAgentScorecard, filterCallsSince } from "@/lib/scorecard";
+import {
+  buildAgentScorecard,
+  filterCallsSince,
+  mappedScorecardRows,
+} from "@/lib/scorecard";
 
 type Props = {
   searchParams?: Promise<{ days?: string }> | { days?: string };
@@ -34,8 +38,9 @@ export default async function OpsPage({ searchParams }: Props) {
     ]);
     const calls = filterCallsSince(callsRaw, sinceMs);
     const scorecard = buildAgentScorecard({ logs, calls, users });
+    const scorecardRows = mappedScorecardRows(scorecard.rows);
     const coachingQueue = buildCoachingQueue({
-      rows: scorecard.rows,
+      rows: scorecardRows,
       calls,
     });
     const qaAnswerSecondsByCallId: Record<string, number | null> = {};
@@ -50,7 +55,7 @@ export default async function OpsPage({ searchParams }: Props) {
       <CallOps
         logs={logs}
         days={days}
-        scorecardRows={scorecard.rows}
+        scorecardRows={scorecardRows}
         scorecardTeam={scorecard.team}
         coachingQueue={coachingQueue}
         qaAnswerSecondsByCallId={qaAnswerSecondsByCallId}

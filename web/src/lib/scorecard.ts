@@ -13,7 +13,6 @@ export type ScorecardTier =
   | "rock_star"
   | "solid"
   | "coach"
-  | "unmapped"
   | "baseline";
 
 export type AgentScorecardRow = {
@@ -389,13 +388,23 @@ export function scorecardTierLabel(tier: ScorecardTier): string {
       return "Rock star";
     case "coach":
       return "Coach";
-    case "unmapped":
-      return "Unmapped";
     case "baseline":
       return "Baseline";
     default:
       return "Solid";
   }
+}
+
+/** Drop any row that is not a mapped Users agent (safety for callers/UI). */
+export function mappedScorecardRows(
+  rows: AgentScorecardRow[]
+): AgentScorecardRow[] {
+  return rows.filter((r) => {
+    const email = (r.email || "").trim().toLowerCase();
+    if (!email || email.startsWith("unmapped.")) return false;
+    if (r.key.startsWith("cdr:") || r.key.startsWith("qa:")) return false;
+    return true;
+  });
 }
 
 export function filterLogsForScorecardRow(
