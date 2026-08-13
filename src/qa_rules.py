@@ -19,8 +19,30 @@ def load_rules_from_file(path: Path | None = None) -> dict[str, Any]:
     return _normalize_ruleset(data)
 
 
+def _normalize_topic_ids(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        tid = str(item or "").strip().lower()
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        out.append(tid)
+    return out
+
+
+def _normalize_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    r = dict(rule)
+    r["topic_ids"] = _normalize_topic_ids(r.get("topic_ids"))
+    return r
+
+
 def _normalize_ruleset(data: dict[str, Any]) -> dict[str, Any]:
-    rules = data.get("rules") or []
+    rules = [_normalize_rule(r) for r in (data.get("rules") or [])]
     active = [r for r in rules if r.get("active", True)]
     return {
         "version": str(data.get("version") or "v1"),
@@ -33,6 +55,17 @@ def _normalize_ruleset(data: dict[str, Any]) -> dict[str, Any]:
         "rules": active,
         "all_rules": rules,
     }
+
+
+def rule_applies_to_topic(rule: dict[str, Any], topic_id: str | None) -> bool:
+    """Empty topic_ids means the rule applies to every call."""
+    ids = _normalize_topic_ids(rule.get("topic_ids"))
+    if not ids:
+        return True
+    key = str(topic_id or "").strip().lower()
+    if not key:
+        return True
+    return key in ids
 
 
 @lru_cache(maxsize=1)
@@ -56,9 +89,21 @@ def get_active_ruleset(*, prefer_firestore: bool = True) -> dict[str, Any]:
     return deepcopy(default_ruleset())
 
 
-def active_rules(ruleset: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def active_rules(
+    ruleset: dict[str, Any] | None = None,
+    *,
+    topic_id: str | None = None,
+) -> list[dict[str, Any]]:
     rs = ruleset or get_active_ruleset()
-    return list(rs.get("rules") or [])
+    rules = list(rs.get("rules") or [])
+    if topic_id is None:
+        return rules
+    return [r for r in rules if rule_applies_to_topic(r, topic_id)]
+
+
+def _applies_to_label(rule: dict[str, Any]) -> str:
+    ids = _normalize_topic_ids(rule.get("topic_ids"))
+    return "all topics" if not ids else ", ".join(ids)
 
 
 def rules_for_prompt(ruleset: dict[str, Any] | None = None) -> str:
@@ -71,13 +116,18 @@ def rules_for_prompt(ruleset: dict[str, Any] | None = None) -> str:
         f"auto-fail at transfers >= {rs.get('transfer_auto_fail_at')}",
         f"Auto-fail quality cap: {rs.get('auto_fail_quality_cap')}",
         "",
-        "Score EVERY active rule below. Return rule_results with one entry per rule id.",
+        "First classify the call topic. Then score every active rule whose "
+        "applies_to is 'all topics' OR lists that topic id.",
+        "Return rule_results with one entry per applicable rule id. "
+        "Omit rules that do not apply to the classified topic. "
+        "Do not mark an inapplicable rule as passed.",
         "",
     ]
     for r in active_rules(rs):
         lines.append(
             f"- id={r['id']} | {r['label']} | category={r.get('category')} | "
-            f"weight={r.get('weight')} | auto_fail={r.get('auto_fail')}\n"
+            f"weight={r.get('weight')} | auto_fail={r.get('auto_fail')} | "
+            f"applies_to={_applies_to_label(r)}\n"
             f"  pass_criteria: {r.get('pass_criteria')}"
         )
     return "\n".join(lines)
@@ -88,11 +138,12 @@ def normalize_rule_results(
     ruleset: dict[str, Any] | None = None,
     *,
     transcript: list[dict[str, Any]] | None = None,
+    topic_id: str | None = None,
 ) -> list[dict[str, Any]]:
     rs = ruleset or get_active_ruleset()
     by_id = {str(r.get("rule_id") or r.get("id") or ""): r for r in (raw_results or [])}
     out: list[dict[str, Any]] = []
-    for rule in active_rules(rs):
+    for rule in active_rules(rs, topic_id=topic_id):
         rid = rule["id"]
         item = by_id.get(rid) or {}
         score = item.get("score_1_to_10")

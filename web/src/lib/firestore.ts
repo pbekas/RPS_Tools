@@ -74,6 +74,8 @@ export type QaRule = {
   auto_fail?: boolean;
   pass_criteria?: string;
   active?: boolean;
+  /** Empty / omitted = scored on every call. Otherwise only those topic ids. */
+  topic_ids?: string[];
 };
 
 export type QaRuleset = {
@@ -86,6 +88,21 @@ export type QaRuleset = {
   transfer_auto_fail_at?: number;
   rules: QaRule[];
 };
+
+export function normalizeTopicIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const id = String(item || "")
+      .trim()
+      .toLowerCase();
+    if (!id || !/^[a-z0-9_]+$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
 
 export async function getCallTopics(): Promise<TopicSet> {
   const snap = await getDb().collection("call_topics").doc("current").get();
@@ -316,6 +333,7 @@ export async function upsertQaRule(input: {
   auto_fail?: boolean;
   pass_criteria?: string;
   active?: boolean;
+  topic_ids?: string[];
 }): Promise<QaRuleset> {
   const id = input.id.trim().toLowerCase();
   if (!/^[a-z0-9_]+$/.test(id)) {
@@ -339,6 +357,7 @@ export async function upsertQaRule(input: {
     auto_fail: !!input.auto_fail,
     pass_criteria: (input.pass_criteria || "").trim(),
     active: input.active !== false,
+    topic_ids: normalizeTopicIds(input.topic_ids),
   };
   if (idx >= 0) rules[idx] = { ...rules[idx], ...row };
   else rules.push(row);

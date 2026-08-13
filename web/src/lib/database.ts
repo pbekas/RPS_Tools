@@ -21,6 +21,7 @@ export type {
 } from "@/lib/firestore";
 export type { CallLogDoc, CallLogStats };
 export { summarizeCallLogs };
+export { normalizeTopicIds } from "@/lib/firestore";
 
 import type {
   CallDoc,
@@ -355,6 +356,7 @@ export async function upsertQaRule(input: {
   auto_fail?: boolean;
   pass_criteria?: string;
   active?: boolean;
+  topic_ids?: string[];
 }): Promise<QaRuleset> {
   if (!usePostgres()) return firestore.upsertQaRule(input);
   const id = validateId(input.id, "Rule");
@@ -373,6 +375,7 @@ export async function upsertQaRule(input: {
       auto_fail: !!input.auto_fail,
       pass_criteria: (input.pass_criteria || "").trim(),
       active: input.active !== false,
+      topic_ids: firestore.normalizeTopicIds(input.topic_ids),
     };
     const rules = [...current.rules];
     const index = rules.findIndex((rule) => rule.id === id);

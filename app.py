@@ -702,6 +702,7 @@ def page_qa_rules(user: dict) -> None:
             {
                 "ID": r.get("id"),
                 "Label": r.get("label"),
+                "Applies to": ", ".join(r.get("topic_ids") or []) or "All topics",
                 "Category": r.get("category"),
                 "Weight": r.get("weight"),
                 "Auto-fail": "Yes" if r.get("auto_fail") else "No",

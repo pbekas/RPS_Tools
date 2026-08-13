@@ -91,7 +91,8 @@ export function TopicSettings({ initialTopicset }: Props) {
         <h2 className="font-display text-2xl text-ink">Call topics</h2>
         <p className="mt-1 text-sm text-ink-soft">
           {topicset.name} · version <code>{topicset.version}</code>. The AI picks
-          one active topic id using these labels and details.
+          one active topic id using these labels and details. Audit rules can be
+          limited to specific topics on the Audit rules tab.
         </p>
         {topicset.description ? (
           <p className="mt-2 text-sm text-ink-soft">{topicset.description}</p>

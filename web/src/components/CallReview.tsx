@@ -517,6 +517,9 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
             <h2 className="font-display text-lg text-ink">Audit checklist</h2>
             <p className="text-sm text-ink-soft">
               Click a fail to jump to the moment and scrub audio.
+              {call.topic
+                ? ` Scored for ${call.topic} (topic-specific rules only).`
+                : ""}
             </p>
           </div>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">

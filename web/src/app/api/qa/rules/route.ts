@@ -50,6 +50,7 @@ export async function POST(req: Request) {
         auto_fail: !!body.auto_fail,
         pass_criteria: body.pass_criteria ? String(body.pass_criteria) : "",
         active: body.active !== false,
+        topic_ids: Array.isArray(body.topic_ids) ? body.topic_ids : [],
       });
       return NextResponse.json({ ok: true, ruleset });
     }

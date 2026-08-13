@@ -82,7 +82,10 @@ export function SettingsShell({
           {tab === "topics" ? (
             <TopicSettings initialTopicset={initialTopicset} />
           ) : tab === "rules" ? (
-            <RuleSettings initialRuleset={initialRuleset} />
+            <RuleSettings
+              initialRuleset={initialRuleset}
+              topics={initialTopicset.topics || []}
+            />
           ) : (
             <FlagSettings initialFlagset={initialFlagset} />
           )}

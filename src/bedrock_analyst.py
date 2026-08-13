@@ -88,7 +88,8 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
 Rules:
 - Do NOT include a transcript array in your response.
 - Include speaker_roles only when speakers are labeled spk_0/spk_1/…; map each to Patient, Agent, or System.
-- Include exactly one rule_results entry for every active rule id provided.
+- First classify topic from the TOPIC CATALOG.
+- Include exactly one rule_results entry for every active rule that applies to that topic (applies_to=all topics, or the topic id is listed). Omit rules that do not apply.
 - For empathy, always set score_1_to_10 (1-10).
 - Always set evidence_timestamp and evidence_turn_index when you can identify a supporting turn.
 - Always extract patient_name when the caller states a name, the agent confirms a name, or the summary clearly names them.
@@ -188,7 +189,7 @@ def analyze_transcript(
         f"{transcript_text}\n\n"
         "Return JSON with agent_name, patient_name, doctor_name, topic, ai_summary, duration_seconds, "
         "time_to_answer_seconds, transfer_count, speaker_roles (if spk_* labels), sentiment, "
-        "rule_results for every active rule id, and any triggered critical_flags. "
+        "rule_results for every rule that applies to the classified topic, and any triggered critical_flags. "
         "Do not return a transcript array."
     )
 
@@ -211,13 +212,14 @@ def analyze_transcript(
         else (transfer_count_hint or 0)
     )
 
+    topic_fields = normalize_topic(data.get("topic"), topicset)
     rule_results = normalize_rule_results(
         data.get("rule_results"),
         ruleset,
         transcript=normalized_transcript,
+        topic_id=topic_fields.get("topic_id"),
     )
     scored = compute_scores(rule_results, ruleset, transfer_count=transfer_count)
-    topic_fields = normalize_topic(data.get("topic"), topicset)
     critical_flags = normalize_critical_flags(
         data.get("critical_flags"),
         flagset,

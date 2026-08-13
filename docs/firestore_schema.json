@@ -195,7 +195,8 @@
             "weight": "number",
             "auto_fail": "boolean",
             "pass_criteria": "string",
-            "active": "boolean"
+            "active": "boolean",
+            "topic_ids": ["string — empty/omitted = all topics; otherwise only these call_topics ids"]
           }
         ],
         "updated_at": "timestamp"

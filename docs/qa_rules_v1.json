@@ -1,5 +1,5 @@
 {
-  "version": "v2",
+  "version": "v3",
   "name": "Relevium Phone QA Medical Rubric",
   "description": "Medical front-desk phone quality rubric for Relevium Pain Specialists. Edit qa_rules/current in Firestore to evolve without redeploying.",
   "auto_fail_quality_cap": 4,
@@ -74,8 +74,9 @@
       "category": "Process",
       "weight": 1.5,
       "auto_fail": false,
-      "pass_criteria": "When scheduling or changing an appointment, agent confirms date, time, location/provider as applicable, and any prep instructions. Pass if the call is not about scheduling.",
-      "active": true
+      "pass_criteria": "When scheduling or changing an appointment, agent confirms date, time, location/provider as applicable, and any prep instructions.",
+      "active": true,
+      "topic_ids": ["scheduling"]
     },
     {
       "id": "insurance_auth_clarity",
@@ -84,8 +85,9 @@
       "category": "Process",
       "weight": 1.5,
       "auto_fail": false,
-      "pass_criteria": "When insurance, referrals, or prior auth are discussed, agent explains status and owned next steps without leaving the caller confused. Pass if insurance/auth is not discussed.",
-      "active": true
+      "pass_criteria": "When insurance, referrals, or prior auth are discussed, agent explains status and owned next steps without leaving the caller confused.",
+      "active": true,
+      "topic_ids": ["insurance"]
     },
     {
       "id": "medication_refill_process",
@@ -94,8 +96,9 @@
       "category": "Process",
       "weight": 1.5,
       "auto_fail": false,
-      "pass_criteria": "For refill requests, agent follows process (portal/pharmacy/provider review), sets expectations on timing, and does not promise controlled substances outside protocol. Pass if no refill discussion.",
-      "active": true
+      "pass_criteria": "For refill requests, agent follows process (portal/pharmacy/provider review), sets expectations on timing, and does not promise controlled substances outside protocol.",
+      "active": true,
+      "topic_ids": ["prescription_refill"]
     },
     {
       "id": "excessive_transfers",

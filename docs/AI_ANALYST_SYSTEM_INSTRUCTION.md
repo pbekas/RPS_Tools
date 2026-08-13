@@ -6,9 +6,11 @@ Used by `src/bedrock_analyst.py` with the active ruleset from `docs/qa_rules_v1.
 Default audit model: Claude **Haiku 4.5** (`BEDROCK_MODEL_ID`). Optional coaching
 model: Claude **Sonnet 4.5** (`BEDROCK_COACHING_MODEL_ID`).
 
-The model must return JSON including `rule_results` for every active rule id, plus
-summary, transfer_count, timing fields, `sentiment`, and any triggered
-`critical_flags` from `call_flags/current` (see `docs/call_flags_v1.json`).
+The model must return JSON including `rule_results` for every **applicable**
+rule id (rules with empty `topic_ids` apply to all calls; otherwise only when
+the classified topic matches), plus summary, transfer_count, timing fields,
+`sentiment`, and any triggered `critical_flags` from `call_flags/current`
+(see `docs/call_flags_v1.json`).
 
 **Do not regenerate the transcript** — Amazon Transcribe turns are passed in and stored
 as-is (optional `speaker_roles` map only).

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import type { QaRule, QaRuleset } from "@/lib/database";
+import { useMemo, useState } from "react";
+import type { CallTopic, QaRule, QaRuleset } from "@/lib/database";
 
 type Props = {
   initialRuleset: QaRuleset;
+  topics?: CallTopic[];
 };
 
 const CATEGORIES = ["Greeting", "Empathy", "Process", "Resolution"];
@@ -18,11 +19,13 @@ const emptyForm = {
   auto_fail: false,
   pass_criteria: "",
   active: true,
+  topic_ids: [] as string[],
 };
 
-export function RuleSettings({ initialRuleset }: Props) {
+export function RuleSettings({ initialRuleset, topics = [] }: Props) {
   const [ruleset, setRuleset] = useState(initialRuleset);
   const [form, setForm] = useState(emptyForm);
+  const [topicFilter, setTopicFilter] = useState("all");
   const [meta, setMeta] = useState({
     name: initialRuleset.name || "",
     description: initialRuleset.description || "",
@@ -35,6 +38,30 @@ export function RuleSettings({ initialRuleset }: Props) {
   const [msg, setMsg] = useState("");
 
   const rules = ruleset.rules || [];
+  const topicLabel = useMemo(() => {
+    const map = new Map(topics.map((t) => [t.id, t.label]));
+    return (id: string) => map.get(id) || id;
+  }, [topics]);
+
+  const visibleRules = useMemo(() => {
+    if (topicFilter === "all") return rules;
+    if (topicFilter === "global") {
+      return rules.filter((r) => !(r.topic_ids && r.topic_ids.length));
+    }
+    return rules.filter((r) => {
+      const ids = r.topic_ids || [];
+      return ids.length === 0 || ids.includes(topicFilter);
+    });
+  }, [rules, topicFilter]);
+
+  function toggleFormTopic(id: string) {
+    setForm((prev) => ({
+      ...prev,
+      topic_ids: prev.topic_ids.includes(id)
+        ? prev.topic_ids.filter((item) => item !== id)
+        : [...prev.topic_ids, id],
+    }));
+  }
 
   async function refresh() {
     const res = await fetch("/api/qa/rules");
@@ -64,6 +91,7 @@ export function RuleSettings({ initialRuleset }: Props) {
       auto_fail: !!r.auto_fail,
       pass_criteria: r.pass_criteria || "",
       active: r.active !== false,
+      topic_ids: [...(r.topic_ids || [])],
     });
   }
 
@@ -114,6 +142,7 @@ export function RuleSettings({ initialRuleset }: Props) {
           auto_fail: form.auto_fail,
           pass_criteria: form.pass_criteria,
           active: form.active,
+          topic_ids: form.topic_ids,
         }),
       });
       const data = await res.json();
@@ -157,8 +186,9 @@ export function RuleSettings({ initialRuleset }: Props) {
         <h2 className="font-display text-2xl text-ink">QA audit rules</h2>
         <p className="mt-1 text-sm text-ink-soft">
           {ruleset.name} · version <code>{ruleset.version}</code>. Active rules
-          are scored on every analyzed call. Changes apply to new analyses (and
-          re-analyze).
+          with no topics selected are scored on every analyzed call. Rules
+          limited to topics are only scored when the call is classified as one
+          of those topics. Changes apply to new analyses (and re-analyze).
         </p>
       </div>
 
@@ -230,10 +260,35 @@ export function RuleSettings({ initialRuleset }: Props) {
       </form>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-wash/40 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            {visibleRules.length} rule{visibleRules.length === 1 ? "" : "s"}
+            {topicFilter !== "all" ? " in this view" : ""}
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              Show
+            </span>
+            <select
+              value={topicFilter}
+              onChange={(e) => setTopicFilter(e.target.value)}
+              className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm"
+            >
+              <option value="all">All rules</option>
+              <option value="global">All-topic rules only</option>
+              {topics.map((t) => (
+                <option key={t.id} value={t.id}>
+                  Applies on {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <table className="w-full text-left text-sm">
           <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
             <tr>
               <th className="px-4 py-3">Rule</th>
+              <th className="px-4 py-3">Applies to</th>
               <th className="px-4 py-3">Category</th>
               <th className="px-4 py-3">Weight</th>
               <th className="px-4 py-3">Flags</th>
@@ -244,14 +299,21 @@ export function RuleSettings({ initialRuleset }: Props) {
           <tbody>
             {rules.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
+                <td colSpan={7} className="px-4 py-8 text-center text-ink-soft">
                   No rules yet. Seed with{" "}
                   <code>python scripts/seed_qa_rules.py --force</code>.
                 </td>
               </tr>
+            ) : visibleRules.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-ink-soft">
+                  No rules match this topic filter.
+                </td>
+              </tr>
             ) : (
-              rules.map((r) => {
+              visibleRules.map((r) => {
                 const isActive = r.active !== false;
+                const ids = r.topic_ids || [];
                 return (
                   <tr
                     key={r.id}
@@ -267,6 +329,22 @@ export function RuleSettings({ initialRuleset }: Props) {
                           {r.pass_criteria}
                         </p>
                       ) : null}
+                    </td>
+                    <td className="px-4 py-3">
+                      {ids.length === 0 ? (
+                        <span className="text-xs text-ink-soft">All topics</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {ids.map((id) => (
+                            <span
+                              key={id}
+                              className="rounded-full bg-wash px-2 py-0.5 text-[11px] font-semibold text-ink"
+                            >
+                              {topicLabel(id)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-ink-soft">
                       {r.category || "—"}
@@ -406,6 +484,43 @@ export function RuleSettings({ initialRuleset }: Props) {
             placeholder="When should this rule pass or fail?"
           />
         </label>
+        <fieldset className="mt-4">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            Applies to topics
+          </legend>
+          <p className="mt-1 text-sm text-ink-soft">
+            Leave all unchecked to score this rule on every call. Check one or
+            more topics to score it only when the call is classified as those
+            topics — for example New patient vs Billing.
+          </p>
+          {topics.length === 0 ? (
+            <p className="mt-2 text-sm text-ink-soft">
+              Add topics in the Topics tab first, then assign them here.
+            </p>
+          ) : (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {topics.map((t) => (
+                <label
+                  key={t.id}
+                  className="flex items-start gap-2 text-sm font-semibold text-ink-soft"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={form.topic_ids.includes(t.id)}
+                    onChange={() => toggleFormTopic(t.id)}
+                  />
+                  <span>
+                    {t.label}
+                    <span className="ml-1 font-mono text-[11px] font-normal">
+                      {t.id}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </fieldset>
         <div className="mt-3 flex flex-wrap gap-4">
           <label className="flex items-center gap-2 text-sm font-semibold text-ink-soft">
             <input
