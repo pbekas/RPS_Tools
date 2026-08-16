@@ -1,8 +1,12 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { listCalls } from "@/lib/database";
-import { buildQaSample, isQaEligibleDuration } from "@/lib/qa";
+import { listCalls, listUsers } from "@/lib/database";
+import {
+  buildQaSample,
+  filterMappedQaCalls,
+  isQaEligibleDuration,
+} from "@/lib/qa";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -19,17 +23,21 @@ export async function POST(req: Request) {
   const unknownCount = Math.min(30, Math.max(0, Number(body.unknown_count) || 5));
   const unreviewedOnly = body.unreviewed_only !== false;
   const overweightFails = body.overweight_fails !== false;
-  const includeUnknown = body.include_unknown !== false;
+  const includeUnknown = body.include_unknown === true;
   const agentEmails: string[] | null = Array.isArray(body.agent_emails)
     ? body.agent_emails.map((e: string) => String(e).toLowerCase())
     : null;
 
   const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
-  const calls = await listCalls({
-    status: "complete",
-    limit: 500,
-    sinceMs,
-  });
+  const [rawCalls, users] = await Promise.all([
+    listCalls({
+      status: "complete",
+      limit: 500,
+      sinceMs,
+    }),
+    listUsers(),
+  ]);
+  const calls = filterMappedQaCalls(rawCalls, users);
   const eligible = calls.filter((c) => isQaEligibleDuration(c.duration_seconds));
 
   const { sample, buckets } = buildQaSample(eligible, {

@@ -10,6 +10,7 @@ import {
   isFirestoreQuotaError,
 } from "@/lib/database";
 import { pickReviewSampleIds } from "@/lib/coachingQueue";
+import { isMappedAgentUser } from "@/lib/qa";
 import { CoachingPanel } from "@/components/CoachingPanel";
 import { QuotaNotice } from "@/components/QuotaNotice";
 
@@ -38,7 +39,7 @@ export default async function CoachingPage({ searchParams }: Props) {
 
     const agents = isAdmin
       ? (await listUsers())
-          .filter((u) => (u.role || "").toLowerCase() !== "admin")
+          .filter(isMappedAgentUser)
           .map((u) => ({ email: u.email, name: u.name }))
       : [];
 

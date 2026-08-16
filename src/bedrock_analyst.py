@@ -45,7 +45,7 @@ Use the numbered turns as given. evidence_turn_index must refer to those turn nu
 
 Return ONLY valid JSON (no markdown fences) matching this schema:
 {
-  "agent_name": "string — best guess of the staff member's name if stated or identifiable; else Unknown",
+  "agent_name": "string — Relevium staff member only (the employee on our side). Never the patient, caller, or person who answered an outbound call. Use Unknown if the staff name is not clear",
   "patient_name": "string — caller's / patient's name if stated or clearly identifiable (including CNAM-style names); else Unknown",
   "doctor_name": "string — treating / referred / mentioned physician or provider name if stated (e.g. Dr. Smith); else empty string",
   "topic": "string — MUST be one topic id from the TOPIC CATALOG (e.g. scheduling), not a freeform phrase",
@@ -92,6 +92,7 @@ Rules:
 - Include exactly one rule_results entry for every active rule that applies to that topic (applies_to=all topics, or the topic id is listed). Omit rules that do not apply.
 - For empathy, always set score_1_to_10 (1-10).
 - Always set evidence_timestamp and evidence_turn_index when you can identify a supporting turn.
+- agent_name is the Relevium employee only. On outbound calls the person who answers is the patient/callee, not the agent. If the staff member is not identifiable, use Unknown.
 - Always extract patient_name when the caller states a name, the agent confirms a name, or the summary clearly names them.
 - Extract doctor_name when a physician/provider is named (caller or agent); leave empty when none is mentioned. Do not invent names.
 - topic MUST be exactly one id from the TOPIC CATALOG.

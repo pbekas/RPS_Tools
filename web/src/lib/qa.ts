@@ -9,6 +9,55 @@ export function isQaEligibleDuration(durationSeconds?: number | null): boolean {
   return (durationSeconds || 0) > MIN_CALL_DURATION_SECONDS;
 }
 
+export function isMappedAgentUser(user: {
+  email?: string | null;
+  role?: string | null;
+  provisional?: boolean;
+  active?: boolean;
+}): boolean {
+  const email = (user.email || "").trim().toLowerCase();
+  if (!email || user.active === false) return false;
+  if (user.provisional || email.startsWith("unmapped.")) return false;
+  return (user.role || "Agent").toLowerCase() === "agent";
+}
+
+export function mappedAgentEmails(
+  users: Array<{
+    email?: string | null;
+    role?: string | null;
+    provisional?: boolean;
+    active?: boolean;
+  }>
+): Set<string> {
+  return new Set(
+    users
+      .filter(isMappedAgentUser)
+      .map((user) => (user.email || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+export function isMappedQaCall(
+  call: { agent_email?: string | null },
+  mappedEmails: Set<string>
+): boolean {
+  const email = (call.agent_email || "").trim().toLowerCase();
+  return !!email && mappedEmails.has(email);
+}
+
+export function filterMappedQaCalls<T extends { agent_email?: string | null }>(
+  calls: T[],
+  users: Array<{
+    email?: string | null;
+    role?: string | null;
+    provisional?: boolean;
+    active?: boolean;
+  }>
+): T[] {
+  const emails = mappedAgentEmails(users);
+  return calls.filter((call) => isMappedQaCall(call, emails));
+}
+
 export type AgentBucketKey = string; // email or "__unknown__"
 
 export type SampleCall = Pick<

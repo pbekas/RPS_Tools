@@ -988,8 +988,10 @@ export async function assignCallAgent(input: {
 
   if (input.createName?.trim()) {
     name = input.createName.trim();
-    const provided = (input.createEmail || "").trim().toLowerCase();
-    email = provided || suggestedAgentEmail(name);
+    email = (input.createEmail || "").trim().toLowerCase();
+    if (!email) {
+      throw new Error("Workspace email is required for a new agent");
+    }
     if (!email.endsWith(`@${domain}`)) {
       throw new Error(`Email must be @${domain}`);
     }

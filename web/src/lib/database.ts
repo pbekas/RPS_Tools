@@ -813,7 +813,8 @@ export async function assignCallAgent(input: {
     let name = (input.agentName || "").trim();
     if (input.createName?.trim()) {
       name = input.createName.trim();
-      email = (input.createEmail || suggestedAgentEmail(name)).trim().toLowerCase();
+      email = (input.createEmail || "").trim().toLowerCase();
+      if (!email) throw new Error("Workspace email is required for a new agent");
       if (!email.endsWith(`@${domain}`)) throw new Error(`Email must be @${domain}`);
       await client.query(
         `INSERT INTO users (email, name, role, provisional)

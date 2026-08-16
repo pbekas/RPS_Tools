@@ -111,9 +111,11 @@ def run_weekly_coaching_for_agent(agent_email: str) -> str:
 
 def run_weekly_coaching_all_agents() -> dict[str, str]:
     results: dict[str, str] = {}
+    from src.agent_identity import is_mapped_agent_user
+
     for user in db.list_users(role="Agent"):
         email = user.get("email")
-        if not email:
+        if not email or not is_mapped_agent_user(user):
             continue
         try:
             results[email] = run_weekly_coaching_for_agent(email)

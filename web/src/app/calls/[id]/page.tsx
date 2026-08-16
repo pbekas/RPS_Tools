@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { getCall, listUsers } from "@/lib/database";
+import { isMappedAgentUser } from "@/lib/qa";
 import { resolveRecordingUrl } from "@/lib/s3";
 import { CallReview } from "@/components/CallReview";
 
@@ -28,7 +29,9 @@ export default async function CallPage({
 
   const [recording_url, agents] = await Promise.all([
     resolveRecordingUrl(call),
-    isAdmin ? listUsers() : Promise.resolve([]),
+    isAdmin
+      ? listUsers().then((rows) => rows.filter(isMappedAgentUser))
+      : Promise.resolve([]),
   ]);
 
   return (

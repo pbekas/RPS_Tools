@@ -2,8 +2,8 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { authOptions } from "@/lib/auth";
-import { isFirestoreQuotaError, listCalls } from "@/lib/database";
-import { buildIssueHeatmap } from "@/lib/qa";
+import { isFirestoreQuotaError, listCalls, listUsers } from "@/lib/database";
+import { buildIssueHeatmap, filterMappedQaCalls } from "@/lib/qa";
 import { Dashboard } from "@/components/Dashboard";
 import { QuotaNotice } from "@/components/QuotaNotice";
 import {
@@ -25,12 +25,16 @@ export default async function HomePage() {
 
   let calls;
   try {
-    calls = await listCalls({
-      agentEmail: isAdmin ? null : session.user.email.toLowerCase(),
-      status: "complete",
-      limit: isAdmin ? 200 : 100,
-      sinceMs: isAdmin ? sinceMs : null,
-    });
+    const [rawCalls, users] = await Promise.all([
+      listCalls({
+        agentEmail: isAdmin ? null : session.user.email.toLowerCase(),
+        status: "complete",
+        limit: isAdmin ? 200 : 100,
+        sinceMs: isAdmin ? sinceMs : null,
+      }),
+      isAdmin ? listUsers() : Promise.resolve([]),
+    ]);
+    calls = isAdmin ? filterMappedQaCalls(rawCalls, users) : rawCalls;
   } catch (err) {
     if (isFirestoreQuotaError(err)) {
       return <QuotaNotice detail={err instanceof Error ? err.message : undefined} />;

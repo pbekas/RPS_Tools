@@ -1,12 +1,9 @@
-"""Agent identity matching / provisional user creation."""
+"""Agent identity matching. QA credit is assigned only to directory Agent users."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
-
-from src import database as db
-from src.config import get_settings
 
 
 def slugify_agent_name(name: str) -> str:
@@ -22,6 +19,8 @@ def suggested_agent_email(name: str) -> str:
     'Diana' -> diana@releviumpain.com
     'Diana Lopez' -> diana.lopez@releviumpain.com
     """
+    from src.config import get_settings
+
     domain = (get_settings().allowed_email_domain or "releviumpain.com").lower()
     return f"{slugify_agent_name(name)}@{domain}"
 
@@ -46,15 +45,71 @@ def names_match(a: str, b: str) -> bool:
     return left in right or right in left
 
 
-def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
+def names_match_confident(detected: str, known: str) -> bool:
     """
-    Match an AI-detected agent name to a user, or create Agent as {name}@domain.
+    Assign QA credit only when the detected name confidently matches a known agent.
+    First-name-only matches are not enough (outbound callees often share a first name).
+    """
+    left = (detected or "").strip().lower()
+    right = (known or "").strip().lower()
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_parts = [p for p in left.split() if p]
+    right_parts = [p for p in right.split() if p]
+    if len(left_parts) >= 2 and len(right_parts) >= 2:
+        return left_parts[0] == right_parts[0] and left_parts[-1] == right_parts[-1]
+    return False
 
-    Returns (agent_email, agent_name). email may be None only when name is Unknown.
+
+def is_mapped_agent_user(user: dict[str, Any] | None) -> bool:
+    """True for an active, non-provisional Agent user in the directory."""
+    if not user:
+        return False
+    if user.get("active") is False:
+        return False
+    email = str(user.get("email") or "").strip().lower()
+    if not email or email.startswith("unmapped.") or user.get("provisional"):
+        return False
+    return str(user.get("role") or "Agent").strip().lower() == "agent"
+
+
+def match_mapped_agent(
+    agent_name: str,
+    users: list[dict[str, Any]] | None = None,
+) -> tuple[str | None, str]:
+    """
+    Match an AI-detected name to a real Agent user.
+
+    Does not create users. If the name is missing or does not confidently match
+    a directory agent, returns (None, cleaned_name) so the call stays out of
+    QA metrics until a manager assigns it.
     """
     cleaned = (agent_name or "").strip()
     if not cleaned or cleaned.lower() == "unknown":
         return None, "Unknown"
+
+    for u in users or []:
+        if not is_mapped_agent_user(u):
+            continue
+        name = (u.get("name") or "").strip()
+        email = (u.get("email") or "").strip().lower()
+        local = email.split("@")[0].replace(".", " ")
+        if names_match_confident(cleaned, name) or names_match_confident(cleaned, local):
+            return email, name or cleaned
+
+    return None, cleaned
+
+
+def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
+    """Load directory users and match; never creates a user."""
+    cleaned = (agent_name or "").strip()
+    if not cleaned or cleaned.lower() == "unknown":
+        return None, "Unknown"
+
+    from src import database as db
+    from src.config import get_settings
 
     settings = get_settings()
     if not settings.database_configured:
@@ -65,42 +120,15 @@ def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
     except Exception:
         return None, cleaned
 
-    for u in users:
-        if u.get("active") is False:
-            continue
-        name = (u.get("name") or "").strip()
-        email = (u.get("email") or "").strip().lower()
-        if not email:
-            continue
-        local = email.split("@")[0].replace(".", " ").replace("unmapped ", "")
-        if names_match(cleaned, name) or names_match(cleaned, local):
-            return email, name or cleaned
-
-    email = suggested_agent_email(cleaned)
-    try:
-        existing = db.get_user(email)
-        if existing:
-            # Email already reserved — attach to it and refresh name if blank
-            name = (existing.get("name") or "").strip() or cleaned
-            if not name or name.lower() == "unknown":
-                db.upsert_user(
-                    email=email,
-                    name=cleaned,
-                    role=existing.get("role") or "Agent",
-                    provisional=bool(existing.get("provisional", True)),
-                )
-                name = cleaned
-            return email, name
-        db.upsert_user(email=email, name=cleaned, role="Agent", provisional=True)
-    except Exception:
-        return None, cleaned
-    return email, cleaned
+    return match_mapped_agent(cleaned, users)
 
 
 def discover_unmapped_agents(*, call_limit: int = 400) -> list[dict[str, Any]]:
     """
     Find agent names on calls that still need a mapped user/email.
     """
+    from src import database as db
+
     calls = db.list_calls(limit=call_limit, status="complete", require_min_duration=False)
     users = { (u.get("email") or "").lower(): u for u in db.list_users() }
     by_name: dict[str, dict[str, Any]] = {}
@@ -177,6 +205,9 @@ def import_and_map_agent(
     cleaned = (agent_name or "").strip()
     if not cleaned or cleaned.lower() == "unknown":
         raise ValueError("Agent name is required")
+
+    from src import database as db
+    from src.config import get_settings
 
     domain = (get_settings().allowed_email_domain or "releviumpain.com").lower()
     target = (email or suggested_agent_email(cleaned)).strip().lower()

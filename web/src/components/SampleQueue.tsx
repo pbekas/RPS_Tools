@@ -15,10 +15,10 @@ type Props = {
 export function SampleQueue({ agents }: Props) {
   const [days, setDays] = useState(14);
   const [perAgent, setPerAgent] = useState(3);
-  const [unknownCount, setUnknownCount] = useState(5);
+  const [unknownCount, setUnknownCount] = useState(0);
   const [unreviewedOnly, setUnreviewedOnly] = useState(true);
   const [overweightFails, setOverweightFails] = useState(true);
-  const [includeUnknown, setIncludeUnknown] = useState(true);
+  const [includeUnknown, setIncludeUnknown] = useState(false);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -148,7 +148,7 @@ export function SampleQueue({ agents }: Props) {
                 checked={includeUnknown}
                 onChange={(e) => setIncludeUnknown(e.target.checked)}
               />
-              Include unknowns
+              Include unassigned calls
             </label>
           </div>
         </div>

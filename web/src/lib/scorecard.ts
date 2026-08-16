@@ -8,6 +8,7 @@ import {
 } from "@/lib/callLogs";
 import type { CallDoc, UserDoc } from "@/lib/firestore";
 import { toMillis } from "@/lib/format";
+import { isMappedAgentUser } from "@/lib/qa";
 
 export type ScorecardTier =
   | "rock_star"
@@ -67,11 +68,7 @@ type Identity = {
 };
 
 function isScorecardUser(u: UserDoc): boolean {
-  const email = (u.email || "").trim().toLowerCase();
-  if (!email || u.active === false) return false;
-  if (email.startsWith("unmapped.") || u.provisional) return false;
-  if ((u.role || "Agent").toLowerCase() === "admin") return false;
-  return true;
+  return isMappedAgentUser(u);
 }
 
 function buildUserIndex(users: UserDoc[]): {

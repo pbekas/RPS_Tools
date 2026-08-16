@@ -127,9 +127,12 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     setAssigning(true);
     setAssignMsg("");
     try {
+      if (agentMode === "create" && !createEmail.trim()) {
+        throw new Error("Workspace email is required for a new agent");
+      }
       const body =
         agentMode === "create"
-          ? { create_name: createName, create_email: createEmail || null }
+          ? { create_name: createName, create_email: createEmail }
           : { agent_email: agentEmail, agent_name: agentName };
       const res = await fetch(`/api/calls/${call.id}/agent`, {
         method: "POST",
@@ -435,12 +438,12 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                     <input
                       value={createEmail}
                       onChange={(e) => setCreateEmail(e.target.value)}
-                      placeholder="Workspace email (optional)"
+                      placeholder="Workspace email (required)"
                       className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
                     />
                     <p className="text-[11px] text-ink-soft">
-                      Leave email blank to create a provisional agent; add their
-                      @releviumpain.com later.
+                      Must be an @releviumpain.com employee. Do not add the
+                      person who answered an outbound call.
                     </p>
                   </div>
                 )}

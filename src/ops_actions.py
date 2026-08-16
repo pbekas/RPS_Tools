@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent_identity import resolve_or_create_agent
+from src.agent_identity import is_mapped_agent_user, resolve_or_create_agent
 from src.bedrock_analyst import analyze_transcript
 from src import database as db
 from src.pipeline import enqueue_bytes
@@ -30,8 +30,9 @@ def reanalyze_call(call_id: str, *, send_alerts: bool = True) -> dict[str, Any]:
         scored["transcript"] = transcript
 
     existing_email = (call.get("agent_email") or "").strip().lower()
+    existing_user = db.get_user(existing_email) if existing_email else None
     updates = {k: v for k, v in scored.items() if k != "recording_storage_uri"}
-    if existing_email and not existing_email.startswith("unmapped."):
+    if is_mapped_agent_user(existing_user):
         updates.pop("agent_email", None)
         updates.pop("agent_name", None)
     else:

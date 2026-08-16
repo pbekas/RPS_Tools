@@ -172,7 +172,11 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
                 pass
         if agent_email:
             try:
-                recompute_weekly_metrics_for_agent(agent_email)
+                from src.agent_identity import is_mapped_agent_user
+
+                user = db.get_user(agent_email)
+                if is_mapped_agent_user(user):
+                    recompute_weekly_metrics_for_agent(agent_email)
             except Exception:
                 pass
 
