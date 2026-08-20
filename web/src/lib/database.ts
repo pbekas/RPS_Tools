@@ -526,9 +526,8 @@ export async function listCallLogs(opts?: {
     conditions.push(`lower(trim(coalesce(direction, ''))) = $${values.length}`);
   }
   if (opts?.missedOnly) {
-    conditions.push(
-      "(is_missed = true OR lower(trim(coalesce(result, ''))) NOT IN ('', 'answered', 'connected'))"
-    );
+    // Trust is_missed only — blast siblings keep result=Missed but is_missed=false.
+    conditions.push("is_missed = true");
   }
   if (opts?.unrecordedOnly) {
     conditions.push("(recorded = false OR is_unrecorded = true)");

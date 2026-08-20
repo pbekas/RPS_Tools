@@ -63,8 +63,14 @@ def is_qualifying_missed_inbound(
     result: str | None,
     is_missed: bool | None = None,
 ) -> bool:
-    """True for inbound CDRs that were not answered/connected."""
+    """True for inbound CDRs that were not answered/connected.
+
+    Explicit ``is_missed=False`` wins over a Vonage ``Missed`` result so
+    Call Group blast siblings suppressed by CDR sync do not qualify.
+    """
     if (direction or "").strip().lower() != "inbound":
+        return False
+    if is_missed is False:
         return False
     text = (result or "").strip().lower()
     if text in _ANSWERED_RESULTS:
@@ -199,24 +205,36 @@ def _log_fields(log: Any) -> dict[str, Any]:
     }
 
 
-def maybe_notify_missed_inbound_call(log: Any) -> bool:
+def maybe_notify_missed_inbound_call(
+    log: Any,
+    *,
+    is_missed_override: bool | None = None,
+) -> bool:
     """
     After a CDR upsert, optionally SMS the caller for a missed inbound.
 
     Never raises — failures are logged and swallowed so CDR sync continues.
     Dedups via alert_state keyed by normalized phone + cooldown window.
+
+    ``is_missed_override`` lets CDR sync pass the post–group-ring flag so
+    blast siblings do not text the patient.
     """
     try:
         from src.config import get_settings
 
         settings = get_settings()
         fields = _log_fields(log)
+        is_missed = (
+            is_missed_override
+            if is_missed_override is not None
+            else fields.get("is_missed")
+        )
         ok, reason = should_send_missed_call_sms(
             direction=fields.get("direction"),
             result=fields.get("result"),
             from_number=fields.get("from_number"),
             start=fields.get("start") if isinstance(fields.get("start"), datetime) else None,
-            is_missed=fields.get("is_missed"),
+            is_missed=is_missed,
             enabled=settings.twilio_missed_sms_enabled,
             credentials_ready=settings.twilio_configured,
             max_age_minutes=settings.twilio_missed_sms_max_age_minutes,

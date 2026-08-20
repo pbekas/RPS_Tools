@@ -20,6 +20,9 @@ export type CallLogDoc = {
   in_network?: boolean | null;
   international?: boolean | null;
   is_missed?: boolean;
+  /** True when Vonage logged Missed but another group extension answered. */
+  answered_elsewhere?: boolean;
+  answered_elsewhere_log_id?: string | null;
   is_unrecorded?: boolean;
   matched_call_id?: string | null;
   /** Telephony ring time (seconds). Null until Vonage/ACD exposes it. */
@@ -69,6 +72,18 @@ export function isMissedResult(result?: string | null): boolean {
   return text !== "answered" && text !== "connected";
 }
 
+/** Patient-facing miss after Call Group blast sibling suppression. */
+export function isEffectiveMiss(log: {
+  result?: string | null;
+  is_missed?: boolean;
+  answered_elsewhere?: boolean;
+}): boolean {
+  if (log.answered_elsewhere) return false;
+  // Authoritative once CDR sync has run (false = answered or suppressed).
+  if (typeof log.is_missed === "boolean") return log.is_missed;
+  return isMissedResult(log.result);
+}
+
 export function normalizeResult(result?: string | null): string {
   const text = (result || "").trim();
   return text || "Unknown";
@@ -113,7 +128,7 @@ export function summarizeCallLogs(logs: CallLogDoc[]): CallLogStats {
   let withQa = 0;
   let totalTalkSeconds = 0;
   for (const log of logs) {
-    const isMissed = !!(log.is_missed || isMissedResult(log.result));
+    const isMissed = isEffectiveMiss(log);
     if (isMissed) missed += 1;
     else answered += 1;
     if (log.recorded === false || log.is_unrecorded) unrecorded += 1;
@@ -159,7 +174,7 @@ export function talkTimeByPerson(logs: CallLogDoc[]): PersonTalkRow[] {
     if (result === "answered" || result === "connected") existing.answered += 1;
     else if (result.includes("abandon")) existing.abandoned += 1;
     else if (result.includes("voicemail")) existing.voicemail += 1;
-    else if (isMissedResult(log.result)) existing.missed += 1;
+    else if (isEffectiveMiss(log)) existing.missed += 1;
     map.set(party.key, existing);
   }
   return [...map.values()].sort(

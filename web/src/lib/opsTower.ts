@@ -1,7 +1,7 @@
 /** Ops control tower rollups from CDR logs (client-safe). */
 
 import type { CallLogDoc } from "@/lib/callLogs";
-import { isMissedResult, normalizeResult } from "@/lib/callLogs";
+import { isEffectiveMiss, isMissedResult, normalizeResult } from "@/lib/callLogs";
 import { toMillis } from "@/lib/format";
 
 export const OPS_TIMEZONE = "America/Los_Angeles";
@@ -142,6 +142,11 @@ function zonedParts(
 }
 
 export function classifyOutcome(log: CallLogDoc): OutcomeBucket {
+  // Group-ring siblings keep Vonage "Missed" but are not patient misses.
+  if (log.answered_elsewhere) return "answered";
+  if (typeof log.is_missed === "boolean" && !log.is_missed && isMissedResult(log.result)) {
+    return "answered";
+  }
   const result = normalizeResult(log.result).toLowerCase();
   if (result === "answered" || result === "connected") return "answered";
   if (result.includes("abandon")) return "abandoned";
@@ -154,7 +159,7 @@ export function classifyOutcome(log: CallLogDoc): OutcomeBucket {
     result.includes("no answer") ||
     result.includes("no-answer") ||
     result.includes("attempt") ||
-    !!log.is_missed
+    isEffectiveMiss(log)
   ) {
     return "no_answer";
   }

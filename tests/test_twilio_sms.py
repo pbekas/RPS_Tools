@@ -49,10 +49,12 @@ class QualifyingMissedInboundTest(unittest.TestCase):
             is_qualifying_missed_inbound(direction="inbound", result="Answered")
         )
 
-    def test_outbound_missed_skipped(self) -> None:
+    def test_answered_elsewhere_override(self) -> None:
         self.assertFalse(
             is_qualifying_missed_inbound(
-                direction="Outbound", result="Missed", is_missed=True
+                direction="Inbound",
+                result="Missed",
+                is_missed=False,
             )
         )
 

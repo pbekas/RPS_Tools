@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { CallLogDoc } from "@/lib/callLogs";
 import {
-  isMissedResult,
+  isEffectiveMiss,
   normalizeResult,
   partyFromLog,
   resultBreakdown,
@@ -83,7 +83,7 @@ export function CallOps({
       : null;
 
     return logs.filter((log) => {
-      const isMissed = !!log.is_missed || isMissedResult(log.result);
+      const isMissed = isEffectiveMiss(log);
       if (missedOnly && !isMissed) return false;
       if (unrecordedOnly && !(log.recorded === false || log.is_unrecorded)) {
         return false;
@@ -455,7 +455,7 @@ export function CallOps({
               </tr>
             ) : (
               filtered.map((log) => {
-                const isMissed = !!log.is_missed || isMissedResult(log.result);
+                const isMissed = isEffectiveMiss(log);
                 const isUnrecorded =
                   log.recorded === false || !!log.is_unrecorded;
                 const party = partyFromLog(log);
@@ -494,6 +494,14 @@ export function CallOps({
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
                         {isMissed ? <Badge tone="warn">Missed</Badge> : null}
+                        {!isMissed &&
+                        (log.answered_elsewhere ||
+                          (log.is_missed === false &&
+                            (log.result || "")
+                              .toLowerCase()
+                              .includes("miss"))) ? (
+                          <Badge tone="pass">Answered elsewhere</Badge>
+                        ) : null}
                         {isUnrecorded ? (
                           <Badge tone="fail">Unrecorded</Badge>
                         ) : null}

@@ -9,6 +9,14 @@ from typing import Any
 
 from src import database as db
 from src.config import get_settings
+from src.missed_call_group import (
+    DEFAULT_ANSWERED_ELSEWHERE_WINDOW_SECONDS,
+    build_answered_elsewhere_index,
+    effective_is_missed,
+    find_answered_elsewhere_sibling,
+    is_answered_result,
+    is_inbound,
+)
 from src.vonage_reports import VBCCallLog, VonageReportsClient
 
 logger = logging.getLogger(__name__)
@@ -47,11 +55,14 @@ def sync_call_logs(
         start_gte = now - timedelta(days=days_back)
     start_lte = end or now
 
+    window_seconds = DEFAULT_ANSWERED_ELSEWHERE_WINDOW_SECONDS
+
     summary: dict[str, Any] = {
         "listed": 0,
         "upserted": 0,
         "matched": 0,
         "missed": 0,
+        "missed_suppressed_group_ring": 0,
         "unrecorded": 0,
         "missed_sms_sent": 0,
         "missed_alerts_sent": 0,
@@ -69,7 +80,9 @@ def sync_call_logs(
             start_lte + pad,
         )
 
-    seen = 0
+    # Materialize the pull so blast-group siblings in the same page can
+    # suppress each other regardless of API order.
+    pulled: list[VBCCallLog] = []
     for log in client.iter_call_logs(
         start_gte=start_gte,
         start_lte=start_lte,
@@ -78,12 +91,30 @@ def sync_call_logs(
     ):
         if not log.log_id:
             continue
-        seen += 1
-        summary["listed"] = seen
-        if seen > max_logs:
+        pulled.append(log)
+        if len(pulled) >= max_logs:
             break
 
-        if log.is_missed:
+    summary["listed"] = len(pulled)
+
+    # Recent stored CDRs cover answered legs that landed in an earlier poll.
+    recent_peers = _load_recent_peers_for_group_ring(window_seconds=window_seconds)
+    answered_elsewhere = build_answered_elsewhere_index(
+        [*pulled, *recent_peers],
+        window_seconds=window_seconds,
+    )
+
+    for log in pulled:
+        sibling_id = answered_elsewhere.get(log.log_id)
+        is_missed = effective_is_missed(
+            result=log.result,
+            is_missed=log.is_missed,
+            answered_elsewhere=bool(sibling_id),
+            answered_elsewhere_log_id=sibling_id,
+        )
+        if sibling_id and log.is_missed:
+            summary["missed_suppressed_group_ring"] += 1
+        if is_missed:
             summary["missed"] += 1
         if log.is_unrecorded:
             summary["unrecorded"] += 1
@@ -95,18 +126,38 @@ def sync_call_logs(
                 summary["matched"] += 1
 
         try:
-            db.upsert_call_log(_call_log_payload(log, matched_call_id))
+            db.upsert_call_log(
+                _call_log_payload(
+                    log,
+                    matched_call_id,
+                    is_missed=is_missed,
+                    answered_elsewhere_log_id=sibling_id,
+                )
+            )
             summary["upserted"] += 1
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append({"log_id": log.log_id, "error": str(exc)})
             logger.exception("Failed to upsert call log %s", log.log_id)
             continue
 
+        # An answered leg may arrive after sibling misses were already stored.
+        if is_inbound(log.direction) and is_answered_result(log.result):
+            try:
+                suppressed = _backfill_suppress_group_ring_misses(
+                    log,
+                    window_seconds=window_seconds,
+                )
+                summary["missed_suppressed_group_ring"] += suppressed
+            except Exception:
+                logger.exception(
+                    "Group-ring miss backfill failed for answered %s", log.log_id
+                )
+
         # Best-effort patient SMS — never fails the CDR sync cycle.
         try:
             from src.twilio_sms import maybe_notify_missed_inbound_call
 
-            if maybe_notify_missed_inbound_call(log):
+            if maybe_notify_missed_inbound_call(log, is_missed_override=is_missed):
                 summary["missed_sms_sent"] += 1
         except Exception:
             logger.exception("Missed-call SMS hook failed for %s", log.log_id)
@@ -131,7 +182,7 @@ def sync_call_logs(
                 agent_name=agent_name,
                 extension=extension,
                 start=log.start,
-                is_missed=log.is_missed,
+                is_missed=is_missed,
             ):
                 summary["missed_alerts_sent"] += 1
         except Exception:
@@ -162,9 +213,11 @@ def _maybe_alert_missed_spike(summary: dict[str, Any]) -> None:
                 start = start.replace(tzinfo=timezone.utc)
             if start < cutoff:
                 continue
-            result = (row.get("result") or "").strip().lower()
-            if row.get("is_missed") or (
-                result and result not in {"answered", "connected"}
+            if effective_is_missed(
+                result=row.get("result"),
+                is_missed=row.get("is_missed"),
+                answered_elsewhere=bool(row.get("answered_elsewhere")),
+                answered_elsewhere_log_id=row.get("answered_elsewhere_log_id"),
             ):
                 missed += 1
             else:
@@ -203,9 +256,22 @@ def test_reports_connection() -> dict[str, Any]:
 def _call_log_payload(
     log: VBCCallLog,
     matched_call_id: str | None,
+    *,
+    is_missed: bool | None = None,
+    answered_elsewhere_log_id: str | None = None,
 ) -> dict[str, Any]:
     # Timing stubs stay null until VBC/ACD exposes ring/queue wait.
     # Do not invent ASA from QA time_to_answer_seconds.
+    missed = (
+        bool(is_missed)
+        if is_missed is not None
+        else effective_is_missed(
+            result=log.result,
+            is_missed=log.is_missed,
+            answered_elsewhere=bool(answered_elsewhere_log_id),
+            answered_elsewhere_log_id=answered_elsewhere_log_id,
+        )
+    )
     return {
         "id": log.log_id,
         "direction": log.direction,
@@ -225,15 +291,67 @@ def _call_log_payload(
         "custom_tag": log.custom_tag,
         "in_network": log.in_network,
         "international": log.international,
-        "is_missed": log.is_missed,
+        "is_missed": missed,
         "is_unrecorded": log.is_unrecorded,
         "matched_call_id": matched_call_id,
         "ring_seconds": log.ring_seconds,
         "wait_seconds": log.wait_seconds,
         "queue_seconds": log.queue_seconds,
         "answered_at": log.answered_at,
+        # Stored via raw merge on upsert — used for Ops labels / audit.
+        "answered_elsewhere": bool(answered_elsewhere_log_id),
+        "answered_elsewhere_log_id": answered_elsewhere_log_id,
         "raw": log.raw,
     }
+
+
+def _load_recent_peers_for_group_ring(
+    *,
+    window_seconds: int,
+) -> list[dict[str, Any]]:
+    """Recent CDRs so an answered leg from a prior poll can suppress new misses."""
+    del window_seconds  # reserved for tighter SQL filters later
+    # A day of lookback is cheap and covers delayed Reports pages.
+    try:
+        return db.list_call_logs(limit=1000, days=1)
+    except Exception:
+        logger.exception("Failed loading recent CDRs for group-ring suppress")
+        return []
+
+
+def _backfill_suppress_group_ring_misses(
+    answered: VBCCallLog,
+    *,
+    window_seconds: int,
+) -> int:
+    """Flip already-stored Missed siblings when the answered leg arrives later."""
+    if answered.start is None:
+        return 0
+    recent = db.list_call_logs(limit=500, days=1)
+    suppressed = 0
+    for row in recent:
+        if row.get("answered_elsewhere") and row.get("is_missed") is False:
+            continue
+        sibling = find_answered_elsewhere_sibling(
+            row, [answered], window_seconds=window_seconds
+        )
+        if not sibling:
+            continue
+        db.upsert_call_log(
+            {
+                "id": row["id"],
+                "is_missed": False,
+                "answered_elsewhere": True,
+                "answered_elsewhere_log_id": answered.log_id,
+            }
+        )
+        suppressed += 1
+        logger.info(
+            "Suppressed group-ring miss %s (answered elsewhere as %s)",
+            row.get("id"),
+            answered.log_id,
+        )
+    return suppressed
 
 
 def _load_match_candidates(

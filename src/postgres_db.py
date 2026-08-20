@@ -957,13 +957,9 @@ def list_call_logs(
         clauses.append(sql.SQL("lower(btrim(direction)) = %s"))
         params.append(direction.strip().lower())
     if missed_only:
-        clauses.append(
-            sql.SQL(
-                "(is_missed = true OR "
-                "(result IS NOT NULL AND btrim(result) <> '' "
-                "AND lower(btrim(result)) NOT IN ('answered', 'connected')))"
-            )
-        )
+        # Trust is_missed only — Call Group blast siblings keep result=Missed
+        # but are stored with is_missed=false after answered-elsewhere suppress.
+        clauses.append(sql.SQL("is_missed = true"))
     if unrecorded_only:
         clauses.append(sql.SQL("(recorded = false OR is_unrecorded = true)"))
     where = (

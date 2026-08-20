@@ -9,7 +9,6 @@ import {
 import fs from "fs";
 import { isQaEligibleDuration } from "@/lib/qa";
 import type { CallLogDoc } from "@/lib/callLogs";
-import { isMissedResult } from "@/lib/callLogs";
 
 export type { CallLogDoc, CallLogStats } from "@/lib/callLogs";
 export { summarizeCallLogs } from "@/lib/callLogs";
@@ -664,7 +663,8 @@ export async function listCallLogs(opts?: {
     rows = rows.filter((r) => (r.direction || "").trim().toLowerCase() === needle);
   }
   if (opts?.missedOnly) {
-    rows = rows.filter((r) => r.is_missed || isMissedResult(r.result));
+    // Trust is_missed only (group-ring siblings keep Vonage result=Missed).
+    rows = rows.filter((r) => r.is_missed === true);
   }
   if (opts?.unrecordedOnly) {
     rows = rows.filter((r) => r.recorded === false || r.is_unrecorded);

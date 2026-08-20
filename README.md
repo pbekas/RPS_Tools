@@ -72,6 +72,12 @@ Off by default (`TWILIO_MISSED_SMS_ENABLED=0`). Dedup uses `alert_state` keyed b
 normalized phone. Copy is configurable via `TWILIO_MISSED_SMS_MESSAGE` (optional
 `{main_line}`). Optional delivery receipts: `POST /webhooks/twilio/sms-status`.
 
+**Call Group blast false misses:** when Vonage logs Missed for other extensions
+in a simultaneous-ring group after someone answers, CDR sync marks those legs
+`is_missed=false` / `answered_elsewhere` (same caller, answered inbound within
+~90s). Chat alerts, SMS, Ops miss counts, and `missed_only` filters all use the
+corrected flag. Raw Vonage `result` stays `Missed` for audit.
+
 **Scheduled HTTP kick (cron / EventBridge):** every 5 minutes `POST` to:
 
 `http://localhost:8080/poller/sync-now`

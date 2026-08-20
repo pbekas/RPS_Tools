@@ -537,7 +537,8 @@ def list_call_logs(
             r for r in rows if (r.get("direction") or "").strip().lower() == needle
         ]
     if missed_only:
-        rows = [r for r in rows if r.get("is_missed") or _is_missed_result(r.get("result"))]
+        # Trust is_missed only (group-ring siblings keep Vonage result=Missed).
+        rows = [r for r in rows if r.get("is_missed") is True]
     if unrecorded_only:
         rows = [r for r in rows if r.get("recorded") is False or r.get("is_unrecorded")]
 

@@ -2,7 +2,7 @@
 
 import type { CallLogDoc } from "@/lib/callLogs";
 import {
-  isMissedResult,
+  isEffectiveMiss,
   normalizeResult,
   partyFromLog,
 } from "@/lib/callLogs";
@@ -261,7 +261,7 @@ export function buildAgentScorecard(input: {
     const result = normalizeResult(log.result).toLowerCase();
     if (result === "answered" || result === "connected") {
       row.answered += 1;
-    } else if (isMissedResult(log.result) || log.is_missed) {
+    } else if (isEffectiveMiss(log)) {
       row.missedBucket += 1;
     }
   }
