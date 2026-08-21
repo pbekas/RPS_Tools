@@ -29,6 +29,18 @@ def suggested_agent_email(name: str) -> str:
 provisional_agent_email = suggested_agent_email
 
 
+def normalize_extension(value: Any) -> str | None:
+    """Normalize a Vonage / directory extension for comparison."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    digits = re.sub(r"\D", "", text)
+    if digits:
+        return digits
+    cleaned = re.sub(r"\s+", "", text)
+    return cleaned or None
+
+
 def names_match(a: str, b: str) -> bool:
     left = (a or "").strip().lower()
     right = (b or "").strip().lower()
@@ -75,6 +87,25 @@ def is_mapped_agent_user(user: dict[str, Any] | None) -> bool:
     return str(user.get("role") or "Agent").strip().lower() == "agent"
 
 
+def match_mapped_agent_by_extension(
+    extension: str | None,
+    users: list[dict[str, Any]] | None = None,
+) -> tuple[str | None, str | None]:
+    """Match a recording/CDR extension to a directory Agent. Prefer this over names."""
+    key = normalize_extension(extension)
+    if not key:
+        return None, None
+    for u in users or []:
+        if not is_mapped_agent_user(u):
+            continue
+        if normalize_extension(u.get("extension")) != key:
+            continue
+        email = (u.get("email") or "").strip().lower()
+        name = (u.get("name") or "").strip() or email
+        return email, name
+    return None, None
+
+
 def match_mapped_agent(
     agent_name: str,
     users: list[dict[str, Any]] | None = None,
@@ -102,11 +133,23 @@ def match_mapped_agent(
     return None, cleaned
 
 
-def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
-    """Load directory users and match; never creates a user."""
+def resolve_or_create_agent(
+    agent_name: str,
+    *,
+    vonage_extension: str | None = None,
+) -> tuple[str | None, str]:
+    """
+    Load directory users and match.
+
+    Preference order:
+    1. ``vonage_extension`` → user.extension (recording / CDR)
+    2. AI transcript name → directory display name / email local-part
+
+    Never creates a user.
+    """
     cleaned = (agent_name or "").strip()
     if not cleaned or cleaned.lower() == "unknown":
-        return None, "Unknown"
+        cleaned = "Unknown"
 
     from src import database as db
     from src.config import get_settings
@@ -120,7 +163,61 @@ def resolve_or_create_agent(agent_name: str) -> tuple[str | None, str]:
     except Exception:
         return None, cleaned
 
+    email, name = match_mapped_agent_by_extension(vonage_extension, users)
+    if email:
+        return email, name or cleaned
+
     return match_mapped_agent(cleaned, users)
+
+
+def remap_calls_for_extension(
+    *,
+    email: str,
+    name: str,
+    extension: str | None,
+    call_limit: int = 800,
+) -> int:
+    """
+    Attach unmapped / same-email calls whose vonage_extension matches.
+
+    Leaves calls already mapped to a different real agent alone.
+    """
+    key = normalize_extension(extension)
+    if not key:
+        return 0
+
+    from src import database as db
+
+    target = email.strip().lower()
+    display = (name or "").strip() or target
+    calls = db.list_calls(limit=call_limit, require_min_duration=False)
+    remapped = 0
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    for call in calls:
+        call_id = call.get("id")
+        if not call_id:
+            continue
+        if normalize_extension(call.get("vonage_extension")) != key:
+            continue
+        cur_email = (call.get("agent_email") or "").strip().lower()
+        if cur_email and cur_email == target:
+            db.update_call(
+                call_id,
+                {"agent_name": display, "updated_at": now},
+            )
+            continue
+        if cur_email and not cur_email.startswith("unmapped.") and cur_email != target:
+            continue
+        db.update_call(
+            call_id,
+            {
+                "agent_email": target,
+                "agent_name": display,
+                "updated_at": now,
+            },
+        )
+        remapped += 1
+    return remapped
 
 
 def discover_unmapped_agents(*, call_limit: int = 400) -> list[dict[str, Any]]:
@@ -197,6 +294,7 @@ def import_and_map_agent(
     agent_name: str,
     email: str | None = None,
     role: str = "Agent",
+    extension: str | None = None,
 ) -> dict[str, Any]:
     """
     Create/update the user as {name}@domain (or provided email) and remap calls
@@ -214,11 +312,13 @@ def import_and_map_agent(
     if not target.endswith(f"@{domain}"):
         raise ValueError(f"Email must be @{domain}")
 
+    ext = normalize_extension(extension)
     user = db.upsert_user(
         email=target,
         name=cleaned,
         role=role or "Agent",
         provisional=False,
+        extension=ext,
     )
 
     # Remap calls with this name that are unassigned / provisional / already this email
@@ -249,5 +349,9 @@ def import_and_map_agent(
             },
         )
         remapped += 1
+
+    remapped += remap_calls_for_extension(
+        email=target, name=cleaned, extension=ext
+    )
 
     return {"user": user, "remapped_calls": remapped, "email": target, "name": cleaned}

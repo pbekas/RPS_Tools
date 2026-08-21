@@ -6,6 +6,7 @@ import {
   importAndMapAgent,
   linkProvisionalAgent,
   listUsers,
+  remapCallsForExtension,
   setUserActive,
   setUserModules,
   upsertUser,
@@ -71,13 +72,26 @@ export async function POST(req: Request) {
       if (!["Agent", "Admin"].includes(role)) {
         return NextResponse.json({ error: "Role must be Agent or Admin" }, { status: 400 });
       }
+      const extensionRaw =
+        body.extension === undefined || body.extension === null
+          ? undefined
+          : String(body.extension);
       const user = await upsertUser({
         email,
         name,
         role,
         provisional: false,
+        extension: extensionRaw,
       });
-      return NextResponse.json({ ok: true, user });
+      let remappedCalls = 0;
+      if (extensionRaw !== undefined) {
+        remappedCalls = await remapCallsForExtension({
+          email,
+          name,
+          extension: extensionRaw,
+        });
+      }
+      return NextResponse.json({ ok: true, user, remappedCalls });
     }
 
     if (action === "set_active") {

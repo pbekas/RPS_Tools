@@ -139,7 +139,10 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
             return {"call_id": call_id, **updates}
 
         agent_name = analysis["agent_name"]
-        agent_email, agent_name = resolve_or_create_agent(agent_name)
+        agent_email, agent_name = resolve_or_create_agent(
+            agent_name,
+            vonage_extension=existing.get("vonage_extension"),
+        )
         analysis["agent_name"] = agent_name
 
         updates = {

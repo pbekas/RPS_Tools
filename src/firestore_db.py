@@ -53,33 +53,47 @@ def upsert_user(
     role: str | None = None,
     *,
     provisional: bool | None = None,
+    extension: str | None = None,
 ) -> dict[str, Any]:
+    from src.agent_identity import normalize_extension
+
     db = get_db()
     email_norm = email.strip().lower()
     ref = db.collection("users").document(email_norm)
     snap = ref.get()
     now = _now()
+    ext_provided = extension is not None
+    ext_value = normalize_extension(extension) if ext_provided else None
+    if ext_provided and ext_value:
+        for other in db.collection("users").where("extension", "==", ext_value).stream():
+            if other.id != email_norm:
+                raise ValueError(
+                    f"Extension {ext_value} is already assigned to {other.id}"
+                )
     if snap.exists:
         updates: dict[str, Any] = {"name": name, "updated_at": now}
         if role:
             updates["role"] = role
         if provisional is not None:
             updates["provisional"] = provisional
+        if ext_provided:
+            updates["extension"] = ext_value
         ref.update(updates)
     else:
-        ref.set(
-            {
-                "email": email_norm,
-                "name": name,
-                "role": role or "Agent",
-                "rolling_ai_feedback": "",
-                "last_coaching_at": None,
-                "active": True,
-                "provisional": bool(provisional) if provisional is not None else False,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
+        payload: dict[str, Any] = {
+            "email": email_norm,
+            "name": name,
+            "role": role or "Agent",
+            "rolling_ai_feedback": "",
+            "last_coaching_at": None,
+            "active": True,
+            "provisional": bool(provisional) if provisional is not None else False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if ext_provided:
+            payload["extension"] = ext_value
+        ref.set(payload)
     return _serialize(ref.get())  # type: ignore[return-value]
 
 

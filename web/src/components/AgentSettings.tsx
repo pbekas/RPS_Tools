@@ -39,6 +39,7 @@ export function AgentSettings({
   const [unmapped, setUnmapped] = useState(initialUnmapped);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [extension, setExtension] = useState("");
   const [role, setRole] = useState("Agent");
   const [toolsets, setToolsets] = useState<ToolsetId[]>(["call_qa"]);
   const [allContractTypes, setAllContractTypes] = useState(true);
@@ -64,6 +65,7 @@ export function AgentSettings({
       return (
         (u.name || "").toLowerCase().includes(needle) ||
         (u.email || "").toLowerCase().includes(needle) ||
+        (u.extension || "").toLowerCase().includes(needle) ||
         (u.role || "").toLowerCase().includes(needle)
       );
     });
@@ -154,7 +156,13 @@ export function AgentSettings({
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "upsert", name, email, role }),
+        body: JSON.stringify({
+          action: "upsert",
+          name,
+          email,
+          role,
+          extension: extension.trim(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
@@ -173,9 +181,14 @@ export function AgentSettings({
       });
       const modData = await modRes.json();
       if (!modRes.ok) throw new Error(modData.error || "Access save failed");
-      setMsg(`Saved ${data.user.email}`);
+      const remapped =
+        typeof data.remappedCalls === "number" && data.remappedCalls > 0
+          ? ` · remapped ${data.remappedCalls} call${data.remappedCalls === 1 ? "" : "s"} by extension`
+          : "";
+      setMsg(`Saved ${data.user.email}${remapped}`);
       setName("");
       setEmail("");
+      setExtension("");
       setRole("Agent");
       setToolsets(["call_qa"]);
       setAllContractTypes(true);
@@ -212,6 +225,7 @@ export function AgentSettings({
   function editUser(user: UserDoc) {
     setName(user.name || "");
     setEmail(user.email);
+    setExtension(user.extension || "");
     setRole(user.role || "Agent");
     const parsed = parseContractGrantState(user, contractGroups);
     setToolsets(parsed.toolsets.length ? parsed.toolsets : toolsetsForUser(user));
@@ -293,6 +307,7 @@ export function AgentSettings({
             <tr>
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Ext</th>
               <th className="px-4 py-3">Role</th>
               <th className="px-4 py-3">Tool sets</th>
               <th className="px-4 py-3">Status</th>
@@ -302,7 +317,7 @@ export function AgentSettings({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-ink-soft">
+                <td colSpan={7} className="px-4 py-8 text-center text-ink-soft">
                   No people in the directory yet.
                 </td>
               </tr>
@@ -316,6 +331,9 @@ export function AgentSettings({
                       {u.name || "—"}
                     </td>
                     <td className="px-4 py-3 text-ink-soft">{u.email}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-ink-soft">
+                      {u.extension || "—"}
+                    </td>
                     <td className="px-4 py-3">{u.role || "Agent"}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
@@ -392,8 +410,8 @@ export function AgentSettings({
       >
         <h2 className="font-display text-2xl text-ink">Add / update person</h2>
         <p className="mt-1 text-sm text-ink-soft">
-          Set role, tool sets, and contract visibility. You can grant vendor
-          contacts without agreement details.
+          Set role, Vonage extension (for recording credit), tool sets, and
+          contract visibility.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
@@ -419,6 +437,18 @@ export function AgentSettings({
               onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-lg border border-line px-3 py-2"
               placeholder={`diana@${domain}`}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              Vonage extension
+            </span>
+            <input
+              value={extension}
+              onChange={(e) => setExtension(e.target.value)}
+              className="w-full rounded-lg border border-line px-3 py-2 font-mono"
+              placeholder="3101"
+              inputMode="numeric"
             />
           </label>
         </div>

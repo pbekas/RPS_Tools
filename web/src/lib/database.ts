@@ -566,11 +566,26 @@ export async function upsertUser(input: {
   name: string;
   role: string;
   provisional?: boolean;
+  extension?: string | null;
 }): Promise<UserDoc> {
   if (!usePostgres()) return firestore.upsertUser(input);
+  const email = input.email.trim().toLowerCase();
+  const ext =
+    input.extension === undefined
+      ? undefined
+      : String(input.extension || "").replace(/\D/g, "") || null;
+  if (ext) {
+    const clash = await query(
+      "SELECT email FROM users WHERE extension = $1 AND email <> $2 LIMIT 1",
+      [ext, email]
+    );
+    if (clash[0]) {
+      throw new Error(`Extension ${ext} is already assigned to ${clash[0].email}`);
+    }
+  }
   const rows = await query(
-    `INSERT INTO users (email, name, role, provisional)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, name, role, provisional, extension)
+     VALUES ($1, $2, $3, $4, CASE WHEN $6::boolean THEN $7 ELSE NULL END)
      ON CONFLICT (email) DO UPDATE SET
        name = EXCLUDED.name,
        role = EXCLUDED.role,
@@ -578,17 +593,68 @@ export async function upsertUser(input: {
          WHEN $5::boolean IS NULL THEN users.provisional
          ELSE EXCLUDED.provisional
        END,
+       extension = CASE
+         WHEN $6::boolean THEN $7
+         ELSE users.extension
+       END,
        updated_at = now()
      RETURNING *`,
     [
-      input.email.trim().toLowerCase(),
+      email,
       input.name,
       input.role,
       input.provisional ?? false,
       input.provisional ?? null,
+      input.extension !== undefined,
+      ext,
     ]
   );
   return serializeRow<UserDoc>(rows[0]);
+}
+
+/** Attach unmapped calls whose vonage_extension matches this user's extension. */
+export async function remapCallsForExtension(input: {
+  email: string;
+  name: string;
+  extension: string | null | undefined;
+}): Promise<number> {
+  const ext = String(input.extension || "").replace(/\D/g, "");
+  if (!ext) return 0;
+  const email = input.email.trim().toLowerCase();
+  const name = (input.name || "").trim() || email;
+
+  if (!usePostgres()) {
+    return firestore.remapCallsForExtension({ email, name, extension: ext });
+  }
+
+  const rows = await query(
+    `SELECT id, agent_email FROM calls
+     WHERE regexp_replace(coalesce(vonage_extension, ''), '\\D', '', 'g') = $1
+     LIMIT 800`,
+    [ext]
+  );
+  let remapped = 0;
+  for (const row of rows) {
+    const cur = String(row.agent_email || "")
+      .trim()
+      .toLowerCase();
+    if (cur && cur === email) {
+      await query(
+        "UPDATE calls SET agent_name = $2, updated_at = now() WHERE id = $1",
+        [row.id, name]
+      );
+      continue;
+    }
+    if (cur && !cur.startsWith("unmapped.") && cur !== email) continue;
+    await query(
+      `UPDATE calls
+       SET agent_email = $2, agent_name = $3, updated_at = now()
+       WHERE id = $1`,
+      [row.id, email, name]
+    );
+    remapped += 1;
+  }
+  return remapped;
 }
 
 export async function listUsers(): Promise<UserDoc[]> {

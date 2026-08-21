@@ -470,12 +470,17 @@ export type CallDoc = {
   vonage_caller_id?: string | null;
   vonage_cnam?: string | null;
   vonage_direction?: string | null;
+  vonage_extension?: string | null;
+  vonage_recording_id?: string | null;
+  vonage_call_id?: string | null;
+  vonage_dnis?: string | null;
 };
 
 export type UserDoc = {
   email: string;
   name?: string;
   role?: string;
+  extension?: string | null;
   rolling_ai_feedback?: string;
   last_coaching_at?: string | null;
   provisional?: boolean;
@@ -527,10 +532,27 @@ export async function upsertUser(input: {
   name: string;
   role: string;
   provisional?: boolean;
+  extension?: string | null;
 }): Promise<UserDoc> {
   const ref = getDb().collection("users").doc(input.email.toLowerCase());
   const existing = await ref.get();
   const now = new Date();
+  const ext =
+    input.extension === undefined
+      ? undefined
+      : String(input.extension || "").replace(/\D/g, "") || null;
+  if (ext) {
+    const clash = await getDb()
+      .collection("users")
+      .where("extension", "==", ext)
+      .limit(2)
+      .get();
+    for (const doc of clash.docs) {
+      if (doc.id !== input.email.toLowerCase()) {
+        throw new Error(`Extension ${ext} is already assigned to ${doc.id}`);
+      }
+    }
+  }
   if (existing.exists) {
     const updates: Record<string, unknown> = {
       name: input.name,
@@ -538,6 +560,7 @@ export async function upsertUser(input: {
       updated_at: now,
     };
     if (input.provisional !== undefined) updates.provisional = input.provisional;
+    if (input.extension !== undefined) updates.extension = ext;
     await ref.update(updates);
   } else {
     await ref.set({
@@ -547,12 +570,47 @@ export async function upsertUser(input: {
       rolling_ai_feedback: "",
       active: true,
       provisional: !!input.provisional,
+      ...(input.extension !== undefined ? { extension: ext } : {}),
       created_at: now,
       updated_at: now,
     });
   }
   const snap = await ref.get();
   return serializeDoc<UserDoc>(snap.id, snap.data());
+}
+
+export async function remapCallsForExtension(input: {
+  email: string;
+  name: string;
+  extension: string;
+}): Promise<number> {
+  const ext = String(input.extension || "").replace(/\D/g, "");
+  if (!ext) return 0;
+  const email = input.email.trim().toLowerCase();
+  const name = (input.name || "").trim() || email;
+  const calls = await listCalls({ limit: 800, requireMinDuration: false });
+  let remapped = 0;
+  const db = getDb();
+  for (const call of calls) {
+    const callExt = String(call.vonage_extension || "").replace(/\D/g, "");
+    if (callExt !== ext) continue;
+    const cur = String(call.agent_email || "")
+      .trim()
+      .toLowerCase();
+    if (cur && !cur.startsWith("unmapped.") && cur !== email) continue;
+    const updates: Record<string, unknown> = {
+      agent_name: name,
+      updated_at: new Date(),
+    };
+    if (!cur || cur.startsWith("unmapped.")) {
+      updates.agent_email = email;
+      remapped += 1;
+    } else if (cur === email) {
+      updates.agent_email = email;
+    }
+    await db.collection("calls").doc(call.id).update(updates);
+  }
+  return remapped;
 }
 
 export async function listCalls(opts?: {

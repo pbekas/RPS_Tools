@@ -108,7 +108,7 @@ function resolveIdentity(
         key: `email:${email}`,
         name: (user.name || call?.agent_name || "").trim() || party.name,
         email,
-        extension: party.extension,
+        extension: (user.extension || "").trim() || party.extension,
       };
     }
   }
@@ -123,7 +123,8 @@ function resolveIdentity(
         key: `email:${c.email}`,
         name: c.name || party.name,
         email: c.email,
-        extension: party.extension,
+        extension:
+          (byEmail.get(c.email)?.extension || "").trim() || party.extension,
       };
     }
   }

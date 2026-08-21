@@ -32,6 +32,37 @@ ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 echo "==> Pushing Secrets Manager secret"
 "$ROOT/scripts/push_aws_secret.sh"
 
+# Production runs on the separate RDS stack. Default deploy flags back to Postgres
+# unless the caller overrides (avoids silently flipping DB_BACKEND to firestore).
+if [[ -z "${DB_BACKEND:-}" ]]; then
+  DB_BACKEND=postgres
+fi
+if [[ "$DB_BACKEND" == "postgres" ]]; then
+  if [[ -z "${DATABASE_SECRET_ARN:-}" ]]; then
+    DATABASE_SECRET_ARN="$(aws secretsmanager describe-secret \
+      --secret-id rps-call-qa/production/database \
+      --region "$REGION" \
+      --query ARN --output text 2>/dev/null || true)"
+  fi
+  if [[ -z "${DATABASE_KEY_ARN:-}" && -n "${DATABASE_SECRET_ARN:-}" ]]; then
+    DATABASE_KEY_ARN="$(aws cloudformation describe-stacks \
+      --stack-name RpsCallQaDatabaseProductionStack \
+      --region "$REGION" \
+      --query "Stacks[0].Outputs[?OutputKey=='DatabaseKeyArn'].OutputValue | [0]" \
+      --output text 2>/dev/null || true)"
+    if [[ "$DATABASE_KEY_ARN" == "None" ]]; then
+      DATABASE_KEY_ARN=""
+    fi
+  fi
+  echo "DB_BACKEND=postgres"
+  echo "DATABASE_SECRET_ARN=${DATABASE_SECRET_ARN:-<missing>}"
+  echo "DATABASE_KEY_ARN=${DATABASE_KEY_ARN:-<missing>}"
+  if [[ -z "${DATABASE_SECRET_ARN:-}" || -z "${DATABASE_KEY_ARN:-}" ]]; then
+    echo "Missing DATABASE_SECRET_ARN / DATABASE_KEY_ARN for postgres deploy." >&2
+    exit 1
+  fi
+fi
+
 CERT_ARN="${CERT_ARN:-}"
 if [[ -z "$CERT_ARN" ]]; then
   echo "==> Looking up ACM certificate for $DOMAIN"
@@ -102,7 +133,7 @@ npx cdk deploy "$STACK" --require-approval never \
   -c "domainName=$DOMAIN" \
   -c "recordingsBucketName=$BUCKET" \
   -c "certificateArn=$CERT_ARN" \
-  "${DB_ARGS[@]}"
+  ${DB_ARGS[@]+"${DB_ARGS[@]}"}
 
 echo
 echo "==> Done. Point Cloudflare DNS:"

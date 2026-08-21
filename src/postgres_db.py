@@ -225,14 +225,36 @@ def upsert_user(
     role: str | None = None,
     *,
     provisional: bool | None = None,
+    extension: str | None = None,
 ) -> dict[str, Any]:
+    from src.agent_identity import normalize_extension
+
     email_norm = email.strip().lower()
     role_value = role or None
+    # None = leave existing extension; "" / whitespace = clear.
+    ext_provided = extension is not None
+    ext_value = normalize_extension(extension) if ext_provided else None
     with get_connection() as conn:
+        if ext_provided and ext_value:
+            clash = conn.execute(
+                """
+                SELECT email FROM users
+                WHERE extension = %s AND email <> %s
+                LIMIT 1
+                """,
+                (ext_value, email_norm),
+            ).fetchone()
+            if clash:
+                raise ValueError(
+                    f"Extension {ext_value} is already assigned to {clash['email']}"
+                )
         row = conn.execute(
             """
-            INSERT INTO users (email, name, role, provisional)
-            VALUES (%s, %s, COALESCE(%s, 'Agent'), COALESCE(%s, false))
+            INSERT INTO users (email, name, role, provisional, extension)
+            VALUES (
+                %s, %s, COALESCE(%s, 'Agent'), COALESCE(%s, false),
+                CASE WHEN %s THEN %s ELSE NULL END
+            )
             ON CONFLICT (email) DO UPDATE SET
                 name = EXCLUDED.name,
                 role = CASE
@@ -243,6 +265,10 @@ def upsert_user(
                     WHEN %s::boolean IS NULL THEN users.provisional
                     ELSE EXCLUDED.provisional
                 END,
+                extension = CASE
+                    WHEN %s THEN %s
+                    ELSE users.extension
+                END,
                 updated_at = now()
             RETURNING *
             """,
@@ -251,8 +277,12 @@ def upsert_user(
                 name,
                 role_value,
                 provisional,
+                ext_provided,
+                ext_value,
                 role_value,
                 provisional,
+                ext_provided,
+                ext_value,
             ),
         ).fetchone()
     return _serialize_user(row)  # type: ignore[return-value]

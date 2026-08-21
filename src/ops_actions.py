@@ -37,7 +37,8 @@ def reanalyze_call(call_id: str, *, send_alerts: bool = True) -> dict[str, Any]:
         updates.pop("agent_name", None)
     else:
         email, name = resolve_or_create_agent(
-            scored.get("agent_name") or call.get("agent_name") or ""
+            scored.get("agent_name") or call.get("agent_name") or "",
+            vonage_extension=call.get("vonage_extension"),
         )
         updates["agent_email"] = email
         updates["agent_name"] = name
