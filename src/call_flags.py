@@ -105,7 +105,7 @@ def normalize_critical_flags(
                 transcript,
                 evidence=evidence,
                 evidence_timestamp=evidence_ts,
-                evidence_turn_index=turn_index,
+                turn_index=turn_index,
             )
         out.append(
             {

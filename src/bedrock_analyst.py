@@ -362,17 +362,16 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
     with httpx.Client(timeout=120.0) as http:
         payload = http.get(transcript_uri).json()
 
-    duration = int(
-        round(
-            float(
-                payload.get("results", {}).get("audio_segments", [{}])[0].get(
-                    "end_time", 0
-                )
-                or 0
-            )
-        )
-    )
     turns = _turns_from_transcribe_json(payload)
+    duration = 0
+    segments = payload.get("results", {}).get("audio_segments") or []
+    seg_ends = [
+        float(seg.get("end_time"))
+        for seg in segments
+        if seg.get("end_time") is not None
+    ]
+    if seg_ends:
+        duration = int(round(max(seg_ends)))
     if not duration and turns:
         last = turns[-1].get("timestamp") or "0:00"
         duration = _mmss_to_seconds(last)
