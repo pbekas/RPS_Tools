@@ -13,6 +13,7 @@ import { pickReviewSampleIds } from "@/lib/coachingQueue";
 import { isMappedAgentUser } from "@/lib/qa";
 import { CoachingPanel } from "@/components/CoachingPanel";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { canViewCallAgent, resolveCallQaScope } from "@/lib/orgTeamAccess";
 
 type Props = {
   searchParams?: Promise<{ agent?: string }> | { agent?: string };
@@ -23,7 +24,7 @@ export default async function CoachingPage({ searchParams }: Props) {
   if (!session?.user?.email) redirect("/login");
 
   const email = session.user.email.toLowerCase();
-  const isAdmin = (session.user.role || "").toLowerCase() === "admin";
+  const scope = await resolveCallQaScope(session.user);
   const params = await Promise.resolve(searchParams || {});
   const requestedAgent = (params.agent || "").trim().toLowerCase();
 
@@ -37,14 +38,15 @@ export default async function CoachingPage({ searchParams }: Props) {
       });
     }
 
-    const agents = isAdmin
+    const agents = scope.canViewTeam
       ? (await listUsers())
           .filter(isMappedAgentUser)
+          .filter((u) => canViewCallAgent(scope, u.email))
           .map((u) => ({ email: u.email, name: u.name }))
       : [];
 
     let focusEmail = email;
-    if (isAdmin && requestedAgent) {
+    if (requestedAgent && canViewCallAgent(scope, requestedAgent)) {
       const match = agents.find((a) => a.email.toLowerCase() === requestedAgent);
       if (match) {
         const focusUser = await getUser(match.email);
@@ -68,7 +70,8 @@ export default async function CoachingPage({ searchParams }: Props) {
 
     return (
       <CoachingPanel
-        isAdmin={isAdmin}
+        isAdmin={scope.isAdmin}
+        canViewTeam={scope.canViewTeam}
         initialUser={user}
         initialMetrics={metrics}
         agents={agents}

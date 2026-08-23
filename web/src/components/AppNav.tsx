@@ -160,20 +160,12 @@ export function AppNav() {
                     Audit
                   </Link>
                   {admin ? (
-                    <>
-                      <Link
-                        href="/time-clock/teams"
-                        className={navClass(pathname.startsWith("/time-clock/teams"))}
-                      >
-                        Departments
-                      </Link>
-                      <Link
-                        href="/time-clock/settings"
-                        className={navClass(pathname.startsWith("/time-clock/settings"))}
-                      >
-                        Settings
-                      </Link>
-                    </>
+                    <Link
+                      href="/time-clock/settings"
+                      className={navClass(pathname.startsWith("/time-clock/settings"))}
+                    >
+                      Settings
+                    </Link>
                   ) : null}
                 </>
               ) : null}

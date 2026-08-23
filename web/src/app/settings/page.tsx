@@ -37,6 +37,7 @@ export default async function SettingsPage() {
       initialFlagset={flagset}
       domain={domain}
       contractGroups={groups}
+      teamsEnabled={process.env.DB_BACKEND?.trim().toLowerCase() === "postgres"}
     />
   );
 }

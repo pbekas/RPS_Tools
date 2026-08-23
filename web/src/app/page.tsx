@@ -6,6 +6,7 @@ import { isFirestoreQuotaError, listCalls, listUsers } from "@/lib/database";
 import { buildIssueHeatmap, filterMappedQaCalls } from "@/lib/qa";
 import { Dashboard } from "@/components/Dashboard";
 import { QuotaNotice } from "@/components/QuotaNotice";
+import { resolveCallQaScope } from "@/lib/orgTeamAccess";
 import {
   defaultHrefForUser,
   hasModule,
@@ -18,8 +19,7 @@ export default async function HomePage() {
     redirect(defaultHrefForUser(session.user));
   }
 
-  const role = (session.user.role || "Agent").toLowerCase();
-  const isAdmin = role === "admin";
+  const scope = await resolveCallQaScope(session.user);
   const heatmapDays = 14;
   const sinceMs = Date.now() - heatmapDays * 24 * 60 * 60 * 1000;
 
@@ -27,14 +27,14 @@ export default async function HomePage() {
   try {
     const [rawCalls, users] = await Promise.all([
       listCalls({
-        agentEmail: isAdmin ? null : session.user.email.toLowerCase(),
+        agentEmails: scope.agentEmails,
         status: "complete",
-        limit: isAdmin ? 200 : 100,
-        sinceMs: isAdmin ? sinceMs : null,
+        limit: scope.canViewTeam ? 200 : 100,
+        sinceMs: scope.canViewTeam ? sinceMs : null,
       }),
-      isAdmin ? listUsers() : Promise.resolve([]),
+      scope.canViewTeam ? listUsers() : Promise.resolve([]),
     ]);
-    calls = isAdmin ? filterMappedQaCalls(rawCalls, users) : rawCalls;
+    calls = scope.canViewTeam ? filterMappedQaCalls(rawCalls, users) : rawCalls;
   } catch (err) {
     if (isFirestoreQuotaError(err)) {
       return <QuotaNotice detail={err instanceof Error ? err.message : undefined} />;
@@ -42,13 +42,14 @@ export default async function HomePage() {
     throw err;
   }
 
-  const heatmap = isAdmin ? buildIssueHeatmap(calls) : null;
+  const heatmap = scope.canViewTeam ? buildIssueHeatmap(calls) : null;
 
   return (
     <Suspense fallback={<div className="p-8 text-ink-soft">Loading…</div>}>
       <Dashboard
         calls={calls}
-        isAdmin={isAdmin}
+        isAdmin={scope.isAdmin}
+        canViewTeam={scope.canViewTeam}
         heatmap={heatmap}
         heatmapDays={heatmapDays}
       />

@@ -14,6 +14,7 @@ import {
   normalizeToolsetGrants,
   type ToolsetId,
 } from "@/lib/permissions";
+import { TimeClockTeamsPanel } from "@/components/TimeClockTeamsPanel";
 
 type Props = {
   initialUsers: UserDoc[];
@@ -21,6 +22,7 @@ type Props = {
   domain: string;
   embedded?: boolean;
   contractGroups?: ContractGroup[];
+  teamsEnabled?: boolean;
 };
 
 function toolsetsForUser(user: UserDoc): ToolsetId[] {
@@ -34,6 +36,7 @@ export function AgentSettings({
   domain,
   embedded = false,
   contractGroups = [],
+  teamsEnabled = false,
 }: Props) {
   const [users, setUsers] = useState(initialUsers);
   const [unmapped, setUnmapped] = useState(initialUnmapped);
@@ -271,8 +274,8 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Users & access</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            People first — search, edit access, then import anyone still missing
-            from call recordings.
+            People first — search, edit access, assign departments, then import
+            anyone still missing from call recordings.
           </p>
         </div>
       ) : (
@@ -402,6 +405,24 @@ export function AgentSettings({
           </tbody>
         </table>
       </div>
+
+      {teamsEnabled ? (
+        <section id="teams" className="mb-8 scroll-mt-24">
+          <h2 className="mb-3 font-display text-2xl text-ink">Teams & departments</h2>
+          <p className="mb-4 max-w-2xl text-sm text-ink-soft">
+            Shared across Call QA and Time Clock. Supervisors see coaching and
+            time for the people on their team.
+          </p>
+          <TimeClockTeamsPanel
+            initialTeams={[]}
+            initialUsers={users.map((user) => ({
+              email: user.email,
+              name: user.name || user.email,
+              role: user.role || "Agent",
+            }))}
+          />
+        </section>
+      ) : null}
 
       <form
         id="person-form"

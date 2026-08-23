@@ -615,16 +615,18 @@ export async function remapCallsForExtension(input: {
 
 export async function listCalls(opts?: {
   agentEmail?: string | null;
+  agentEmails?: string[] | null;
   limit?: number;
   status?: string;
   sinceMs?: number | null;
   /** Default true: only calls longer than 30 seconds. */
   requireMinDuration?: boolean;
 }): Promise<CallDoc[]> {
+  if (opts?.agentEmails && opts.agentEmails.length === 0) return [];
   const limit = opts?.limit ?? 100;
   const requireMinDuration = opts?.requireMinDuration !== false;
   let query: Query = getDb().collection("calls");
-  if (opts?.agentEmail) {
+  if (!opts?.agentEmails?.length && opts?.agentEmail) {
     query = query.where("agent_email", "==", opts.agentEmail.toLowerCase());
   }
   if (opts?.status) {
@@ -640,6 +642,10 @@ export async function listCalls(opts?: {
     if (requireMinDuration) {
       rows = rows.filter((r) => isQaEligibleDuration(r.duration_seconds));
     }
+    if (opts?.agentEmails?.length) {
+      const allowed = new Set(opts.agentEmails.map((email) => email.toLowerCase()));
+      rows = rows.filter((r) => allowed.has((r.agent_email || "").toLowerCase()));
+    }
     return rows.slice(0, limit);
   } catch (err) {
     if (isFirestoreQuotaError(err)) throw err;
@@ -649,6 +655,10 @@ export async function listCalls(opts?: {
       rows = rows.filter(
         (r) => (r.agent_email || "").toLowerCase() === opts.agentEmail!.toLowerCase()
       );
+    }
+    if (opts?.agentEmails?.length) {
+      const allowed = new Set(opts.agentEmails.map((email) => email.toLowerCase()));
+      rows = rows.filter((r) => allowed.has((r.agent_email || "").toLowerCase()));
     }
     if (opts?.status) {
       rows = rows.filter((r) => r.status === opts.status);

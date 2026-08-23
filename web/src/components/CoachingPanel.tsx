@@ -9,6 +9,7 @@ import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 
 type Props = {
   isAdmin: boolean;
+  canViewTeam?: boolean;
   initialUser: UserDoc;
   initialMetrics: MetricDoc[];
   agents: Array<{ email: string; name?: string }>;
@@ -18,6 +19,7 @@ type Props = {
 
 export function CoachingPanel({
   isAdmin,
+  canViewTeam = false,
   initialUser,
   initialMetrics,
   agents,
@@ -119,7 +121,7 @@ export function CoachingPanel({
             </p>
           ) : null}
         </div>
-        {isAdmin ? (
+        {(isAdmin || canViewTeam) && agents.length ? (
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={agentEmail}
@@ -133,14 +135,16 @@ export function CoachingPanel({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              disabled={generating}
-              onClick={generate}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-            >
-              {generating ? "Generating…" : "Generate report"}
-            </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                disabled={generating}
+                onClick={generate}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+              >
+                {generating ? "Generating…" : "Generate report"}
+              </button>
+            ) : null}
             {reviewIds.length ? (
               <button
                 type="button"

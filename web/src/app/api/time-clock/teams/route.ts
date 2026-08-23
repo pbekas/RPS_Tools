@@ -1,28 +1,30 @@
 import { NextResponse } from "next/server";
-import {
-  apiRequireAdmin,
-  apiRequireTimeClockManager,
-} from "@/lib/requireAccess";
-import { canViewTimeClockUser } from "@/lib/timeClockAccess";
+import { apiRequireAdmin } from "@/lib/requireAccess";
+import { listUsers } from "@/lib/database";
 import {
   createTimeClockTeam,
-  listTimeClockTeams,
+  listTimeClockTeamsWithMembers,
 } from "@/lib/timeClockTeamsDb";
-import { listUsersWithTimeClockAccess } from "@/lib/timeClockDb";
 
 export async function GET() {
-  const { error, access } = await apiRequireTimeClockManager();
+  const { error } = await apiRequireAdmin();
   if (error) return error;
 
   try {
-    const teams = await listTimeClockTeams({
-      activeOnly: false,
-      teamIds: access!.teamIds,
+    const [teams, users] = await Promise.all([
+      listTimeClockTeamsWithMembers({ activeOnly: false, teamIds: null }),
+      listUsers(),
+    ]);
+    return NextResponse.json({
+      teams,
+      users: users
+        .filter((user) => user.active !== false)
+        .map((user) => ({
+          email: user.email,
+          name: user.name || user.email,
+          role: user.role || "Agent",
+        })),
     });
-    const users = (await listUsersWithTimeClockAccess()).filter((u) =>
-      canViewTimeClockUser(access!, u.email)
-    );
-    return NextResponse.json({ teams, users });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to list teams" },

@@ -5,6 +5,7 @@ import { getCall, listUsers } from "@/lib/database";
 import { isMappedAgentUser } from "@/lib/qa";
 import { resolveRecordingUrl } from "@/lib/s3";
 import { CallReview } from "@/components/CallReview";
+import { canViewCallAgent, resolveCallQaScope } from "@/lib/orgTeamAccess";
 
 export default async function CallPage({
   params,
@@ -18,18 +19,14 @@ export default async function CallPage({
   const call = await getCall(id);
   if (!call) notFound();
 
-  const role = (session.user.role || "Agent").toLowerCase();
-  const isAdmin = role === "admin";
-  if (
-    !isAdmin &&
-    (call.agent_email || "").toLowerCase() !== session.user.email.toLowerCase()
-  ) {
+  const scope = await resolveCallQaScope(session.user);
+  if (!canViewCallAgent(scope, call.agent_email)) {
     redirect("/");
   }
 
   const [recording_url, agents] = await Promise.all([
     resolveRecordingUrl(call),
-    isAdmin
+    scope.isAdmin
       ? listUsers().then((rows) => rows.filter(isMappedAgentUser))
       : Promise.resolve([]),
   ]);
@@ -37,7 +34,7 @@ export default async function CallPage({
   return (
     <CallReview
       call={{ ...call, recording_url }}
-      isAdmin={isAdmin}
+      isAdmin={scope.isAdmin}
       agents={agents}
     />
   );

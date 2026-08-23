@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getCall } from "@/lib/database";
+import { canViewCallAgent, resolveCallQaScope } from "@/lib/orgTeamAccess";
 import { resolveRecordingUrl } from "@/lib/s3";
 
 export async function GET(
@@ -16,11 +17,8 @@ export async function GET(
   const call = await getCall(id);
   if (!call) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const role = (session.user.role || "Agent").toLowerCase();
-  if (
-    role !== "admin" &&
-    (call.agent_email || "").toLowerCase() !== session.user.email.toLowerCase()
-  ) {
+  const scope = await resolveCallQaScope(session.user);
+  if (!canViewCallAgent(scope, call.agent_email)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const recording_url = await resolveRecordingUrl(call);

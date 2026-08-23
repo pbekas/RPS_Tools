@@ -95,6 +95,15 @@ export async function getTimeClockTeam(id: string): Promise<TimeClockTeam | null
   return team;
 }
 
+/** Org-wide teams used by Call QA and Time Clock. */
+export async function listTimeClockTeamsWithMembers(opts?: {
+  activeOnly?: boolean;
+  teamIds?: string[] | null;
+}): Promise<TimeClockTeam[]> {
+  const teams = await listTimeClockTeams(opts);
+  return Promise.all(teams.map(async (team) => (await getTimeClockTeam(team.id)) || team));
+}
+
 export async function listTeamMembers(teamId: string): Promise<
   Array<{ user_email: string; user_name: string; role: string }>
 > {

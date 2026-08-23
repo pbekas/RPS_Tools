@@ -9,6 +9,7 @@ import {
   listMetricsForAgent,
   listUsers,
 } from "@/lib/database";
+import { canViewCallAgent, resolveCallQaScope } from "@/lib/orgTeamAccess";
 
 async function sampleForAgent(email: string): Promise<string[]> {
   const calls = await listCalls({
@@ -25,14 +26,13 @@ export async function GET(req: Request) {
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const isAdmin = (session.user.role || "").toLowerCase() === "admin";
+  const scope = await resolveCallQaScope(session.user);
   const { searchParams } = new URL(req.url);
   const requested = (searchParams.get("agent") || "").toLowerCase();
-  const email = isAdmin && requested ? requested : session.user.email.toLowerCase();
-
-  if (!isAdmin && email !== session.user.email.toLowerCase()) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const email =
+    requested && canViewCallAgent(scope, requested)
+      ? requested
+      : session.user.email.toLowerCase();
 
   const user = await getUser(email);
   if (!user) {
@@ -41,9 +41,9 @@ export async function GET(req: Request) {
   const [metrics, sampleCallIds, agents] = await Promise.all([
     listMetricsForAgent(email, 8),
     sampleForAgent(email),
-    isAdmin
+    scope.canViewTeam
       ? listUsers().then((rows) =>
-          rows.filter((u) => (u.role || "").toLowerCase() !== "admin")
+          rows.filter((u) => canViewCallAgent(scope, u.email))
         )
       : Promise.resolve([]),
   ]);

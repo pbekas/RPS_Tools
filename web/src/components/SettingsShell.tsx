@@ -22,6 +22,7 @@ type Props = {
   initialFlagset: FlagSet;
   domain: string;
   contractGroups?: ContractGroup[];
+  teamsEnabled?: boolean;
 };
 
 export function SettingsShell({
@@ -32,6 +33,7 @@ export function SettingsShell({
   initialFlagset,
   domain,
   contractGroups = [],
+  teamsEnabled = false,
 }: Props) {
   const [tab, setTab] = useState<"agents" | "topics" | "rules" | "flags">(
     "agents"
@@ -75,6 +77,7 @@ export function SettingsShell({
           initialUnmapped={initialUnmapped}
           domain={domain}
           contractGroups={contractGroups}
+          teamsEnabled={teamsEnabled}
           embedded
         />
       ) : (

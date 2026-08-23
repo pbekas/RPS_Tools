@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TimeClockTeam } from "@/lib/timeClockTypes";
 
 type UserRow = { email: string; name: string; role: string };
@@ -12,7 +12,7 @@ type Props = {
 
 export function TimeClockTeamsPanel({ initialTeams, initialUsers }: Props) {
   const [teams, setTeams] = useState(initialTeams);
-  const [users] = useState(initialUsers);
+  const users = initialUsers;
   const [name, setName] = useState("");
   const [supervisorEmail, setSupervisorEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,6 +24,12 @@ export function TimeClockTeamsPanel({ initialTeams, initialUsers }: Props) {
     );
     return users.filter((u) => !assigned.has(u.email.toLowerCase()));
   }, [teams, users]);
+
+  useEffect(() => {
+    void refresh();
+    // Load current org teams after mount so this panel works on Users & access.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function refresh() {
     const res = await fetch("/api/time-clock/teams");
@@ -96,6 +102,10 @@ export function TimeClockTeamsPanel({ initialTeams, initialUsers }: Props) {
     <div className="space-y-6">
       <div className="rounded-xl border border-line bg-white/90 p-4">
         <h2 className="font-display text-xl text-ink">Create department</h2>
+        <p className="mt-1 text-sm text-ink-soft">
+          Departments apply to Call QA coaching and Time Clock manager views.
+          Each person can belong to one team.
+        </p>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <input
             type="text"

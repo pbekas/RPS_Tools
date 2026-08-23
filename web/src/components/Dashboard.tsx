@@ -21,11 +21,18 @@ import { IssueHeatmap } from "@/components/IssueHeatmap";
 type Props = {
   calls: CallDoc[];
   isAdmin: boolean;
+  canViewTeam?: boolean;
   heatmap?: HeatmapData | null;
   heatmapDays?: number;
 };
 
-export function Dashboard({ calls, isAdmin, heatmap, heatmapDays = 14 }: Props) {
+export function Dashboard({
+  calls,
+  isAdmin,
+  canViewTeam = false,
+  heatmap,
+  heatmapDays = 14,
+}: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const ruleFilter = searchParams.get("rule") || "";
@@ -102,7 +109,7 @@ export function Dashboard({ calls, isAdmin, heatmap, heatmapDays = 14 }: Props) 
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">
-            {isAdmin ? "Team overview" : "My calls"}
+            {canViewTeam || isAdmin ? "Team overview" : "My calls"}
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Call QA dashboard</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
@@ -127,7 +134,7 @@ export function Dashboard({ calls, isAdmin, heatmap, heatmapDays = 14 }: Props) 
         <Stat label="Critical flags" value={String(stats.criticalCount)} />
       </div>
 
-      {isAdmin && heatmap ? (
+      {canViewTeam && heatmap ? (
         <div className="mb-10">
           <IssueHeatmap data={heatmap} days={heatmapDays} />
         </div>

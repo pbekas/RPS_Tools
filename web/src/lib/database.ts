@@ -456,15 +456,20 @@ const CALL_SELECT = `
 
 export async function listCalls(opts?: {
   agentEmail?: string | null;
+  agentEmails?: string[] | null;
   limit?: number;
   status?: string;
   sinceMs?: number | null;
   requireMinDuration?: boolean;
 }): Promise<CallDoc[]> {
   if (!usePostgres()) return firestore.listCalls(opts);
+  if (opts?.agentEmails && opts.agentEmails.length === 0) return [];
   const values: unknown[] = [];
   const conditions: string[] = [];
-  if (opts?.agentEmail) {
+  if (opts?.agentEmails?.length) {
+    values.push(opts.agentEmails.map((email) => email.toLowerCase()));
+    conditions.push(`c.agent_email = ANY($${values.length}::text[])`);
+  } else if (opts?.agentEmail) {
     values.push(opts.agentEmail.toLowerCase());
     conditions.push(`c.agent_email = $${values.length}`);
   }
