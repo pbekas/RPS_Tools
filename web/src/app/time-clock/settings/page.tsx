@@ -1,13 +1,9 @@
-import { redirect } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { requireTimeClockAdmin } from "@/lib/requireAccess";
 import { getTimeClockSettings } from "@/lib/timeClockDb";
 import { TimeClockSettingsPanel } from "@/components/TimeClockSettingsPanel";
 
 export default async function TimeClockSettingsPage() {
-  const session = await requireModule("time_clock");
-  if (!isAdmin(session.user)) redirect("/time-clock");
-
+  await requireTimeClockAdmin();
   const settings = await getTimeClockSettings();
 
   return (

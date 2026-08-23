@@ -1,14 +1,10 @@
-import { redirect } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { requireTimeClockManager } from "@/lib/requireAccess";
 import { listTeamLiveStatus } from "@/lib/timeClockDb";
 import { TeamLiveBoard } from "@/components/TeamLiveBoard";
 
 export default async function TeamLivePage() {
-  const session = await requireModule("time_clock");
-  if (!isAdmin(session.user)) redirect("/time-clock");
-
-  const rows = await listTeamLiveStatus();
+  const { access } = await requireTimeClockManager();
+  const rows = await listTeamLiveStatus(access.visibleUserEmails);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { resolveTimeClockAccess } from "@/lib/timeClockAccess";
 import { apiRequireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
-import { buildTimeClockReport, entryHours, listTeamDaySummary } from "@/lib/timeClockDb";
+import {
+  buildTimeClockReport,
+  entryHours,
+  listTeamDaySummary,
+} from "@/lib/timeClockDb";
 import { buildTimeClockReportPdf } from "@/lib/timeClockPdf";
 
 export async function GET(req: Request) {
@@ -14,27 +18,32 @@ export async function GET(req: Request) {
   const format = searchParams.get("format");
   const view = searchParams.get("view");
   const userEmail = searchParams.get("userEmail");
+  const access = await resolveTimeClockAccess(session!.user);
 
   if (!from || !to) {
     return NextResponse.json({ error: "from and to are required" }, { status: 400 });
   }
 
-  const admin = isAdmin(session!.user);
-
   try {
     if (view === "team_days") {
-      if (!admin) {
-        return NextResponse.json({ error: "Admin only" }, { status: 403 });
+      if (!access.isManager) {
+        return NextResponse.json({ error: "Manager access required" }, { status: 403 });
       }
-      const rows = await listTeamDaySummary({ from, to });
+      const rows = await listTeamDaySummary({
+        from,
+        to,
+        userEmails: access.visibleUserEmails,
+      });
       return NextResponse.json({ rows });
     }
 
+    const teamMode = access.isManager && searchParams.get("team") === "1";
     const report = await buildTimeClockReport({
       from,
       to,
-      userEmail: admin && userEmail ? userEmail : session!.user!.email!,
-      team: admin && searchParams.get("team") === "1",
+      userEmail: teamMode ? null : userEmail || session!.user!.email!,
+      userEmails: teamMode ? access.visibleUserEmails : null,
+      team: teamMode,
     });
 
     if (format === "csv") {

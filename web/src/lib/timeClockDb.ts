@@ -2,6 +2,8 @@ import "server-only";
 
 import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
+import { logTimeClockAudit } from "@/lib/timeClockAudit";
+import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
 import type {
   PunchStatus,
   TeamLiveStatusRow,
@@ -61,6 +63,21 @@ export function entryHours(entry: TimeEntry, now = Date.now()): number {
   return durationSeconds(entry.clock_in, entry.clock_out, now) / 3600;
 }
 
+async function auditSubject(
+  subjectEmail: string,
+  input: Omit<Parameters<typeof logTimeClockAudit>[0], "subjectEmail" | "teamId"> & {
+    teamId?: string | null;
+  }
+) {
+  const teamId =
+    input.teamId === undefined ? await getTeamIdForUser(subjectEmail) : input.teamId;
+  await logTimeClockAudit({
+    ...input,
+    subjectEmail,
+    teamId: teamId || null,
+  });
+}
+
 export async function getTimeClockSettings(): Promise<TimeClockSettings> {
   requirePostgres();
   const rows = await query(
@@ -96,7 +113,24 @@ export async function updateTimeClockSettings(
                updated_at, updated_by`,
     [maxOpenHours, reminderEnabled, timezone, updatedBy.toLowerCase()]
   );
-  return serializeRow<TimeClockSettings>(rows[0]);
+  const updated = serializeRow<TimeClockSettings>(rows[0]);
+  await logTimeClockAudit({
+    actorEmail: updatedBy,
+    action: "settings.updated",
+    entityType: "settings",
+    entityId: "default",
+    before: {
+      max_open_hours: current.max_open_hours,
+      reminder_enabled: current.reminder_enabled,
+      timezone: current.timezone,
+    },
+    after: {
+      max_open_hours: updated.max_open_hours,
+      reminder_enabled: updated.reminder_enabled,
+      timezone: updated.timezone,
+    },
+  });
+  return updated;
 }
 
 export async function getOpenEntry(userEmail: string): Promise<TimeEntry | null> {
@@ -141,7 +175,15 @@ export async function clockIn(userEmail: string): Promise<TimeEntry> {
   );
   const entry = entryFromRow(rows[0]);
   const withName = await getTimeEntry(entry.id);
-  return withName || entry;
+  const saved = withName || entry;
+  await auditSubject(email, {
+    actorEmail: email,
+    action: "punch.clock_in",
+    entityType: "time_entry",
+    entityId: saved.id,
+    after: { clock_in: saved.clock_in },
+  });
+  return saved;
 }
 
 export async function clockOut(userEmail: string, notes?: string): Promise<TimeEntry> {
@@ -162,7 +204,16 @@ export async function clockOut(userEmail: string, notes?: string): Promise<TimeE
   );
   const entry = entryFromRow(rows[0]);
   const withName = await getTimeEntry(entry.id);
-  return withName || entry;
+  const saved = withName || entry;
+  await auditSubject(email, {
+    actorEmail: email,
+    action: "punch.clock_out",
+    entityType: "time_entry",
+    entityId: saved.id,
+    before: { clock_in: open.clock_in, clock_out: null },
+    after: { clock_in: saved.clock_in, clock_out: saved.clock_out, notes: saved.notes },
+  });
+  return saved;
 }
 
 export async function getTimeEntry(id: string): Promise<TimeEntry | null> {
@@ -180,6 +231,7 @@ export async function getTimeEntry(id: string): Promise<TimeEntry | null> {
 
 export type ListTimeEntriesOpts = {
   userEmail?: string | null;
+  userEmails?: string[] | null;
   from?: string;
   to?: string;
   limit?: number;
@@ -197,6 +249,10 @@ export async function listTimeEntries(
   if (opts.userEmail) {
     clauses.push(`e.user_email = $${idx++}`);
     params.push(opts.userEmail.toLowerCase());
+  }
+  if (opts.userEmails?.length) {
+    clauses.push(`e.user_email = ANY($${idx++}::citext[])`);
+    params.push(opts.userEmails.map((e) => e.toLowerCase()));
   }
   if (opts.from) {
     clauses.push(`e.clock_in >= $${idx++}::timestamptz`);
@@ -258,7 +314,16 @@ export async function updateEntryNotes(
   );
   const updated = entryFromRow(rows[0]);
   const withName = await getTimeEntry(updated.id);
-  return withName || updated;
+  const saved = withName || updated;
+  await auditSubject(entry.user_email, {
+    actorEmail: userEmail,
+    action: "entry.notes_updated",
+    entityType: "time_entry",
+    entityId: saved.id,
+    before: { notes: entry.notes },
+    after: { notes: saved.notes },
+  });
+  return saved;
 }
 
 export async function createEditRequest(input: {
@@ -311,12 +376,31 @@ export async function createEditRequest(input: {
       input.reason.trim(),
     ]
   );
-  return editRequestFromRow(rows[0]);
+  const request = editRequestFromRow(rows[0]);
+  await auditSubject(entry.user_email, {
+    actorEmail: input.requestedBy,
+    action: "entry.edit_requested",
+    entityType: "edit_request",
+    entityId: request.id,
+    before: {
+      clock_in: entry.clock_in,
+      clock_out: entry.clock_out,
+      notes: entry.notes,
+    },
+    after: {
+      proposed_clock_in: input.proposedClockIn,
+      proposed_clock_out: input.proposedClockOut,
+      proposed_notes: input.proposedNotes,
+      reason: input.reason,
+    },
+  });
+  return request;
 }
 
 export async function listEditRequests(opts: {
   status?: string;
   userEmail?: string | null;
+  userEmails?: string[] | null;
   limit?: number;
 }): Promise<TimeEntryEditRequest[]> {
   requirePostgres();
@@ -331,6 +415,10 @@ export async function listEditRequests(opts: {
   if (opts.userEmail) {
     clauses.push(`r.requested_by = $${idx++}`);
     params.push(opts.userEmail.toLowerCase());
+  }
+  if (opts.userEmails?.length) {
+    clauses.push(`r.requested_by = ANY($${idx++}::citext[])`);
+    params.push(opts.userEmails.map((e) => e.toLowerCase()));
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -431,7 +519,27 @@ export async function reviewEditRequest(input: {
 
   const requests = await listEditRequests({ limit: 200 });
   const found = requests.find((r) => r.id === input.requestId);
-  if (found) return found;
+  if (found) {
+    await auditSubject(String(row.requested_by), {
+      actorEmail: input.reviewerEmail,
+      action: input.approve ? "entry.edit_approved" : "entry.edit_rejected",
+      entityType: "edit_request",
+      entityId: input.requestId,
+      before: {
+        clock_in: row.original_clock_in,
+        clock_out: row.original_clock_out,
+        notes: row.original_notes,
+      },
+      after: input.approve
+        ? {
+            clock_in: row.proposed_clock_in,
+            clock_out: row.proposed_clock_out,
+            notes: row.proposed_notes,
+          }
+        : { review_notes: input.reviewNotes || "" },
+    });
+    return found;
+  }
 
   throw new Error("Updated edit request could not be loaded");
 }
@@ -494,6 +602,7 @@ export async function buildTimeClockReport(opts: {
   from: string;
   to: string;
   userEmail?: string | null;
+  userEmails?: string[] | null;
   team?: boolean;
 }): Promise<TimeClockReport> {
   requirePostgres();
@@ -504,6 +613,7 @@ export async function buildTimeClockReport(opts: {
     const { entries } = await listTimeEntries({
       from: opts.from,
       to: opts.to,
+      userEmails: opts.userEmails,
       limit: 5000,
     });
     const byUser = new Map<string, TimeEntry[]>();
@@ -573,6 +683,7 @@ export async function buildTimeClockReport(opts: {
 export async function listTeamDaySummary(opts: {
   from: string;
   to: string;
+  userEmails?: string[] | null;
 }): Promise<
   Array<{
     date: string;
@@ -585,6 +696,13 @@ export async function listTeamDaySummary(opts: {
 > {
   requirePostgres();
   const settings = await getTimeClockSettings();
+  const emailFilter = opts.userEmails?.length
+    ? `AND e.user_email = ANY($4::citext[])`
+    : "";
+  const params: unknown[] = [opts.from, opts.to, settings.timezone];
+  if (opts.userEmails?.length) {
+    params.push(opts.userEmails.map((e) => e.toLowerCase()));
+  }
   const rows = await query(
     `SELECT
        to_char((e.clock_in AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS day,
@@ -601,9 +719,10 @@ export async function listTeamDaySummary(opts: {
      JOIN users u ON u.email = e.user_email
      WHERE e.clock_in >= $1::timestamptz
        AND e.clock_in < $2::timestamptz
+       ${emailFilter}
      GROUP BY day, e.user_email, u.name
      ORDER BY day DESC, u.name ASC`,
-    [opts.from, opts.to, settings.timezone]
+    params
   );
   return rows.map((row) => ({
     date: String(row.day),
@@ -624,7 +743,7 @@ export async function listUsersWithTimeClockAccess(): Promise<
      FROM users
      WHERE active = true
        AND (
-         role = 'Admin'
+         role IN ('Admin', 'Supervisor')
          OR EXISTS (
            SELECT 1 FROM unnest(COALESCE(modules, ARRAY[]::text[])) AS m(mod)
            WHERE m.mod = 'time_clock'
@@ -779,21 +898,39 @@ export async function submitWeeklyTimesheet(
      WHERE user_email = $1 AND week_start = $2::date`,
     [userEmail.toLowerCase(), weekStart, detail.total_hours]
   );
+  await auditSubject(userEmail, {
+    actorEmail: userEmail,
+    action: "timesheet.submitted",
+    entityType: "timesheet",
+    entityId: `${userEmail}:${weekStart}`,
+    after: { week_start: weekStart, total_hours: detail.total_hours },
+  });
   return getWeeklyTimesheetDetail(userEmail, weekStart);
 }
 
-export async function listSubmittedTimesheets(limit = 50): Promise<WeeklyTimesheet[]> {
+export async function listSubmittedTimesheets(
+  limit = 50,
+  userEmails?: string[] | null
+): Promise<WeeklyTimesheet[]> {
   requirePostgres();
   const settings = await getTimeClockSettings();
+  const clauses = ["t.status = 'submitted'"];
+  const params: unknown[] = [];
+  let idx = 1;
+  if (userEmails?.length) {
+    clauses.push(`t.user_email = ANY($${idx++}::citext[])`);
+    params.push(userEmails.map((e) => e.toLowerCase()));
+  }
+  params.push(Math.min(limit, 200));
   const rows = await query(
     `SELECT t.*, u.name AS user_name, rev.name AS reviewer_name
      FROM time_timesheets t
      JOIN users u ON u.email = t.user_email
      LEFT JOIN users rev ON rev.email = t.reviewed_by
-     WHERE t.status = 'submitted'
+     WHERE ${clauses.join(" AND ")}
      ORDER BY t.submitted_at ASC
-     LIMIT $1`,
-    [Math.min(limit, 200)]
+     LIMIT $${idx}`,
+    params
   );
   return rows.map((row) => timesheetFromRow(row, settings.timezone));
 }
@@ -829,6 +966,18 @@ export async function reviewWeeklyTimesheet(input: {
       (input.reviewNotes || "").trim(),
     ]
   );
+  await auditSubject(input.userEmail, {
+    actorEmail: input.reviewerEmail,
+    action: input.approve ? "timesheet.approved" : "timesheet.rejected",
+    entityType: "timesheet",
+    entityId: `${input.userEmail}:${input.weekStart}`,
+    before: { status: sheet.status, total_hours: sheet.total_hours },
+    after: {
+      status,
+      review_notes: input.reviewNotes || "",
+      total_hours: sheet.total_hours,
+    },
+  });
   return getWeeklyTimesheetDetail(input.userEmail, input.weekStart);
 }
 
@@ -843,25 +992,39 @@ function statusLabel(status: TeamMemberLiveStatus): string {
   return labels[status];
 }
 
-export async function listTeamLiveStatus(): Promise<TeamLiveStatusRow[]> {
+export async function listTeamLiveStatus(
+  allowedUserEmails?: string[] | null
+): Promise<TeamLiveStatusRow[]> {
   requirePostgres();
   const settings = await getTimeClockSettings();
+  const emailFilter = allowedUserEmails?.length
+    ? `AND u.email = ANY($1::citext[])`
+    : "";
+  const userParams = allowedUserEmails?.length
+    ? [allowedUserEmails.map((e) => e.toLowerCase())]
+    : [];
   const users = await query<{
     email: string;
     name: string;
     timezone: string | null;
+    team_id: string | null;
+    team_name: string | null;
   }>(
-    `SELECT u.email, u.name, u.timezone
+    `SELECT u.email, u.name, u.timezone, t.id AS team_id, t.name AS team_name
      FROM users u
+     LEFT JOIN time_clock_team_members m ON m.user_email = u.email
+     LEFT JOIN time_clock_teams t ON t.id = m.team_id
      WHERE u.active = true
        AND (
-         u.role = 'Admin'
+         u.role IN ('Admin', 'Supervisor')
          OR EXISTS (
            SELECT 1 FROM unnest(COALESCE(u.modules, ARRAY[]::text[])) AS m(mod)
            WHERE m.mod = 'time_clock'
          )
        )
-     ORDER BY u.name ASC, u.email ASC`
+       ${emailFilter}
+     ORDER BY t.name ASC NULLS LAST, u.name ASC, u.email ASC`,
+    userParams
   );
 
   const now = new Date();
@@ -949,6 +1112,8 @@ export async function listTeamLiveStatus(): Promise<TeamLiveStatusRow[]> {
         ? new Date(openEntry.clock_in as Date).toISOString()
         : null,
       timesheet_status: timesheet?.status ?? null,
+      team_id: user.team_id ? String(user.team_id) : null,
+      team_name: user.team_name ? String(user.team_name) : null,
     });
   }
 

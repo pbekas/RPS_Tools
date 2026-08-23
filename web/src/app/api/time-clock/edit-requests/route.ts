@@ -1,20 +1,29 @@
 import { NextResponse } from "next/server";
-import { apiRequireAdmin, apiRequireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { canViewTimeClockUser } from "@/lib/timeClockAccess";
+import { apiRequireModule, apiRequireTimeClockManager } from "@/lib/requireAccess";
 import { listEditRequests, reviewEditRequest } from "@/lib/timeClockDb";
 
 export async function GET(req: Request) {
   const { session, error } = await apiRequireModule("time_clock");
   if (error) return error;
 
+  const managerResult = await apiRequireTimeClockManager();
+  const access = managerResult.access;
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status") || undefined;
-  const admin = isAdmin(session!.user);
 
   try {
+    if (access?.isManager) {
+      const requests = await listEditRequests({
+        status,
+        userEmails: access.visibleUserEmails,
+        limit: 100,
+      });
+      return NextResponse.json({ requests });
+    }
     const requests = await listEditRequests({
       status,
-      userEmail: admin ? null : session!.user!.email!,
+      userEmail: session!.user!.email!,
       limit: 100,
     });
     return NextResponse.json({ requests });
@@ -27,7 +36,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { session, error } = await apiRequireAdmin();
+  const { session, error, access } = await apiRequireTimeClockManager();
   if (error) return error;
 
   const body = await req.json().catch(() => ({}));
@@ -40,6 +49,15 @@ export async function POST(req: Request) {
 
   try {
     if (action === "approve" || action === "reject") {
+      const pending = await listEditRequests({ limit: 200 });
+      const target = pending.find((r) => r.id === requestId);
+      if (!target) {
+        return NextResponse.json({ error: "Request not found" }, { status: 404 });
+      }
+      const subject = target.entry?.user_email || target.requested_by;
+      if (!canViewTimeClockUser(access!, subject)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
       const request = await reviewEditRequest({
         requestId,
         reviewerEmail: session!.user!.email!,

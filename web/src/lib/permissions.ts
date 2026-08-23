@@ -47,6 +47,14 @@ export function isAdmin(user: SessionUserLike | null | undefined): boolean {
   return (user?.role || "").toLowerCase() === "admin";
 }
 
+export function isSupervisor(user: SessionUserLike | null | undefined): boolean {
+  return (user?.role || "").toLowerCase() === "supervisor";
+}
+
+export function isTimeClockManager(user: SessionUserLike | null | undefined): boolean {
+  return isAdmin(user) || isSupervisor(user);
+}
+
 /** Normalize stored modules; empty/legacy means Call QA only. */
 export function effectiveModules(
   user: SessionUserLike | null | undefined

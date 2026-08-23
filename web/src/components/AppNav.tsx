@@ -11,6 +11,7 @@ import {
   defaultHrefForUser,
   grantedToolsets,
   isAdmin,
+  isSupervisor,
 } from "@/lib/permissions";
 
 function navClass(active: boolean) {
@@ -23,6 +24,11 @@ export function AppNav() {
   if (!data?.user || pathname === "/login") return null;
 
   const admin = isAdmin(data.user);
+  const supervisor = isSupervisor(data.user);
+  const timeClockManager =
+    Boolean((data.user as { timeClockManager?: boolean }).timeClockManager) ||
+    admin ||
+    supervisor;
   const toolsets = grantedToolsets(data.user);
   const current = activeToolset(pathname);
   const contractAccess = resolveContractAccess(data.user);
@@ -115,7 +121,7 @@ export function AppNav() {
               >
                 My hours
               </Link>
-              {admin ? (
+              {timeClockManager ? (
                 <>
                   <Link
                     href="/time-clock/live"
@@ -142,11 +148,27 @@ export function AppNav() {
                     Approvals
                   </Link>
                   <Link
-                    href="/time-clock/settings"
-                    className={navClass(pathname.startsWith("/time-clock/settings"))}
+                    href="/time-clock/audit"
+                    className={navClass(pathname.startsWith("/time-clock/audit"))}
                   >
-                    Settings
+                    Audit
                   </Link>
+                  {admin ? (
+                    <>
+                      <Link
+                        href="/time-clock/teams"
+                        className={navClass(pathname.startsWith("/time-clock/teams"))}
+                      >
+                        Departments
+                      </Link>
+                      <Link
+                        href="/time-clock/settings"
+                        className={navClass(pathname.startsWith("/time-clock/settings"))}
+                      >
+                        Settings
+                      </Link>
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </nav>

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
-import { apiRequireAdmin, apiRequireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { canViewTimeClockUser, resolveTimeClockAccess } from "@/lib/timeClockAccess";
+import {
+  apiRequireModule,
+  apiRequireTimeClockManager,
+} from "@/lib/requireAccess";
 import {
   getWeeklyTimesheetDetail,
   listSubmittedTimesheets,
@@ -15,14 +18,14 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const weekStart = searchParams.get("week_start");
   const view = searchParams.get("view");
-  const admin = isAdmin(session!.user);
+  const access = await resolveTimeClockAccess(session!.user);
 
   try {
     if (view === "pending") {
-      if (!admin) {
-        return NextResponse.json({ error: "Admin only" }, { status: 403 });
+      if (!access.isManager) {
+        return NextResponse.json({ error: "Manager access required" }, { status: 403 });
       }
-      const timesheets = await listSubmittedTimesheets();
+      const timesheets = await listSubmittedTimesheets(100, access.visibleUserEmails);
       return NextResponse.json({ timesheets });
     }
 
@@ -32,16 +35,20 @@ export async function GET(req: Request) {
 
     const requestedUser = searchParams.get("userEmail");
     const userEmail =
-      admin && requestedUser
+      access.isManager && requestedUser
         ? requestedUser.toLowerCase()
         : session!.user!.email!.toLowerCase();
+
+    if (!canViewTimeClockUser(access, userEmail)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const timesheet = await getWeeklyTimesheetDetail(userEmail, weekStart);
     return NextResponse.json({ timesheet });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to load timesheet" },
-      { status: 500 }
+      { status: 400 }
     );
   }
 }
@@ -68,11 +75,14 @@ export async function POST(req: Request) {
     }
 
     if (action === "approve" || action === "reject") {
-      const adminResult = await apiRequireAdmin();
-      if (adminResult.error) return adminResult.error;
+      const managerResult = await apiRequireTimeClockManager();
+      if (managerResult.error) return managerResult.error;
       const userEmail = String(body.user_email || "").toLowerCase();
       if (!userEmail) {
         return NextResponse.json({ error: "user_email is required" }, { status: 400 });
+      }
+      if (!canViewTimeClockUser(managerResult.access!, userEmail)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       const timesheet = await reviewWeeklyTimesheet({
         userEmail,

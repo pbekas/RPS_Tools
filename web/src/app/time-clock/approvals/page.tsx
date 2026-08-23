@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { requireTimeClockManager } from "@/lib/requireAccess";
 import {
   getTimeClockSettings,
   getWeeklyTimesheetDetail,
@@ -10,13 +8,16 @@ import {
 import { ApprovalsHub } from "@/components/ApprovalsHub";
 
 export default async function TimeClockApprovalsPage() {
-  const session = await requireModule("time_clock");
-  if (!isAdmin(session.user)) redirect("/time-clock");
+  const { access } = await requireTimeClockManager();
 
   const [settings, requests, submitted] = await Promise.all([
     getTimeClockSettings(),
-    listEditRequests({ status: "pending", limit: 100 }),
-    listSubmittedTimesheets(100),
+    listEditRequests({
+      status: "pending",
+      userEmails: access.visibleUserEmails,
+      limit: 100,
+    }),
+    listSubmittedTimesheets(100, access.visibleUserEmails),
   ]);
 
   const timesheets = await Promise.all(

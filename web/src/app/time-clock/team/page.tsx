@@ -1,21 +1,19 @@
-import { redirect } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
-import {
-  getTimeClockSettings,
-  listTeamDaySummary,
-} from "@/lib/timeClockDb";
+import { requireTimeClockManager } from "@/lib/requireAccess";
+import { getTimeClockSettings, listTeamDaySummary } from "@/lib/timeClockDb";
 import { addDaysIso, startOfDayIso } from "@/lib/timeClockFormat";
 import { TeamTimesheet } from "@/components/TeamTimesheet";
 
 export default async function TeamTimeClockPage() {
-  const session = await requireModule("time_clock");
-  if (!isAdmin(session.user)) redirect("/time-clock");
+  const { access } = await requireTimeClockManager();
 
   const settings = await getTimeClockSettings();
   const to = addDaysIso(startOfDayIso(new Date(), settings.timezone), 1, settings.timezone);
   const from = addDaysIso(to, -14, settings.timezone);
-  const rows = await listTeamDaySummary({ from, to });
+  const rows = await listTeamDaySummary({
+    from,
+    to,
+    userEmails: access.visibleUserEmails,
+  });
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">

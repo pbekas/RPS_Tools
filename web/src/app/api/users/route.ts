@@ -69,8 +69,11 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
-      if (!["Agent", "Admin"].includes(role)) {
-        return NextResponse.json({ error: "Role must be Agent or Admin" }, { status: 400 });
+      if (!["Agent", "Admin", "Supervisor"].includes(role)) {
+        return NextResponse.json(
+          { error: "Role must be Agent, Supervisor, or Admin" },
+          { status: 400 }
+        );
       }
       const extensionRaw =
         body.extension === undefined || body.extension === null

@@ -1,18 +1,20 @@
-import { redirect } from "next/navigation";
-import { requireModule } from "@/lib/requireAccess";
-import { isAdmin } from "@/lib/permissions";
+import { requireTimeClockManager } from "@/lib/requireAccess";
 import { buildTimeClockReport, getTimeClockSettings } from "@/lib/timeClockDb";
 import { addDaysIso, startOfDayIso } from "@/lib/timeClockFormat";
 import { TimeClockReportPanel } from "@/components/TimeClockReportPanel";
 
 export default async function TimeClockReportsPage() {
-  const session = await requireModule("time_clock");
-  if (!isAdmin(session.user)) redirect("/time-clock");
+  const { access } = await requireTimeClockManager();
 
   const settings = await getTimeClockSettings();
   const to = addDaysIso(startOfDayIso(new Date(), settings.timezone), 1, settings.timezone);
   const from = addDaysIso(to, -7, settings.timezone);
-  const report = await buildTimeClockReport({ from, to, team: true });
+  const report = await buildTimeClockReport({
+    from,
+    to,
+    team: true,
+    userEmails: access.visibleUserEmails,
+  });
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">

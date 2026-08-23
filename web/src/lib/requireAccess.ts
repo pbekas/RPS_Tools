@@ -7,6 +7,10 @@ import {
   type ContractAccess,
 } from "@/lib/contractAccess";
 import {
+  resolveTimeClockAccess,
+  type TimeClockAccess,
+} from "@/lib/timeClockAccess";
+import {
   defaultHrefForUser,
   hasModule,
   isAdmin,
@@ -72,6 +76,46 @@ export async function contractAccessForUser(
     ...access,
     allowedGroupIds: groups.filter((g) => allowed.has(g.slug)).map((g) => g.id),
   };
+}
+
+export async function requireTimeClockManager() {
+  const session = await requireModule("time_clock");
+  const access = await resolveTimeClockAccess(session.user);
+  if (!access.isManager) {
+    redirect(defaultHrefForUser(session.user));
+  }
+  return { session, access };
+}
+
+export async function requireTimeClockAdmin() {
+  const session = await requireModule("time_clock");
+  if (!isAdmin(session.user)) {
+    redirect(defaultHrefForUser(session.user));
+  }
+  const access = await resolveTimeClockAccess(session.user);
+  return { session, access };
+}
+
+export async function apiRequireTimeClockManager() {
+  const result = await apiRequireModule("time_clock");
+  if (result.error || !result.session) {
+    return { session: null, error: result.error, access: null };
+  }
+  const access = await resolveTimeClockAccess(result.session.user);
+  if (!access.isManager) {
+    return {
+      session: null,
+      error: NextResponse.json({ error: "Manager access required" }, { status: 403 }),
+      access: null,
+    };
+  }
+  return { session: result.session, error: null, access };
+}
+
+export async function timeClockAccessForUser(
+  user: { email?: string | null; role?: string | null; modules?: string[] | null }
+): Promise<TimeClockAccess> {
+  return resolveTimeClockAccess(user);
 }
 
 export async function apiRequireAdmin() {

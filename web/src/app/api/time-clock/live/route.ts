@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
-import { apiRequireAdmin, apiRequireModule } from "@/lib/requireAccess";
+import { apiRequireTimeClockManager } from "@/lib/requireAccess";
 import { listTeamLiveStatus } from "@/lib/timeClockDb";
 
 export async function GET() {
-  const { error } = await apiRequireModule("time_clock");
+  const { error, access } = await apiRequireTimeClockManager();
   if (error) return error;
 
-  const adminResult = await apiRequireAdmin();
-  if (adminResult.error) return adminResult.error;
-
   try {
-    const rows = await listTeamLiveStatus();
+    const rows = await listTeamLiveStatus(access!.visibleUserEmails);
     return NextResponse.json({ rows, refreshed_at: new Date().toISOString() });
   } catch (err) {
     return NextResponse.json(

@@ -136,6 +136,9 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
               <div>
                 <p className="font-semibold text-ink">{row.user_name}</p>
                 <p className="text-sm text-ink-soft">{row.user_email}</p>
+                {row.team_name ? (
+                  <p className="text-xs text-ink-soft">{row.team_name}</p>
+                ) : null}
               </div>
               <span className={`mt-1 h-3 w-3 shrink-0 rounded-full ${STATUS_DOT[row.status]}`} />
             </div>

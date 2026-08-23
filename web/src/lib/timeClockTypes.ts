@@ -110,4 +110,36 @@ export type TeamLiveStatusRow = {
   last_punch_label: string | null;
   clocked_in_since: string | null;
   timesheet_status: TimesheetStatus | null;
+  team_id: string | null;
+  team_name: string | null;
+};
+
+export type TimeClockTeam = {
+  id: string;
+  name: string;
+  slug: string;
+  supervisor_email: string | null;
+  supervisor_name?: string;
+  active: boolean;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+  members?: Array<{ user_email: string; user_name: string; role: string }>;
+};
+
+export type TimeClockAuditEntry = {
+  id: string;
+  actor_email: string | null;
+  actor_name?: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  subject_email: string | null;
+  subject_name?: string;
+  team_id: string | null;
+  team_name?: string;
+  before_data: Record<string, unknown>;
+  after_data: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
 };
