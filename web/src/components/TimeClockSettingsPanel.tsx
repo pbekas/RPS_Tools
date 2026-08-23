@@ -44,6 +44,12 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
   const [remindTimesheetAfter, setRemindTimesheetAfter] = useState(
     settings.remind_timesheet_after
   );
+  const [payPeriodAnchorDate, setPayPeriodAnchorDate] = useState(
+    settings.pay_period_anchor_date
+  );
+  const [payPeriodLengthDays, setPayPeriodLengthDays] = useState(
+    String(settings.pay_period_length_days)
+  );
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -65,6 +71,8 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
           remind_timesheet_enabled: remindTimesheetEnabled,
           remind_timesheet_weekday: Number(remindTimesheetWeekday),
           remind_timesheet_after: remindTimesheetAfter,
+          pay_period_anchor_date: payPeriodAnchorDate,
+          pay_period_length_days: Number(payPeriodLengthDays),
         }),
       });
       const data = await res.json();
@@ -185,6 +193,34 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
             type="time"
             value={remindTimesheetAfter}
             onChange={(e) => setRemindTimesheetAfter(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="space-y-3 rounded-lg border border-line p-4">
+        <legend className="px-1 text-sm font-semibold text-ink">Pay period (Plane PDF)</legend>
+        <p className="text-xs text-ink-soft">
+          Biweekly pay periods are calculated from the anchor date. Reports can preset
+          to the current or previous pay period for reimbursement exports.
+        </p>
+        <label className="block text-sm">
+          <span className="font-semibold text-ink-soft">Anchor date (start of pay period #1)</span>
+          <input
+            type="date"
+            value={payPeriodAnchorDate}
+            onChange={(e) => setPayPeriodAnchorDate(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="font-semibold text-ink-soft">Length (days)</span>
+          <input
+            type="number"
+            min={7}
+            max={31}
+            value={payPeriodLengthDays}
+            onChange={(e) => setPayPeriodLengthDays(e.target.value)}
             className="mt-1 w-full rounded-lg border border-line px-3 py-2"
           />
         </label>

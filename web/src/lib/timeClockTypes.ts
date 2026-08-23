@@ -57,6 +57,8 @@ export type TimeClockSettings = {
   remind_timesheet_enabled: boolean;
   remind_timesheet_weekday: number;
   remind_timesheet_after: string;
+  pay_period_anchor_date: string;
+  pay_period_length_days: number;
   updated_at: string;
   updated_by: string | null;
 };
@@ -81,6 +83,25 @@ export type WeeklyHoursRow = {
   entry_count: number;
 };
 
+export type PayPeriodInfo = {
+  period_start: string;
+  period_end: string;
+  period_number: number;
+};
+
+export type TimeClockReportApproval = {
+  status: "approved" | "submitted" | "open" | "rejected" | "none";
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  weeks: Array<{
+    week_start: string;
+    week_end: string;
+    status: TimesheetStatus;
+    reviewed_by_name?: string;
+    reviewed_at?: string | null;
+  }>;
+};
+
 export type TimeClockReport = {
   from: string;
   to: string;
@@ -88,12 +109,14 @@ export type TimeClockReport = {
   total_hours: number;
   weekly_breakdown: WeeklyHoursRow[];
   entries: TimeEntry[];
+  pay_period?: PayPeriodInfo;
   by_user?: Array<{
     user_email: string;
     user_name: string;
     total_hours: number;
     weekly_breakdown: WeeklyHoursRow[];
     entries: TimeEntry[];
+    approval?: TimeClockReportApproval;
   }>;
 };
 

@@ -4,9 +4,11 @@ import { apiRequireModule } from "@/lib/requireAccess";
 import {
   buildTimeClockReport,
   entryHours,
+  getTimeClockSettings,
   listTeamDaySummary,
 } from "@/lib/timeClockDb";
 import { buildTimeClockReportPdf } from "@/lib/timeClockPdf";
+import { resolvePayPeriod } from "@/lib/timeClockPayPeriod";
 
 export async function GET(req: Request) {
   const { session, error } = await apiRequireModule("time_clock");
@@ -38,12 +40,39 @@ export async function GET(req: Request) {
     }
 
     const teamMode = access.isManager && searchParams.get("team") === "1";
+    const settings = await getTimeClockSettings();
+    const payPeriodPreset = searchParams.get("pay_period");
+    let payPeriodBounds;
+    if (payPeriodPreset === "current") {
+      payPeriodBounds = resolvePayPeriod(
+        settings.pay_period_anchor_date,
+        settings.pay_period_length_days,
+        settings.timezone,
+        new Date(),
+        0
+      );
+    } else if (payPeriodPreset === "previous") {
+      payPeriodBounds = resolvePayPeriod(
+        settings.pay_period_anchor_date,
+        settings.pay_period_length_days,
+        settings.timezone,
+        new Date(),
+        -1
+      );
+    }
+
+    const reportFrom = payPeriodBounds?.from || from;
+    const reportTo = payPeriodBounds?.to || to;
+    const includeApproval = format === "pdf" || searchParams.get("approval") === "1";
+
     const report = await buildTimeClockReport({
-      from,
-      to,
+      from: reportFrom,
+      to: reportTo,
       userEmail: teamMode ? null : userEmail || session!.user!.email!,
       userEmails: teamMode ? access.visibleUserEmails : null,
       team: teamMode,
+      payPeriod: payPeriodBounds,
+      includeApproval,
     });
 
     if (format === "csv") {
@@ -72,10 +101,13 @@ export async function GET(req: Request) {
 
     if (format === "pdf") {
       const pdf = await buildTimeClockReportPdf(report);
+      const periodSlug = report.pay_period
+        ? `pp${report.pay_period.period_number}-${report.pay_period.period_start}`
+        : `${reportFrom.slice(0, 10)}-${reportTo.slice(0, 10)}`;
       return new NextResponse(new Uint8Array(pdf), {
         headers: {
           "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="time-clock-${from.slice(0, 10)}-${to.slice(0, 10)}.pdf"`,
+          "Content-Disposition": `attachment; filename="time-clock-${periodSlug}.pdf"`,
         },
       });
     }

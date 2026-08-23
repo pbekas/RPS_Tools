@@ -1,33 +1,45 @@
 import { requireTimeClockManager } from "@/lib/requireAccess";
 import { buildTimeClockReport, getTimeClockSettings } from "@/lib/timeClockDb";
-import { addDaysIso, startOfDayIso } from "@/lib/timeClockFormat";
+import { resolvePayPeriod } from "@/lib/timeClockPayPeriod";
 import { TimeClockReportPanel } from "@/components/TimeClockReportPanel";
 
 export default async function TimeClockReportsPage() {
   const { access } = await requireTimeClockManager();
 
   const settings = await getTimeClockSettings();
-  const to = addDaysIso(startOfDayIso(new Date(), settings.timezone), 1, settings.timezone);
-  const from = addDaysIso(to, -7, settings.timezone);
+  const currentPeriod = resolvePayPeriod(
+    settings.pay_period_anchor_date,
+    settings.pay_period_length_days,
+    settings.timezone
+  );
   const report = await buildTimeClockReport({
-    from,
-    to,
+    from: currentPeriod.from,
+    to: currentPeriod.to,
     team: true,
     userEmails: access.visibleUserEmails,
+    payPeriod: currentPeriod,
+    includeApproval: true,
   });
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Time reports</h1>
       <p className="mt-1 text-ink-soft">
-        Export team hours by date range with weekly breakdown and period totals.
+        Export pay-period hours by employee with manager approval stamps for Plane
+        reimbursement.
       </p>
       <div className="mt-6">
         <TimeClockReportPanel
-          initialFrom={from}
-          initialTo={to}
+          initialFrom={currentPeriod.from}
+          initialTo={currentPeriod.to}
           initialReport={report}
           teamMode
+          initialPreset="current"
+          payPeriodConfig={{
+            anchorDate: settings.pay_period_anchor_date,
+            lengthDays: settings.pay_period_length_days,
+            timezone: settings.timezone,
+          }}
         />
       </div>
     </main>

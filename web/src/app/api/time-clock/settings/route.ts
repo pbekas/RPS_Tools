@@ -36,6 +36,8 @@ export async function PATCH(req: Request) {
     remind_timesheet_enabled?: boolean;
     remind_timesheet_weekday?: number;
     remind_timesheet_after?: string;
+    pay_period_anchor_date?: string;
+    pay_period_length_days?: number;
   } = {};
 
   if (body.max_open_hours != null) {
@@ -75,6 +77,16 @@ export async function PATCH(req: Request) {
   }
   if (typeof body.remind_timesheet_after === "string" && /^\d{2}:\d{2}$/.test(body.remind_timesheet_after)) {
     patch.remind_timesheet_after = body.remind_timesheet_after;
+  }
+  if (typeof body.pay_period_anchor_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.pay_period_anchor_date)) {
+    patch.pay_period_anchor_date = body.pay_period_anchor_date;
+  }
+  if (body.pay_period_length_days != null) {
+    const days = Number(body.pay_period_length_days);
+    if (!Number.isInteger(days) || days < 7 || days > 31) {
+      return NextResponse.json({ error: "Invalid pay_period_length_days" }, { status: 400 });
+    }
+    patch.pay_period_length_days = days;
   }
 
   try {

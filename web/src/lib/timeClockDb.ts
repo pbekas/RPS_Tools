@@ -9,9 +9,11 @@ import type {
   TeamLiveStatusRow,
   TeamMemberLiveStatus,
   TimeClockReport,
+  TimeClockReportApproval,
   TimeClockSettings,
   TimeEntry,
   TimeEntryEditRequest,
+  TimesheetStatus,
   WeeklyHoursRow,
   WeeklyTimesheet,
 } from "@/lib/timeClockTypes";
@@ -24,6 +26,10 @@ import {
 } from "@/lib/timeClockFormat";
 import { listTimeOffEntries, getTimeOffForDate } from "@/lib/timeOffDb";
 import { isValidTimeClockTimezone } from "@/lib/timeClockTimezones";
+import {
+  type PayPeriodBounds,
+  weekStartsOverlappingRange,
+} from "@/lib/timeClockPayPeriod";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -146,6 +152,7 @@ export async function getTimeClockSettings(): Promise<TimeClockSettings> {
             remind_clock_in_enabled, remind_clock_in_after,
             remind_clock_out_enabled, remind_clock_out_after,
             remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
+            pay_period_anchor_date, pay_period_length_days,
             updated_at, updated_by
      FROM time_clock_settings
      WHERE id = 'default'`
@@ -160,6 +167,8 @@ export async function getTimeClockSettings(): Promise<TimeClockSettings> {
     remind_clock_out_after: timeFromRow(row.remind_clock_out_after),
     remind_timesheet_after: timeFromRow(row.remind_timesheet_after),
     remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
+    pay_period_anchor_date: dateToYmd(row.pay_period_anchor_date || "2026-01-01"),
+    pay_period_length_days: Number(row.pay_period_length_days ?? 14),
   });
 }
 
@@ -177,6 +186,8 @@ export async function updateTimeClockSettings(
       | "remind_timesheet_enabled"
       | "remind_timesheet_weekday"
       | "remind_timesheet_after"
+      | "pay_period_anchor_date"
+      | "pay_period_length_days"
     >
   >,
   updatedBy: string
@@ -200,6 +211,10 @@ export async function updateTimeClockSettings(
     patch.remind_timesheet_weekday ?? current.remind_timesheet_weekday;
   const remindTimesheetAfter =
     patch.remind_timesheet_after ?? current.remind_timesheet_after;
+  const payPeriodAnchorDate =
+    patch.pay_period_anchor_date ?? current.pay_period_anchor_date;
+  const payPeriodLengthDays =
+    patch.pay_period_length_days ?? current.pay_period_length_days;
 
   const rows = await query(
     `UPDATE time_clock_settings
@@ -213,13 +228,16 @@ export async function updateTimeClockSettings(
          remind_timesheet_enabled = $8,
          remind_timesheet_weekday = $9,
          remind_timesheet_after = $10::time,
+         pay_period_anchor_date = $11::date,
+         pay_period_length_days = $12,
          updated_at = now(),
-         updated_by = $11
+         updated_by = $13
      WHERE id = 'default'
      RETURNING id, max_open_hours::float8 AS max_open_hours, reminder_enabled, timezone,
                remind_clock_in_enabled, remind_clock_in_after,
                remind_clock_out_enabled, remind_clock_out_after,
                remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
+               pay_period_anchor_date, pay_period_length_days,
                updated_at, updated_by`,
     [
       maxOpenHours,
@@ -232,6 +250,8 @@ export async function updateTimeClockSettings(
       remindTimesheetEnabled,
       remindTimesheetWeekday,
       remindTimesheetAfter,
+      payPeriodAnchorDate,
+      payPeriodLengthDays,
       updatedBy.toLowerCase(),
     ]
   );
@@ -242,6 +262,8 @@ export async function updateTimeClockSettings(
     remind_clock_out_after: timeFromRow(row.remind_clock_out_after),
     remind_timesheet_after: timeFromRow(row.remind_timesheet_after),
     remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
+    pay_period_anchor_date: dateToYmd(row.pay_period_anchor_date || "2026-01-01"),
+    pay_period_length_days: Number(row.pay_period_length_days ?? 14),
   });
   await logTimeClockAudit({
     actorEmail: updatedBy,
@@ -259,6 +281,8 @@ export async function updateTimeClockSettings(
       remind_timesheet_enabled: current.remind_timesheet_enabled,
       remind_timesheet_weekday: current.remind_timesheet_weekday,
       remind_timesheet_after: current.remind_timesheet_after,
+      pay_period_anchor_date: current.pay_period_anchor_date,
+      pay_period_length_days: current.pay_period_length_days,
     },
     after: {
       max_open_hours: updated.max_open_hours,
@@ -271,6 +295,8 @@ export async function updateTimeClockSettings(
       remind_timesheet_enabled: updated.remind_timesheet_enabled,
       remind_timesheet_weekday: updated.remind_timesheet_weekday,
       remind_timesheet_after: updated.remind_timesheet_after,
+      pay_period_anchor_date: updated.pay_period_anchor_date,
+      pay_period_length_days: updated.pay_period_length_days,
     },
   });
   return updated;
@@ -747,6 +773,8 @@ export async function buildTimeClockReport(opts: {
   userEmail?: string | null;
   userEmails?: string[] | null;
   team?: boolean;
+  payPeriod?: PayPeriodBounds;
+  includeApproval?: boolean;
 }): Promise<TimeClockReport> {
   requirePostgres();
   const settings = await getTimeClockSettings();
@@ -785,7 +813,7 @@ export async function buildTimeClockReport(opts: {
 
     const totalHours = users.reduce((sum, u) => sum + u.total_hours, 0);
     const allEntries = entries;
-    return {
+    let report: TimeClockReport = {
       from: opts.from,
       to: opts.to,
       timezone,
@@ -799,6 +827,20 @@ export async function buildTimeClockReport(opts: {
       entries: allEntries,
       by_user: users.sort((a, b) => a.user_name.localeCompare(b.user_name)),
     };
+
+    if (opts.payPeriod) {
+      report.pay_period = {
+        period_start: opts.payPeriod.period_start,
+        period_end: opts.payPeriod.period_end,
+        period_number: opts.payPeriod.period_number,
+      };
+    }
+
+    if (opts.includeApproval && report.by_user?.length) {
+      report = await attachReportApprovals(report, opts.payPeriod, timezone);
+    }
+
+    return report;
   }
 
   const { entries } = await listTimeEntries({
@@ -808,7 +850,7 @@ export async function buildTimeClockReport(opts: {
     limit: 5000,
   });
   const totalHours = entries.reduce((sum, e) => sum + entryHours(e), 0);
-  return {
+  let report: TimeClockReport = {
     from: opts.from,
     timezone,
     to: opts.to,
@@ -820,6 +862,123 @@ export async function buildTimeClockReport(opts: {
       new Date(opts.to)
     ),
     entries,
+  };
+
+  if (opts.payPeriod) {
+    report.pay_period = {
+      period_start: opts.payPeriod.period_start,
+      period_end: opts.payPeriod.period_end,
+      period_number: opts.payPeriod.period_number,
+    };
+  }
+
+  if (opts.includeApproval && opts.userEmail) {
+    const userEmail = opts.userEmail.toLowerCase();
+    const userName = entries[0]?.user_name || userEmail;
+    report.by_user = [
+      {
+        user_email: userEmail,
+        user_name: userName,
+        total_hours: totalHours,
+        weekly_breakdown: report.weekly_breakdown,
+        entries,
+      },
+    ];
+    report = await attachReportApprovals(report, opts.payPeriod, timezone);
+  }
+
+  return report;
+}
+
+async function attachReportApprovals(
+  report: TimeClockReport,
+  payPeriod: PayPeriodBounds | undefined,
+  timezone: string
+): Promise<TimeClockReport> {
+  if (!report.by_user?.length) return report;
+
+  const periodStart = payPeriod?.period_start || report.from.slice(0, 10);
+  const periodEnd = payPeriod?.period_end || addDaysIso(report.to.slice(0, 10), -1, timezone);
+  const weekStarts = weekStartsOverlappingRange(periodStart, periodEnd, timezone);
+
+  const enriched = await Promise.all(
+    report.by_user.map(async (user) => {
+      const relevantWeeks =
+        user.weekly_breakdown.length > 0
+          ? user.weekly_breakdown.map((w) => w.week_start)
+          : weekStarts;
+
+      const approval = await buildUserApprovalSummary(
+        user.user_email,
+        relevantWeeks,
+        timezone
+      );
+      return { ...user, approval };
+    })
+  );
+
+  return { ...report, by_user: enriched };
+}
+
+async function buildUserApprovalSummary(
+  userEmail: string,
+  weekStarts: string[],
+  timezone: string
+): Promise<TimeClockReportApproval> {
+  if (!weekStarts.length) {
+    return {
+      status: "none",
+      reviewed_by_name: null,
+      reviewed_at: null,
+      weeks: [],
+    };
+  }
+
+  const rows = await query(
+    `SELECT t.week_start, t.status, t.reviewed_at, rev.name AS reviewer_name
+     FROM time_timesheets t
+     LEFT JOIN users rev ON rev.email = t.reviewed_by
+     WHERE t.user_email = $1 AND t.week_start = ANY($2::date[])
+     ORDER BY t.week_start ASC`,
+    [userEmail.toLowerCase(), weekStarts]
+  );
+
+  const byWeek = new Map(
+    rows.map((row) => [dateToYmd(row.week_start), row])
+  );
+
+  const weeks = weekStarts.map((weekStart) => {
+    const row = byWeek.get(weekStart);
+    const { week_end } = weekRangeFromStart(weekStart, timezone);
+    const status = (row?.status as TimesheetStatus) || "open";
+    return {
+      week_start: weekStart,
+      week_end,
+      status,
+      reviewed_by_name: row?.reviewer_name ? String(row.reviewer_name) : undefined,
+      reviewed_at: row?.reviewed_at
+        ? new Date(row.reviewed_at as Date).toISOString()
+        : null,
+    };
+  });
+
+  const statuses = weeks.map((w) => w.status);
+  let status: TimeClockReportApproval["status"] = "none";
+  if (statuses.every((s) => s === "approved")) status = "approved";
+  else if (statuses.some((s) => s === "rejected")) status = "rejected";
+  else if (statuses.some((s) => s === "submitted")) status = "submitted";
+  else if (statuses.some((s) => s === "open")) status = "open";
+
+  const approvedWeeks = weeks.filter((w) => w.status === "approved" && w.reviewed_at);
+  const latestApproval = approvedWeeks.sort((a, b) =>
+    (b.reviewed_at || "").localeCompare(a.reviewed_at || "")
+  )[0];
+
+  return {
+    status,
+    reviewed_by_name: latestApproval?.reviewed_by_name || null,
+    reviewed_at: latestApproval?.reviewed_at || null,
+    weeks,
   };
 }
 
