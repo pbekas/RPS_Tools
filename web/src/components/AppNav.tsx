@@ -118,6 +118,12 @@ export function AppNav() {
               {admin ? (
                 <>
                   <Link
+                    href="/time-clock/live"
+                    className={navClass(pathname.startsWith("/time-clock/live"))}
+                  >
+                    Live
+                  </Link>
+                  <Link
                     href="/time-clock/team"
                     className={navClass(pathname.startsWith("/time-clock/team"))}
                   >

@@ -1,26 +1,42 @@
 import { redirect } from "next/navigation";
 import { requireModule } from "@/lib/requireAccess";
 import { isAdmin } from "@/lib/permissions";
-import { getTimeClockSettings, listEditRequests } from "@/lib/timeClockDb";
-import { EditApprovals } from "@/components/EditApprovals";
+import {
+  getTimeClockSettings,
+  getWeeklyTimesheetDetail,
+  listEditRequests,
+  listSubmittedTimesheets,
+} from "@/lib/timeClockDb";
+import { ApprovalsHub } from "@/components/ApprovalsHub";
 
 export default async function TimeClockApprovalsPage() {
   const session = await requireModule("time_clock");
   if (!isAdmin(session.user)) redirect("/time-clock");
 
-  const [settings, requests] = await Promise.all([
+  const [settings, requests, submitted] = await Promise.all([
     getTimeClockSettings(),
     listEditRequests({ status: "pending", limit: 100 }),
+    listSubmittedTimesheets(100),
   ]);
+
+  const timesheets = await Promise.all(
+    submitted.map((sheet) =>
+      getWeeklyTimesheetDetail(sheet.user_email, sheet.week_start)
+    )
+  );
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      <h1 className="font-display text-3xl text-ink">Edit approvals</h1>
+      <h1 className="font-display text-3xl text-ink">Approvals</h1>
       <p className="mt-1 text-ink-soft">
-        Review and approve manual time corrections submitted by team members.
+        Approve weekly timesheets and individual time edit requests.
       </p>
       <div className="mt-6">
-        <EditApprovals initialRequests={requests} settings={settings} />
+        <ApprovalsHub
+          initialEditRequests={requests}
+          initialTimesheets={timesheets}
+          settings={settings}
+        />
       </div>
     </main>
   );

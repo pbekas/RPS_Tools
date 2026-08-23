@@ -68,3 +68,46 @@ export type TimeClockReport = {
     entries: TimeEntry[];
   }>;
 };
+
+export type TimesheetStatus = "open" | "submitted" | "approved" | "rejected";
+
+export type WeeklyTimesheet = {
+  id: string;
+  user_email: string;
+  user_name?: string;
+  week_start: string;
+  week_end: string;
+  status: TimesheetStatus;
+  total_hours: number;
+  submitted_at: string | null;
+  reviewed_by: string | null;
+  reviewer_name?: string;
+  reviewed_at: string | null;
+  review_notes: string;
+  created_at: string;
+  updated_at: string;
+  entries?: TimeEntry[];
+  has_open_entry?: boolean;
+  has_pending_edits?: boolean;
+};
+
+export type TeamMemberLiveStatus =
+  | "clocked_in"
+  | "on_break"
+  | "clocked_out"
+  | "not_started"
+  | "forgot_to_punch";
+
+export type TeamLiveStatusRow = {
+  user_email: string;
+  user_name: string;
+  timezone: string;
+  local_time: string;
+  status: TeamMemberLiveStatus;
+  status_label: string;
+  today_hours: number;
+  last_punch_at: string | null;
+  last_punch_label: string | null;
+  clocked_in_since: string | null;
+  timesheet_status: TimesheetStatus | null;
+};

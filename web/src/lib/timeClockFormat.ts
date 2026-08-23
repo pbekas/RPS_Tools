@@ -97,3 +97,82 @@ export function addDaysIso(iso: string, days: number, timezone: string): string 
   base.setUTCDate(base.getUTCDate() + days);
   return startOfDayIso(base, timezone);
 }
+
+export function weekStartDate(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+  }).formatToParts(date);
+  const wd = weekday.find((p) => p.type === "weekday")?.value || "Mon";
+  const map: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const dow = map[wd.slice(0, 3)] ?? 1;
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(Date.UTC(year, month - 1, day + diff));
+  return `${monday.getUTCFullYear()}-${pad(monday.getUTCMonth() + 1)}-${pad(monday.getUTCDate())}`;
+}
+
+export function weekRangeFromStart(
+  weekStart: string,
+  timezone: string
+): { from: string; to: string; week_end: string } {
+  const from = fromDatetimeLocalValue(`${weekStart}T00:00`, timezone);
+  const [y, m, d] = weekStart.split("-").map(Number);
+  const endDate = new Date(Date.UTC(y, m - 1, d + 6));
+  const weekEnd = `${endDate.getUTCFullYear()}-${pad(endDate.getUTCMonth() + 1)}-${pad(endDate.getUTCDate())}`;
+  const toDate = new Date(Date.UTC(y, m - 1, d + 7));
+  const toDay = `${toDate.getUTCFullYear()}-${pad(toDate.getUTCMonth() + 1)}-${pad(toDate.getUTCDate())}`;
+  const to = fromDatetimeLocalValue(`${toDay}T00:00`, timezone);
+  return { from, to, week_end: weekEnd };
+}
+
+export function shiftWeekStart(weekStart: string, weeks: number): string {
+  const [y, m, d] = weekStart.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + weeks * 7));
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+export function localHourAndWeekday(
+  date: Date,
+  timezone: string
+): { hour: number; minute: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "numeric",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const map: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  return {
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+    weekday: map[(get("weekday") || "Mon").slice(0, 3)] ?? 1,
+  };
+}

@@ -4,12 +4,22 @@ import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import type {
   PunchStatus,
+  TeamLiveStatusRow,
+  TeamMemberLiveStatus,
   TimeClockReport,
   TimeClockSettings,
   TimeEntry,
   TimeEntryEditRequest,
   WeeklyHoursRow,
+  WeeklyTimesheet,
 } from "@/lib/timeClockTypes";
+import {
+  addDaysIso,
+  localHourAndWeekday,
+  startOfDayIso,
+  weekRangeFromStart,
+  weekStartDate,
+} from "@/lib/timeClockFormat";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -232,6 +242,13 @@ export async function updateEntryNotes(
   if (!isAdmin && entry.user_email.toLowerCase() !== userEmail.toLowerCase()) {
     throw new Error("Forbidden");
   }
+  if (!isAdmin && (await isEntryWeekApproved(entry))) {
+    throw new Error("This week has been approved and cannot be edited");
+  }
+  const sheet = await getTimesheet(entry.user_email, weekStartDate(new Date(entry.clock_in), (await getTimeClockSettings()).timezone));
+  if (!isAdmin && sheet?.status === "submitted") {
+    throw new Error("This week is submitted for approval and cannot be edited");
+  }
   const rows = await query(
     `UPDATE time_entries
      SET notes = $2, updated_at = now()
@@ -260,6 +277,9 @@ export async function createEditRequest(input: {
   }
   if (entry.clock_out === null) {
     throw new Error("Close the entry before requesting a time edit");
+  }
+  if (await isEntryWeekApproved(entry)) {
+    throw new Error("This week has been approved and cannot be edited");
   }
 
   const pending = await query<{ id: string }>(
@@ -617,4 +637,328 @@ export async function listUsersWithTimeClockAccess(): Promise<
     name: String(row.name || row.email),
     role: String(row.role || "Agent"),
   }));
+}
+
+function dateToYmd(value: unknown): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function timesheetFromRow(row: QueryResultRow, timezone: string): WeeklyTimesheet {
+  const weekStart = dateToYmd(row.week_start);
+  const { week_end } = weekRangeFromStart(weekStart, timezone);
+  const sheet = serializeRow<WeeklyTimesheet>({
+    ...row,
+    week_start: weekStart,
+    week_end,
+    total_hours: Number(row.total_hours || 0),
+  });
+  if (row.user_name) sheet.user_name = String(row.user_name);
+  if (row.reviewer_name) sheet.reviewer_name = String(row.reviewer_name);
+  return sheet;
+}
+
+export async function getTimesheet(
+  userEmail: string,
+  weekStart: string
+): Promise<WeeklyTimesheet | null> {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const rows = await query(
+    `SELECT t.*, u.name AS user_name, rev.name AS reviewer_name
+     FROM time_timesheets t
+     JOIN users u ON u.email = t.user_email
+     LEFT JOIN users rev ON rev.email = t.reviewed_by
+     WHERE t.user_email = $1 AND t.week_start = $2::date`,
+    [userEmail.toLowerCase(), weekStart]
+  );
+  return rows[0] ? timesheetFromRow(rows[0], settings.timezone) : null;
+}
+
+export async function isEntryWeekApproved(entry: TimeEntry): Promise<boolean> {
+  const settings = await getTimeClockSettings();
+  const weekStart = weekStartDate(new Date(entry.clock_in), settings.timezone);
+  const sheet = await getTimesheet(entry.user_email, weekStart);
+  return sheet?.status === "approved";
+}
+
+async function ensureTimesheetRow(
+  userEmail: string,
+  weekStart: string
+): Promise<WeeklyTimesheet> {
+  const existing = await getTimesheet(userEmail, weekStart);
+  if (existing) return existing;
+  const rows = await query(
+    `INSERT INTO time_timesheets (user_email, week_start, status, total_hours)
+     VALUES ($1, $2::date, 'open', 0)
+     ON CONFLICT (user_email, week_start) DO NOTHING
+     RETURNING *`,
+    [userEmail.toLowerCase(), weekStart]
+  );
+  if (rows[0]) {
+    const settings = await getTimeClockSettings();
+    return timesheetFromRow(rows[0], settings.timezone);
+  }
+  const created = await getTimesheet(userEmail, weekStart);
+  if (!created) throw new Error("Failed to create timesheet");
+  return created;
+}
+
+export async function getWeeklyTimesheetDetail(
+  userEmail: string,
+  weekStart: string
+): Promise<WeeklyTimesheet> {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const { from, to, week_end } = weekRangeFromStart(weekStart, settings.timezone);
+  const [{ entries }, sheet] = await Promise.all([
+    listTimeEntries({ userEmail, from, to, limit: 500 }),
+    ensureTimesheetRow(userEmail, weekStart),
+  ]);
+
+  const totalHours = entries.reduce((sum, e) => sum + entryHours(e), 0);
+  const openEntry = entries.some((e) => !e.clock_out);
+  const pendingEdits = await query<{ count: number }>(
+    `SELECT COUNT(*)::int AS count
+     FROM time_entry_edit_requests r
+     JOIN time_entries e ON e.id = r.entry_id
+     WHERE r.requested_by = $1
+       AND r.status = 'pending'
+       AND e.clock_in >= $2::timestamptz
+       AND e.clock_in < $3::timestamptz`,
+    [userEmail.toLowerCase(), from, to]
+  );
+
+  await query(
+    `UPDATE time_timesheets
+     SET total_hours = $3, updated_at = now()
+     WHERE user_email = $1 AND week_start = $2::date`,
+    [userEmail.toLowerCase(), weekStart, totalHours]
+  );
+
+  return {
+    ...sheet,
+    week_end,
+    total_hours: totalHours,
+    entries,
+    has_open_entry: openEntry,
+    has_pending_edits: Number(pendingEdits[0]?.count || 0) > 0,
+  };
+}
+
+export async function submitWeeklyTimesheet(
+  userEmail: string,
+  weekStart: string
+): Promise<WeeklyTimesheet> {
+  const detail = await getWeeklyTimesheetDetail(userEmail, weekStart);
+  if (detail.status === "approved") {
+    throw new Error("This timesheet is already approved");
+  }
+  if (detail.status === "submitted") {
+    throw new Error("This timesheet is already submitted");
+  }
+  if (detail.has_open_entry) {
+    throw new Error("Clock out of all open entries before submitting");
+  }
+  if (detail.has_pending_edits) {
+    throw new Error("Resolve pending edit requests before submitting");
+  }
+  if (!detail.entries?.length) {
+    throw new Error("No time entries for this week");
+  }
+
+  await query(
+    `UPDATE time_timesheets
+     SET status = 'submitted',
+         submitted_at = now(),
+         total_hours = $3,
+         review_notes = '',
+         reviewed_by = NULL,
+         reviewed_at = NULL,
+         updated_at = now()
+     WHERE user_email = $1 AND week_start = $2::date`,
+    [userEmail.toLowerCase(), weekStart, detail.total_hours]
+  );
+  return getWeeklyTimesheetDetail(userEmail, weekStart);
+}
+
+export async function listSubmittedTimesheets(limit = 50): Promise<WeeklyTimesheet[]> {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const rows = await query(
+    `SELECT t.*, u.name AS user_name, rev.name AS reviewer_name
+     FROM time_timesheets t
+     JOIN users u ON u.email = t.user_email
+     LEFT JOIN users rev ON rev.email = t.reviewed_by
+     WHERE t.status = 'submitted'
+     ORDER BY t.submitted_at ASC
+     LIMIT $1`,
+    [Math.min(limit, 200)]
+  );
+  return rows.map((row) => timesheetFromRow(row, settings.timezone));
+}
+
+export async function reviewWeeklyTimesheet(input: {
+  userEmail: string;
+  weekStart: string;
+  reviewerEmail: string;
+  approve: boolean;
+  reviewNotes?: string;
+}): Promise<WeeklyTimesheet> {
+  requirePostgres();
+  const sheet = await getTimesheet(input.userEmail, input.weekStart);
+  if (!sheet) throw new Error("Timesheet not found");
+  if (sheet.status !== "submitted") {
+    throw new Error("Only submitted timesheets can be reviewed");
+  }
+
+  const status = input.approve ? "approved" : "rejected";
+  await query(
+    `UPDATE time_timesheets
+     SET status = $3,
+         reviewed_by = $4,
+         reviewed_at = now(),
+         review_notes = $5,
+         updated_at = now()
+     WHERE user_email = $1 AND week_start = $2::date`,
+    [
+      input.userEmail.toLowerCase(),
+      input.weekStart,
+      status,
+      input.reviewerEmail.toLowerCase(),
+      (input.reviewNotes || "").trim(),
+    ]
+  );
+  return getWeeklyTimesheetDetail(input.userEmail, input.weekStart);
+}
+
+function statusLabel(status: TeamMemberLiveStatus): string {
+  const labels: Record<TeamMemberLiveStatus, string> = {
+    clocked_in: "Clocked in",
+    on_break: "On break",
+    clocked_out: "Clocked out",
+    not_started: "Not started",
+    forgot_to_punch: "No punch today",
+  };
+  return labels[status];
+}
+
+export async function listTeamLiveStatus(): Promise<TeamLiveStatusRow[]> {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const users = await query<{
+    email: string;
+    name: string;
+    timezone: string | null;
+  }>(
+    `SELECT u.email, u.name, u.timezone
+     FROM users u
+     WHERE u.active = true
+       AND (
+         u.role = 'Admin'
+         OR EXISTS (
+           SELECT 1 FROM unnest(COALESCE(u.modules, ARRAY[]::text[])) AS m(mod)
+           WHERE m.mod = 'time_clock'
+         )
+       )
+     ORDER BY u.name ASC, u.email ASC`
+  );
+
+  const now = new Date();
+  const rows: TeamLiveStatusRow[] = [];
+
+  for (const user of users) {
+    const tz = (user.timezone || settings.timezone).trim() || settings.timezone;
+    const todayStart = startOfDayIso(now, tz);
+    const tomorrowStart = addDaysIso(todayStart, 1, tz);
+    const { hour, minute, weekday } = localHourAndWeekday(now, tz);
+    const localTime = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(now);
+
+    const openRows = await query(
+      `SELECT clock_in FROM time_entries
+       WHERE user_email = $1 AND clock_out IS NULL
+       ORDER BY clock_in DESC LIMIT 1`,
+      [user.email]
+    );
+
+    const todayRows = await query(
+      `SELECT clock_in, clock_out
+       FROM time_entries
+       WHERE user_email = $1
+         AND clock_in >= $2::timestamptz
+         AND clock_in < $3::timestamptz
+       ORDER BY clock_in ASC`,
+      [user.email, todayStart, tomorrowStart]
+    );
+
+    let todayHours = 0;
+    let lastPunchAt: string | null = null;
+    for (const entry of todayRows) {
+      const clockIn = new Date(entry.clock_in as Date).toISOString();
+      const clockOut = entry.clock_out
+        ? new Date(entry.clock_out as Date).toISOString()
+        : null;
+      todayHours += entryHours({
+        id: "",
+        user_email: user.email,
+        clock_in: clockIn,
+        clock_out: clockOut,
+        notes: "",
+        created_at: clockIn,
+        updated_at: clockIn,
+      });
+      lastPunchAt = clockOut || clockIn;
+    }
+
+    const weekStart = weekStartDate(now, settings.timezone);
+    const timesheet = await getTimesheet(user.email, weekStart);
+
+    let status: TeamMemberLiveStatus;
+    const openEntry = openRows[0];
+    if (openEntry) {
+      status = "clocked_in";
+    } else if (!todayRows.length) {
+      const isWorkday = weekday >= 1 && weekday <= 5;
+      const minutesSinceMidnight = hour * 60 + minute;
+      status =
+        isWorkday && minutesSinceMidnight >= 9 * 60 + 30
+          ? "forgot_to_punch"
+          : "not_started";
+    } else if (hour < 18) {
+      status = "on_break";
+    } else {
+      status = "clocked_out";
+    }
+
+    rows.push({
+      user_email: user.email,
+      user_name: user.name || user.email,
+      timezone: tz,
+      local_time: localTime,
+      status,
+      status_label: statusLabel(status),
+      today_hours: todayHours,
+      last_punch_at: lastPunchAt,
+      last_punch_label: lastPunchAt ? formatPunchLabel(lastPunchAt, tz) : null,
+      clocked_in_since: openEntry
+        ? new Date(openEntry.clock_in as Date).toISOString()
+        : null,
+      timesheet_status: timesheet?.status ?? null,
+    });
+  }
+
+  return rows;
+}
+
+function formatPunchLabel(iso: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
 }
