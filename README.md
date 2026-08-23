@@ -87,7 +87,7 @@ corrected flag. Raw Vonage `result` stays `Missed` for audit.
 */5 * * * * curl -s -X POST http://127.0.0.1:8080/poller/sync-now
 ```
 
-On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task.
+On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task. The same poll cycle also runs contract expiry alerts and time clock punch reminders (`TIME_CLOCK_ALERTS_ENABLED`, optional `GCHAT_TIME_CLOCK_WEBHOOK_URL`, otherwise the main Chat webhook).
 
 ## Firestore schema
 

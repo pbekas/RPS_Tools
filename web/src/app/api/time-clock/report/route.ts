@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { resolveTimeClockAccess } from "@/lib/timeClockAccess";
+import {
+  canViewTimeClockUser,
+  resolveTimeClockAccess,
+} from "@/lib/timeClockAccess";
 import { apiRequireModule } from "@/lib/requireAccess";
 import {
   buildTimeClockReport,
@@ -65,11 +68,23 @@ export async function GET(req: Request) {
     const reportTo = payPeriodBounds?.to || to;
     const includeApproval = format === "pdf" || searchParams.get("approval") === "1";
 
+    let reportUserEmail: string | null = null;
+    let reportUserEmails: string[] | null = null;
+    if (teamMode) {
+      reportUserEmails = access.visibleUserEmails;
+    } else {
+      const target = (userEmail || session!.user!.email!).toLowerCase();
+      if (!canViewTimeClockUser(access, target)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      reportUserEmail = target;
+    }
+
     const report = await buildTimeClockReport({
       from: reportFrom,
       to: reportTo,
-      userEmail: teamMode ? null : userEmail || session!.user!.email!,
-      userEmails: teamMode ? access.visibleUserEmails : null,
+      userEmail: reportUserEmail,
+      userEmails: reportUserEmails,
       team: teamMode,
       payPeriod: payPeriodBounds,
       includeApproval,

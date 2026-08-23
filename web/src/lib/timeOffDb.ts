@@ -9,6 +9,7 @@ import {
   BANK_DEDUCTING_KINDS,
   deductsFromTimeOffBank,
 } from "@/lib/timeClockTypes";
+import { allowlist } from "@/lib/sqlAllowlist";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -280,6 +281,7 @@ export async function listTimeOffBanks(
   userEmails?: string[] | null
 ): Promise<TimeOffBank[]> {
   requirePostgres();
+  if (allowlist(userEmails) === "none") return [];
   const emailFilter = userEmails?.length
     ? `AND u.email = ANY($2::citext[])`
     : "";

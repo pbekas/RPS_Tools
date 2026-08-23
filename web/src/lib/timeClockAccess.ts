@@ -61,6 +61,8 @@ export async function resolveTimeClockAccess(
 
   if (isManager) {
     const teamIds = supervisedTeams.map((t) => t.id);
+    // Empty list means "nobody", not unscoped. A Supervisor with no teams
+    // must not see the whole org.
     const visibleUserEmails = teamIds.length
       ? await listTeamMemberEmails(teamIds)
       : [];

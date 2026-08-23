@@ -3,6 +3,7 @@ import {
   apiRequireAdmin,
   apiRequireTimeClockManager,
 } from "@/lib/requireAccess";
+import { canViewTimeClockUser } from "@/lib/timeClockAccess";
 import {
   createTimeClockTeam,
   listTimeClockTeams,
@@ -10,7 +11,7 @@ import {
 import { listUsersWithTimeClockAccess } from "@/lib/timeClockDb";
 
 export async function GET() {
-  const { session, error, access } = await apiRequireTimeClockManager();
+  const { error, access } = await apiRequireTimeClockManager();
   if (error) return error;
 
   try {
@@ -18,7 +19,9 @@ export async function GET() {
       activeOnly: false,
       teamIds: access!.teamIds,
     });
-    const users = await listUsersWithTimeClockAccess();
+    const users = (await listUsersWithTimeClockAccess()).filter((u) =>
+      canViewTimeClockUser(access!, u.email)
+    );
     return NextResponse.json({ teams, users });
   } catch (err) {
     return NextResponse.json(

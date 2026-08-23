@@ -34,6 +34,7 @@ import {
   type PayPeriodBounds,
   weekStartsOverlappingRange,
 } from "@/lib/timeClockPayPeriod";
+import { allowlist } from "@/lib/sqlAllowlist";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -41,6 +42,34 @@ function requirePostgres() {
   if (!usePostgres()) {
     throw new Error("Time clock module requires DB_BACKEND=postgres");
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+  );
+}
+
+/** null = unrestricted. [] = match nobody. Returns false when the query cannot match. */
+function pushEmailAllowlist(
+  emails: string[] | null | undefined,
+  clauses: string[],
+  params: unknown[],
+  idx: { n: number },
+  column: string
+): boolean {
+  const scope = allowlist(emails);
+  if (scope === "all") return true;
+  if (scope === "none") {
+    clauses.push("FALSE");
+    return false;
+  }
+  clauses.push(`${column} = ANY($${idx.n++}::citext[])`);
+  params.push(scope.map((email) => String(email).toLowerCase()));
+  return true;
 }
 
 function serializeRow<T>(row: QueryResultRow): T {
@@ -351,12 +380,27 @@ export async function clockIn(userEmail: string): Promise<TimeEntry> {
   if (open) {
     throw new Error("Already clocked in");
   }
-  const rows = await query(
-    `INSERT INTO time_entries (user_email, clock_in)
-     VALUES ($1, now())
-     RETURNING id, user_email, clock_in, clock_out, notes, created_at, updated_at`,
-    [email]
-  );
+  let rows: QueryResultRow[];
+  try {
+    rows = await query(
+      `INSERT INTO time_entries (user_email, clock_in)
+       SELECT $1, now()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM time_entries
+         WHERE user_email = $1 AND clock_out IS NULL
+       )
+       RETURNING id, user_email, clock_in, clock_out, notes, created_at, updated_at`,
+      [email]
+    );
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new Error("Already clocked in");
+    }
+    throw err;
+  }
+  if (!rows[0]) {
+    throw new Error("Already clocked in");
+  }
   const entry = entryFromRow(rows[0]);
   const withName = await getTimeEntry(entry.id);
   const saved = withName || entry;
@@ -434,10 +478,9 @@ export async function listTimeEntries(
     clauses.push(`e.user_email = $${idx++}`);
     params.push(opts.userEmail.toLowerCase());
   }
-  if (opts.userEmails?.length) {
-    clauses.push(`e.user_email = ANY($${idx++}::citext[])`);
-    params.push(opts.userEmails.map((e) => e.toLowerCase()));
-  }
+  const emailIdx = { n: idx };
+  pushEmailAllowlist(opts.userEmails, clauses, params, emailIdx, "e.user_email");
+  idx = emailIdx.n;
   if (opts.from) {
     clauses.push(`e.clock_in >= $${idx++}::timestamptz`);
     params.push(opts.from);
@@ -600,10 +643,9 @@ export async function listEditRequests(opts: {
     clauses.push(`r.requested_by = $${idx++}`);
     params.push(opts.userEmail.toLowerCase());
   }
-  if (opts.userEmails?.length) {
-    clauses.push(`r.requested_by = ANY($${idx++}::citext[])`);
-    params.push(opts.userEmails.map((e) => e.toLowerCase()));
-  }
+  const emailIdx = { n: idx };
+  pushEmailAllowlist(opts.userEmails, clauses, params, emailIdx, "r.requested_by");
+  idx = emailIdx.n;
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
@@ -1012,6 +1054,7 @@ export async function listTeamDaySummary(opts: {
   }>
 > {
   requirePostgres();
+  if (allowlist(opts.userEmails) === "none") return [];
   const settings = await getTimeClockSettings();
   const emailFilter = opts.userEmails?.length
     ? `AND e.user_email = ANY($4::citext[])`
@@ -1234,6 +1277,7 @@ export async function listSubmittedTimesheets(
   userEmails?: string[] | null
 ): Promise<WeeklyTimesheet[]> {
   requirePostgres();
+  if (allowlist(userEmails) === "none") return [];
   const settings = await getTimeClockSettings();
   const clauses = ["t.status = 'submitted'"];
   const params: unknown[] = [];
@@ -1318,6 +1362,7 @@ export async function listTeamLiveStatus(
   allowedUserEmails?: string[] | null
 ): Promise<TeamLiveStatusRow[]> {
   requirePostgres();
+  if (allowlist(allowedUserEmails) === "none") return [];
   const settings = await getTimeClockSettings();
   const emailFilter = allowedUserEmails?.length
     ? `AND u.email = ANY($1::citext[])`

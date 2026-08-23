@@ -5,6 +5,7 @@ import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
 import type { TimeClockTeam } from "@/lib/timeClockTypes";
+import { allowlist } from "@/lib/sqlAllowlist";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -50,9 +51,12 @@ export async function listTimeClockTeams(opts?: {
   if (opts?.activeOnly !== false) {
     clauses.push("t.active = true");
   }
-  if (opts?.teamIds?.length) {
+  const teamScope = allowlist(opts?.teamIds);
+  if (teamScope === "none") {
+    clauses.push("FALSE");
+  } else if (teamScope !== "all") {
     clauses.push(`t.id = ANY($${idx++}::uuid[])`);
-    params.push(opts.teamIds);
+    params.push(teamScope);
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";

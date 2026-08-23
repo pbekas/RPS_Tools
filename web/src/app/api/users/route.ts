@@ -119,14 +119,9 @@ export async function POST(req: Request) {
         ? body.modules.map((m: unknown) => String(m))
         : [];
       const modules = normalizeModuleGrants(requested);
-      if (
-        !modules.length ||
-        !modules.some(
-          (m) => m === "call_qa" || m === "contracts" || m.startsWith("contracts:")
-        )
-      ) {
+      if (!modules.length) {
         return NextResponse.json(
-          { error: "Grant at least one tool set (Call QA or Contracts)" },
+          { error: "Grant at least one tool set (Call QA, Contracts, or Time Clock)" },
           { status: 400 }
         );
       }

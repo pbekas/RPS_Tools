@@ -336,7 +336,10 @@ def _maybe_send_alert(key: str, text: str, webhook: str) -> bool:
 def check_time_clock_reminders() -> dict[str, Any]:
     """Alert managers when team members need a time clock nudge."""
     settings = get_settings()
-    webhook = (settings.gchat_time_clock_webhook_url or "").strip()
+    webhook = (
+        (settings.gchat_time_clock_webhook_url or "").strip()
+        or (settings.gchat_webhook_url or "").strip()
+    )
     if not settings.time_clock_alerts_enabled or not webhook:
         return {"checked": 0, "sent": 0, "skipped": "disabled"}
 

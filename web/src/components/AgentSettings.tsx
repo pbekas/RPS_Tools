@@ -279,7 +279,7 @@ export function AgentSettings({
         <div className="mb-8">
           <h2 className="font-display text-2xl text-ink">Users & access</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Grant Call QA and/or Contracts per person. Import agents found on calls as{" "}
+            Grant Call QA, Contracts, and/or Time Clock per person. Import agents found on calls as{" "}
             <code className="rounded bg-wash px-1">{`{name}@${domain}`}</code>.
           </p>
         </div>

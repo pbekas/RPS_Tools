@@ -3,6 +3,7 @@ import "server-only";
 import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import type { TimeClockAuditEntry } from "@/lib/timeClockTypes";
+import { allowlist } from "@/lib/sqlAllowlist";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -90,13 +91,19 @@ export async function listTimeClockAuditLog(
     clauses.push(`a.team_id = $${idx++}::uuid`);
     params.push(opts.teamId);
   }
-  if (opts.teamIds?.length) {
+  const teamScope = allowlist(opts.teamIds);
+  if (teamScope === "none") {
+    clauses.push("FALSE");
+  } else if (teamScope !== "all") {
     clauses.push(`a.team_id = ANY($${idx++}::uuid[])`);
-    params.push(opts.teamIds);
+    params.push(teamScope);
   }
-  if (opts.allowedSubjectEmails?.length) {
+  const emailScope = allowlist(opts.allowedSubjectEmails);
+  if (emailScope === "none") {
+    clauses.push("FALSE");
+  } else if (emailScope !== "all") {
     clauses.push(`a.subject_email = ANY($${idx++}::citext[])`);
-    params.push(opts.allowedSubjectEmails.map((e) => e.toLowerCase()));
+    params.push(emailScope.map((e) => String(e).toLowerCase()));
   }
   if (opts.action) {
     clauses.push(`a.action = $${idx++}`);

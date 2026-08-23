@@ -97,32 +97,31 @@ def run_sync_cycle(
             len(summary.get("errors") or []),
         )
 
-        # Opportunistic contracts maintenance (pending extraction + expiry alerts)
+        # Opportunistic contracts + time clock reminder scans (same 5-minute cycle)
+        result: dict[str, Any] = {**summary, "call_logs": cdr_summary}
         try:
             from src.contracts_pipeline import process_pending_contracts
             from src.notify import check_contract_expiry_alerts
             from src.config import get_settings
 
             settings = get_settings()
-            contracts_summary = process_pending_contracts(limit=5)
-            expiry_summary = check_contract_expiry_alerts(
+            result["contracts"] = process_pending_contracts(limit=5)
+            result["contract_expiry"] = check_contract_expiry_alerts(
                 within_days=int(settings.contract_alert_days or 90)
             )
-            return {
-                **summary,
-                "call_logs": cdr_summary,
-                "contracts": contracts_summary,
-                "contract_expiry": expiry_summary,
-            }
         except Exception as contracts_exc:  # noqa: BLE001
             logger.exception("Contracts maintenance during poll cycle failed")
-            return {
-                **summary,
-                "call_logs": cdr_summary,
-                "contracts_error": str(contracts_exc),
-            }
+            result["contracts_error"] = str(contracts_exc)
 
-        return {**summary, "call_logs": cdr_summary}
+        try:
+            from src.time_clock_alerts import check_time_clock_reminders
+
+            result["time_clock_reminders"] = check_time_clock_reminders()
+        except Exception as clock_exc:  # noqa: BLE001
+            logger.exception("Time clock reminders during poll cycle failed")
+            result["time_clock_reminders_error"] = str(clock_exc)
+
+        return result
     except Exception as exc:  # noqa: BLE001
         with _lock:
             _state["last_error"] = str(exc)

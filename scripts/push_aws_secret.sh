@@ -115,6 +115,8 @@ payload = {
     "GCHAT_MISSED_CALLS_WEBHOOK_URL": os.environ.get("GCHAT_MISSED_CALLS_WEBHOOK_URL")
         or os.environ.get("GCHAT_MISSED_WEBHOOK_URL")
         or "",
+    "GCHAT_TIME_CLOCK_WEBHOOK_URL": os.environ.get("GCHAT_TIME_CLOCK_WEBHOOK_URL") or "",
+    "TIME_CLOCK_ALERTS_ENABLED": os.environ.get("TIME_CLOCK_ALERTS_ENABLED") or "1",
     "ALERTS_ENABLED": os.environ.get("ALERTS_ENABLED") or "1",
     "MISSED_ALERT_WINDOW_MINUTES": os.environ.get("MISSED_ALERT_WINDOW_MINUTES") or "30",
     "MISSED_ALERT_THRESHOLD": os.environ.get("MISSED_ALERT_THRESHOLD") or "8",

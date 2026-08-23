@@ -333,7 +333,9 @@ class RpsCallQaStack(Stack):
                 "APP_URL": f"https://{domain}",
                 "ALERTS_ENABLED": "1",
                 "CONTRACT_ALERTS_ENABLED": "1",
-                "CONTRACT_ALERT_DAYS": "90",                "MISSED_ALERT_WINDOW_MINUTES": "30",
+                "CONTRACT_ALERT_DAYS": "90",
+                "TIME_CLOCK_ALERTS_ENABLED": "1",
+                "MISSED_ALERT_WINDOW_MINUTES": "30",
                 "MISSED_ALERT_THRESHOLD": "8",
                 # Missed-inbound patient SMS stays off until secret flag is enabled.
                 "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": "90",
