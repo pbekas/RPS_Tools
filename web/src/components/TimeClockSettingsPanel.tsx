@@ -50,6 +50,9 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
   const [payPeriodLengthDays, setPayPeriodLengthDays] = useState(
     String(settings.pay_period_length_days)
   );
+  const [defaultAnnualPtoHours, setDefaultAnnualPtoHours] = useState(
+    String(settings.default_annual_pto_hours)
+  );
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -73,6 +76,7 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
           remind_timesheet_after: remindTimesheetAfter,
           pay_period_anchor_date: payPeriodAnchorDate,
           pay_period_length_days: Number(payPeriodLengthDays),
+          default_annual_pto_hours: Number(defaultAnnualPtoHours),
         }),
       });
       const data = await res.json();
@@ -221,6 +225,26 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
             max={31}
             value={payPeriodLengthDays}
             onChange={(e) => setPayPeriodLengthDays(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-line px-3 py-2"
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="space-y-3 rounded-lg border border-line p-4">
+        <legend className="px-1 text-sm font-semibold text-ink">Time-off bank</legend>
+        <p className="text-xs text-ink-soft">
+          Default annual hours for PTO and sick time. Managers can override per employee
+          on the PTO banks page. Holiday and unpaid do not deduct.
+        </p>
+        <label className="block text-sm">
+          <span className="font-semibold text-ink-soft">Default annual hours</span>
+          <input
+            type="number"
+            min={0}
+            max={2000}
+            step={0.5}
+            value={defaultAnnualPtoHours}
+            onChange={(e) => setDefaultAnnualPtoHours(e.target.value)}
             className="mt-1 w-full rounded-lg border border-line px-3 py-2"
           />
         </label>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { TimeClockSettings, WeeklyTimesheet } from "@/lib/timeClockTypes";
+import type { TimeClockSettings, TimeOffBank, WeeklyTimesheet } from "@/lib/timeClockTypes";
 import { TimeClockEntries } from "@/components/TimeClockEntries";
 import { TimeOffPanel } from "@/components/TimeOffPanel";
 import { formatHours, shiftWeekStart } from "@/lib/timeClockFormat";
@@ -10,6 +10,7 @@ type Props = {
   initialTimesheet: WeeklyTimesheet;
   settings: TimeClockSettings;
   displayTimezone: string;
+  initialBank: TimeOffBank;
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -23,9 +24,11 @@ export function WeeklyTimesheetPanel({
   initialTimesheet,
   settings,
   displayTimezone,
+  initialBank,
 }: Props) {
   const [timesheet, setTimesheet] = useState(initialTimesheet);
   const [weekStart, setWeekStart] = useState(initialTimesheet.week_start);
+  const [bank, setBank] = useState(initialBank);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const displaySettings = { ...settings, timezone: displayTimezone };
@@ -35,11 +38,18 @@ export function WeeklyTimesheetPanel({
     setMsg("");
     try {
       const params = new URLSearchParams({ week_start: nextWeekStart });
-      const res = await fetch(`/api/time-clock/timesheets?${params}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load timesheet");
-      setTimesheet(data.timesheet);
+      const [sheetRes, bankRes] = await Promise.all([
+        fetch(`/api/time-clock/timesheets?${params}`),
+        fetch(
+          `/api/time-clock/time-off/bank?year=${Number(nextWeekStart.slice(0, 4))}`
+        ),
+      ]);
+      const sheetData = await sheetRes.json();
+      const bankData = await bankRes.json();
+      if (!sheetRes.ok) throw new Error(sheetData.error || "Failed to load timesheet");
+      setTimesheet(sheetData.timesheet);
       setWeekStart(nextWeekStart);
+      if (bankRes.ok && bankData.bank) setBank(bankData.bank);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Failed to load timesheet");
     } finally {
@@ -164,9 +174,11 @@ export function WeeklyTimesheetPanel({
       </div>
 
       <TimeOffPanel
+        key={`${timesheet.week_start}-${bank.year}-${bank.used_hours}-${bank.allotted_hours}`}
         weekStart={timesheet.week_start}
         weekEnd={timesheet.week_end}
         initialEntries={timesheet.time_off || []}
+        initialBank={bank}
         canEdit={canEdit}
         onChanged={() => loadWeek(weekStart)}
       />

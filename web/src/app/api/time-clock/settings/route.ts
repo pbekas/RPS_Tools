@@ -38,6 +38,7 @@ export async function PATCH(req: Request) {
     remind_timesheet_after?: string;
     pay_period_anchor_date?: string;
     pay_period_length_days?: number;
+    default_annual_pto_hours?: number;
   } = {};
 
   if (body.max_open_hours != null) {
@@ -87,6 +88,13 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Invalid pay_period_length_days" }, { status: 400 });
     }
     patch.pay_period_length_days = days;
+  }
+  if (body.default_annual_pto_hours != null) {
+    const hours = Number(body.default_annual_pto_hours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 2000) {
+      return NextResponse.json({ error: "Invalid default_annual_pto_hours" }, { status: 400 });
+    }
+    patch.default_annual_pto_hours = hours;
   }
 
   try {

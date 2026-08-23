@@ -33,6 +33,13 @@ export type TimeEntryEditRequest = {
 
 export type TimeOffKind = "pto" | "sick" | "holiday" | "unpaid";
 
+/** Kinds that deduct from the annual time-off bank. */
+export const BANK_DEDUCTING_KINDS: TimeOffKind[] = ["pto", "sick"];
+
+export function deductsFromTimeOffBank(kind: TimeOffKind): boolean {
+  return BANK_DEDUCTING_KINDS.includes(kind);
+}
+
 export type TimeOffEntry = {
   id: string;
   user_email: string;
@@ -43,6 +50,17 @@ export type TimeOffEntry = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type TimeOffBank = {
+  user_email: string;
+  user_name?: string;
+  year: number;
+  allotted_hours: number;
+  used_hours: number;
+  remaining_hours: number;
+  is_default_allotment: boolean;
+  notes: string;
 };
 
 export type TimeClockSettings = {
@@ -59,6 +77,7 @@ export type TimeClockSettings = {
   remind_timesheet_after: string;
   pay_period_anchor_date: string;
   pay_period_length_days: number;
+  default_annual_pto_hours: number;
   updated_at: string;
   updated_by: string | null;
 };

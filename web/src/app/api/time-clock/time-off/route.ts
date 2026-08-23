@@ -4,7 +4,7 @@ import { apiRequireModule } from "@/lib/requireAccess";
 import { getEffectiveTimezone } from "@/lib/timeClockDb";
 import { weekRangeFromStart } from "@/lib/timeClockFormat";
 import {
-  deleteTimeOffEntry,
+  getTimeOffBank,
   isTimeOffKind,
   listTimeOffEntries,
   upsertTimeOffEntry,
@@ -45,7 +45,9 @@ export async function GET(req: Request) {
       );
     }
     const entries = await listTimeOffEntries(userEmail, from, to);
-    return NextResponse.json({ entries });
+    const year = Number((from || "").slice(0, 4)) || new Date().getFullYear();
+    const bank = await getTimeOffBank(userEmail, year);
+    return NextResponse.json({ entries, bank });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to load time off" },
@@ -92,7 +94,8 @@ export async function POST(req: Request) {
       notes,
       actorEmail: session!.user!.email!,
     });
-    return NextResponse.json({ entry });
+    const bank = await getTimeOffBank(userEmail, Number(entryDate.slice(0, 4)));
+    return NextResponse.json({ entry, bank });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Save failed" },

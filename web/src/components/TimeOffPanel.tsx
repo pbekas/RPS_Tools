@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { TimeOffEntry, TimeOffKind } from "@/lib/timeClockTypes";
+import type { TimeOffBank, TimeOffEntry, TimeOffKind } from "@/lib/timeClockTypes";
+import { deductsFromTimeOffBank } from "@/lib/timeClockTypes";
+import { formatHours } from "@/lib/timeClockFormat";
 
 const KIND_LABELS: Record<TimeOffKind, string> = {
   pto: "PTO",
@@ -14,6 +16,7 @@ type Props = {
   weekStart: string;
   weekEnd: string;
   initialEntries: TimeOffEntry[];
+  initialBank: TimeOffBank;
   canEdit: boolean;
   onChanged?: () => void;
 };
@@ -22,10 +25,12 @@ export function TimeOffPanel({
   weekStart,
   weekEnd,
   initialEntries,
+  initialBank,
   canEdit,
   onChanged,
 }: Props) {
   const [entries, setEntries] = useState(initialEntries);
+  const [bank, setBank] = useState(initialBank);
   const [entryDate, setEntryDate] = useState(weekStart);
   const [kind, setKind] = useState<TimeOffKind>("pto");
   const [hours, setHours] = useState("8");
@@ -37,7 +42,10 @@ export function TimeOffPanel({
     const params = new URLSearchParams({ week_start: weekStart });
     const res = await fetch(`/api/time-clock/time-off?${params}`);
     const data = await res.json();
-    if (res.ok) setEntries(data.entries || []);
+    if (res.ok) {
+      setEntries(data.entries || []);
+      if (data.bank) setBank(data.bank);
+    }
   }, [weekStart]);
 
   async function save() {
@@ -57,9 +65,14 @@ export function TimeOffPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
       await reload();
+      if (data.bank) setBank(data.bank);
       onChanged?.();
       setNotes("");
-      setMsg("Time off saved.");
+      setMsg(
+        deductsFromTimeOffBank(kind)
+          ? "Time off saved and deducted from your bank."
+          : "Time off saved (does not deduct from bank)."
+      );
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -68,7 +81,9 @@ export function TimeOffPanel({
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Remove this time off day?")) return;
+    if (!window.confirm("Remove this time off day? Hours will return to the bank if applicable.")) {
+      return;
+    }
     setBusy(true);
     setMsg("");
     try {
@@ -76,6 +91,7 @@ export function TimeOffPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Delete failed");
       await reload();
+      if (data.bank) setBank(data.bank);
       onChanged?.();
       setMsg("Time off removed.");
     } catch (err) {
@@ -86,15 +102,43 @@ export function TimeOffPanel({
   }
 
   const totalHours = entries.reduce((sum, e) => sum + e.hours, 0);
+  const bankPercent =
+    bank.allotted_hours > 0
+      ? Math.min(100, Math.round((bank.used_hours / bank.allotted_hours) * 100))
+      : 0;
 
   return (
     <div className="space-y-4 rounded-2xl border border-line bg-white/90 p-4 shadow-sm">
       <div>
         <h2 className="font-display text-xl text-ink">Time off</h2>
         <p className="text-sm text-ink-soft">
-          Log PTO, sick, holiday, or unpaid days for {weekStart} – {weekEnd}.
-          Time off suppresses forgot-to-punch reminders.
+          Log PTO or sick (deducts from your annual bank). Holiday and unpaid do not
+          deduct. Suppresses forgot-to-punch reminders.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-line bg-wash/60 px-4 py-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+              {bank.year} time-off bank
+            </p>
+            <p className="mt-1 font-display text-2xl text-ink">
+              {formatHours(bank.remaining_hours)} remaining
+            </p>
+            <p className="text-sm text-ink-soft">
+              {formatHours(bank.used_hours)} used of {formatHours(bank.allotted_hours)} allotted
+              {bank.is_default_allotment ? " (default)" : ""}
+            </p>
+          </div>
+          <p className="text-sm font-semibold text-accent">{bankPercent}% used</p>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-line">
+          <div
+            className="h-full rounded-full bg-accent transition-all"
+            style={{ width: `${bankPercent}%` }}
+          />
+        </div>
       </div>
 
       {entries.length ? (
@@ -110,6 +154,11 @@ export function TimeOffPanel({
                 <span>{KIND_LABELS[entry.kind]}</span>
                 <span className="mx-2 text-ink-soft">·</span>
                 <span>{entry.hours}h</span>
+                {deductsFromTimeOffBank(entry.kind) ? (
+                  <span className="ml-2 text-xs text-accent">bank</span>
+                ) : (
+                  <span className="ml-2 text-xs text-ink-soft">no bank</span>
+                )}
                 {entry.notes ? (
                   <span className="ml-2 text-ink-soft">— {entry.notes}</span>
                 ) : null}
@@ -156,6 +205,7 @@ export function TimeOffPanel({
               {(Object.keys(KIND_LABELS) as TimeOffKind[]).map((k) => (
                 <option key={k} value={k}>
                   {KIND_LABELS[k]}
+                  {deductsFromTimeOffBank(k) ? " (uses bank)" : " (no bank)"}
                 </option>
               ))}
             </select>

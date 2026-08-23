@@ -153,6 +153,7 @@ export async function getTimeClockSettings(): Promise<TimeClockSettings> {
             remind_clock_out_enabled, remind_clock_out_after,
             remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
             pay_period_anchor_date, pay_period_length_days,
+            default_annual_pto_hours::float8 AS default_annual_pto_hours,
             updated_at, updated_by
      FROM time_clock_settings
      WHERE id = 'default'`
@@ -169,6 +170,7 @@ export async function getTimeClockSettings(): Promise<TimeClockSettings> {
     remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
     pay_period_anchor_date: dateToYmd(row.pay_period_anchor_date || "2026-01-01"),
     pay_period_length_days: Number(row.pay_period_length_days ?? 14),
+    default_annual_pto_hours: Number(row.default_annual_pto_hours ?? 80),
   });
 }
 
@@ -188,6 +190,7 @@ export async function updateTimeClockSettings(
       | "remind_timesheet_after"
       | "pay_period_anchor_date"
       | "pay_period_length_days"
+      | "default_annual_pto_hours"
     >
   >,
   updatedBy: string
@@ -215,6 +218,8 @@ export async function updateTimeClockSettings(
     patch.pay_period_anchor_date ?? current.pay_period_anchor_date;
   const payPeriodLengthDays =
     patch.pay_period_length_days ?? current.pay_period_length_days;
+  const defaultAnnualPtoHours =
+    patch.default_annual_pto_hours ?? current.default_annual_pto_hours;
 
   const rows = await query(
     `UPDATE time_clock_settings
@@ -230,14 +235,16 @@ export async function updateTimeClockSettings(
          remind_timesheet_after = $10::time,
          pay_period_anchor_date = $11::date,
          pay_period_length_days = $12,
+         default_annual_pto_hours = $13,
          updated_at = now(),
-         updated_by = $13
+         updated_by = $14
      WHERE id = 'default'
      RETURNING id, max_open_hours::float8 AS max_open_hours, reminder_enabled, timezone,
                remind_clock_in_enabled, remind_clock_in_after,
                remind_clock_out_enabled, remind_clock_out_after,
                remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
                pay_period_anchor_date, pay_period_length_days,
+               default_annual_pto_hours::float8 AS default_annual_pto_hours,
                updated_at, updated_by`,
     [
       maxOpenHours,
@@ -252,6 +259,7 @@ export async function updateTimeClockSettings(
       remindTimesheetAfter,
       payPeriodAnchorDate,
       payPeriodLengthDays,
+      defaultAnnualPtoHours,
       updatedBy.toLowerCase(),
     ]
   );
@@ -264,6 +272,7 @@ export async function updateTimeClockSettings(
     remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
     pay_period_anchor_date: dateToYmd(row.pay_period_anchor_date || "2026-01-01"),
     pay_period_length_days: Number(row.pay_period_length_days ?? 14),
+    default_annual_pto_hours: Number(row.default_annual_pto_hours ?? 80),
   });
   await logTimeClockAudit({
     actorEmail: updatedBy,
@@ -283,6 +292,7 @@ export async function updateTimeClockSettings(
       remind_timesheet_after: current.remind_timesheet_after,
       pay_period_anchor_date: current.pay_period_anchor_date,
       pay_period_length_days: current.pay_period_length_days,
+      default_annual_pto_hours: current.default_annual_pto_hours,
     },
     after: {
       max_open_hours: updated.max_open_hours,
@@ -297,6 +307,7 @@ export async function updateTimeClockSettings(
       remind_timesheet_after: updated.remind_timesheet_after,
       pay_period_anchor_date: updated.pay_period_anchor_date,
       pay_period_length_days: updated.pay_period_length_days,
+      default_annual_pto_hours: updated.default_annual_pto_hours,
     },
   });
   return updated;
