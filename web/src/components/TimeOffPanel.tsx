@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import type { TimeOffBank, TimeOffEntry, TimeOffKind } from "@/lib/timeClockTypes";
 import { deductsFromTimeOffBank } from "@/lib/timeClockTypes";
 import { formatHours } from "@/lib/timeClockFormat";
+import { TimeOffBankCard } from "@/components/TimeOffBankCard";
 
 const KIND_LABELS: Record<TimeOffKind, string> = {
   pto: "PTO",
@@ -102,10 +103,6 @@ export function TimeOffPanel({
   }
 
   const totalHours = entries.reduce((sum, e) => sum + e.hours, 0);
-  const bankPercent =
-    bank.allotted_hours > 0
-      ? Math.min(100, Math.round((bank.used_hours / bank.allotted_hours) * 100))
-      : 0;
 
   return (
     <div className="space-y-4 rounded-2xl border border-line bg-white/90 p-4 shadow-sm">
@@ -117,29 +114,7 @@ export function TimeOffPanel({
         </p>
       </div>
 
-      <div className="rounded-xl border border-line bg-wash/60 px-4 py-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              {bank.year} time-off bank
-            </p>
-            <p className="mt-1 font-display text-2xl text-ink">
-              {formatHours(bank.remaining_hours)} remaining
-            </p>
-            <p className="text-sm text-ink-soft">
-              {formatHours(bank.used_hours)} used of {formatHours(bank.allotted_hours)} allotted
-              {bank.is_default_allotment ? " (default)" : ""}
-            </p>
-          </div>
-          <p className="text-sm font-semibold text-accent">{bankPercent}% used</p>
-        </div>
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-line">
-          <div
-            className="h-full rounded-full bg-accent transition-all"
-            style={{ width: `${bankPercent}%` }}
-          />
-        </div>
-      </div>
+      <TimeOffBankCard bank={bank} />
 
       {entries.length ? (
         <ul className="divide-y divide-line rounded-lg border border-line">

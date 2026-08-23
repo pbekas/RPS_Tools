@@ -187,6 +187,9 @@ export type TeamLiveStatusRow = {
   team_name: string | null;
   time_off_kind: TimeOffKind | null;
   time_off_hours: number | null;
+  time_off_bank_remaining: number;
+  time_off_bank_used: number;
+  time_off_bank_allotted: number;
 };
 
 export type TimeClockTeam = {

@@ -113,6 +113,58 @@ async function sumUsedBankHours(
   return Number(rows[0]?.used || 0);
 }
 
+export async function batchTimeOffBankSummaries(
+  userEmails: string[],
+  year: number
+): Promise<
+  Map<string, { allotted_hours: number; used_hours: number; remaining_hours: number }>
+> {
+  requirePostgres();
+  const emails = [...new Set(userEmails.map((e) => e.toLowerCase()))];
+  const result = new Map<
+    string,
+    { allotted_hours: number; used_hours: number; remaining_hours: number }
+  >();
+  if (!emails.length) return result;
+
+  const defaultAllotment = await getDefaultAnnualPtoHours();
+  const [bankRows, usedRows] = await Promise.all([
+    query<{ user_email: string; allotted_hours: number }>(
+      `SELECT user_email, allotted_hours::float8 AS allotted_hours
+       FROM time_off_banks
+       WHERE user_email = ANY($1::citext[]) AND year = $2`,
+      [emails, year]
+    ),
+    query<{ user_email: string; used: number }>(
+      `SELECT user_email, COALESCE(SUM(hours), 0)::float8 AS used
+       FROM time_off_entries
+       WHERE user_email = ANY($1::citext[])
+         AND EXTRACT(YEAR FROM entry_date)::int = $2
+         AND kind = ANY($3::text[])
+       GROUP BY user_email`,
+      [emails, year, BANK_DEDUCTING_KINDS]
+    ),
+  ]);
+
+  const customAllotments = new Map(
+    bankRows.map((row) => [String(row.user_email).toLowerCase(), Number(row.allotted_hours)])
+  );
+  const usedByEmail = new Map(
+    usedRows.map((row) => [String(row.user_email).toLowerCase(), Number(row.used)])
+  );
+
+  for (const email of emails) {
+    const allotted = customAllotments.get(email) ?? defaultAllotment;
+    const used = usedByEmail.get(email) ?? 0;
+    result.set(email, {
+      allotted_hours: allotted,
+      used_hours: used,
+      remaining_hours: Math.max(0, allotted - used),
+    });
+  }
+  return result;
+}
+
 export async function getTimeOffBank(
   userEmail: string,
   year?: number

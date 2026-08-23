@@ -182,6 +182,18 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
                   <dd className="capitalize">{row.timesheet_status}</dd>
                 </div>
               ) : null}
+              <div className="flex justify-between gap-3">
+                <dt>PTO bank</dt>
+                <dd className="text-right">
+                  <span className="font-semibold text-ink">
+                    {formatHours(row.time_off_bank_remaining)} left
+                  </span>
+                  <span className="block text-xs text-ink-soft">
+                    {formatHours(row.time_off_bank_used)} /{" "}
+                    {formatHours(row.time_off_bank_allotted)} used
+                  </span>
+                </dd>
+              </div>
             </dl>
           </div>
         ))}

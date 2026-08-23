@@ -24,7 +24,11 @@ import {
   weekRangeFromStart,
   weekStartDate,
 } from "@/lib/timeClockFormat";
-import { listTimeOffEntries, getTimeOffForDate } from "@/lib/timeOffDb";
+import {
+  batchTimeOffBankSummaries,
+  getTimeOffForDate,
+  listTimeOffEntries,
+} from "@/lib/timeOffDb";
 import { isValidTimeClockTimezone } from "@/lib/timeClockTimezones";
 import {
   type PayPeriodBounds,
@@ -1346,6 +1350,11 @@ export async function listTeamLiveStatus(
   );
 
   const now = new Date();
+  const bankYear = now.getFullYear();
+  const bankByEmail = await batchTimeOffBankSummaries(
+    users.map((u) => String(u.email)),
+    bankYear
+  );
   const rows: TeamLiveStatusRow[] = [];
 
   for (const user of users) {
@@ -1420,6 +1429,12 @@ export async function listTeamLiveStatus(
       status = "clocked_out";
     }
 
+    const bank = bankByEmail.get(String(user.email).toLowerCase()) || {
+      allotted_hours: 0,
+      used_hours: 0,
+      remaining_hours: 0,
+    };
+
     rows.push({
       user_email: user.email,
       user_name: user.name || user.email,
@@ -1438,6 +1453,9 @@ export async function listTeamLiveStatus(
       team_name: user.team_name ? String(user.team_name) : null,
       time_off_kind: timeOffToday?.kind ?? null,
       time_off_hours: timeOffToday?.hours ?? null,
+      time_off_bank_remaining: bank.remaining_hours,
+      time_off_bank_used: bank.used_hours,
+      time_off_bank_allotted: bank.allotted_hours,
     });
   }
 
