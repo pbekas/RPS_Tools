@@ -86,6 +86,11 @@ export async function POST(req: Request) {
         provisional: false,
         extension: extensionRaw,
       });
+      if (role === "Supervisor") {
+        const mods = normalizeModuleGrants([...(user.modules || []), "time_clock"]);
+        const withClock = await setUserModules(email, mods);
+        user.modules = withClock.modules;
+      }
       let remappedCalls = 0;
       if (extensionRaw !== undefined) {
         remappedCalls = await remapCallsForExtension({
