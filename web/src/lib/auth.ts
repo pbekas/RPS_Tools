@@ -6,6 +6,7 @@ import {
   upsertUser,
 } from "@/lib/database";
 import { ALL_TOOLSET_IDS } from "@/lib/permissions";
+import { resolveTimeClockAccess } from "@/lib/timeClockAccess";
 
 function allowedDomains(): string[] {
   const multi = (process.env.ALLOWED_EMAIL_DOMAINS || "")
@@ -112,6 +113,13 @@ export const authOptions: NextAuthOptions = {
           token.role = u?.role || "Agent";
           token.name = u?.name || token.name;
           token.modules = Array.isArray(u?.modules) ? u.modules : [];
+          const access = await resolveTimeClockAccess({
+            email,
+            role: token.role as string,
+            modules: token.modules as string[],
+          });
+          token.timeClockManager = access.isManager;
+          token.timeClockAdmin = access.isAdmin;
         } catch {
           token.role = token.role || "Agent";
           token.modules = token.modules || [];
@@ -125,6 +133,8 @@ export const authOptions: NextAuthOptions = {
         session.user.name = (token.name as string) || session.user.name;
         session.user.role = (token.role as string) || "Agent";
         session.user.modules = Array.isArray(token.modules) ? token.modules : [];
+        session.user.timeClockManager = Boolean(token.timeClockManager);
+        session.user.timeClockAdmin = Boolean(token.timeClockAdmin);
       }
       return session;
     },

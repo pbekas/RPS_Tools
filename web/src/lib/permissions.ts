@@ -12,6 +12,12 @@ export const TOOLSETS = {
     href: "/contracts",
     description: "Agreements, vendors, and renewals",
   },
+  time_clock: {
+    id: "time_clock",
+    label: "Time Clock",
+    href: "/time-clock",
+    description: "Clock in/out and timesheets",
+  },
 } as const;
 
 export type ToolsetId = keyof typeof TOOLSETS;
@@ -39,6 +45,14 @@ export type SessionUserLike = {
 
 export function isAdmin(user: SessionUserLike | null | undefined): boolean {
   return (user?.role || "").toLowerCase() === "admin";
+}
+
+export function isSupervisor(user: SessionUserLike | null | undefined): boolean {
+  return (user?.role || "").toLowerCase() === "supervisor";
+}
+
+export function isTimeClockManager(user: SessionUserLike | null | undefined): boolean {
+  return isAdmin(user) || isSupervisor(user);
 }
 
 /** Normalize stored modules; empty/legacy means Call QA only. */
@@ -76,6 +90,7 @@ export function grantedToolsets(
 }
 
 export function moduleForPath(pathname: string): ModuleId | null {
+  if (pathname.startsWith("/time-clock")) return "time_clock";
   if (pathname.startsWith("/contracts")) return "contracts";
   if (pathname.startsWith("/users") || pathname.startsWith("/settings")) {
     return "users";
@@ -95,6 +110,7 @@ export function moduleForPath(pathname: string): ModuleId | null {
 export function activeToolset(pathname: string): ToolsetId | null {
   const mod = moduleForPath(pathname);
   if (mod === "contracts") return "contracts";
+  if (mod === "time_clock") return "time_clock";
   if (mod === "call_qa") return "call_qa";
   return null;
 }
@@ -112,6 +128,7 @@ export function defaultHrefForUser(
     if (!hasAgreementGrant) return "/contracts/vendors";
     return TOOLSETS.contracts.href;
   }
+  if (sets.includes("time_clock")) return TOOLSETS.time_clock.href;
   return "/login";
 }
 

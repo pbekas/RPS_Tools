@@ -11,6 +11,7 @@ import {
   defaultHrefForUser,
   grantedToolsets,
   isAdmin,
+  isSupervisor,
 } from "@/lib/permissions";
 
 function navClass(active: boolean) {
@@ -23,6 +24,11 @@ export function AppNav() {
   if (!data?.user || pathname === "/login") return null;
 
   const admin = isAdmin(data.user);
+  const supervisor = isSupervisor(data.user);
+  const timeClockManager =
+    Boolean((data.user as { timeClockManager?: boolean }).timeClockManager) ||
+    admin ||
+    supervisor;
   const toolsets = grantedToolsets(data.user);
   const current = activeToolset(pathname);
   const contractAccess = resolveContractAccess(data.user);
@@ -96,6 +102,79 @@ export function AppNav() {
                   >
                     QA settings
                   </Link>
+                </>
+              ) : null}
+            </nav>
+          ) : null}
+
+          {current === "time_clock" ? (
+            <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft md:flex">
+              <Link
+                href="/time-clock"
+                className={navClass(pathname === "/time-clock")}
+              >
+                Clock
+              </Link>
+              <Link
+                href="/time-clock/history"
+                className={navClass(pathname.startsWith("/time-clock/history"))}
+              >
+                My hours
+              </Link>
+              {timeClockManager ? (
+                <>
+                  <Link
+                    href="/time-clock/live"
+                    className={navClass(pathname.startsWith("/time-clock/live"))}
+                  >
+                    Live
+                  </Link>
+                  <Link
+                    href="/time-clock/team"
+                    className={navClass(pathname.startsWith("/time-clock/team"))}
+                  >
+                    Team
+                  </Link>
+                  <Link
+                    href="/time-clock/reports"
+                    className={navClass(pathname.startsWith("/time-clock/reports"))}
+                  >
+                    Reports
+                  </Link>
+                  <Link
+                    href="/time-clock/approvals"
+                    className={navClass(pathname.startsWith("/time-clock/approvals"))}
+                  >
+                    Approvals
+                  </Link>
+                  <Link
+                    href="/time-clock/banks"
+                    className={navClass(pathname.startsWith("/time-clock/banks"))}
+                  >
+                    PTO banks
+                  </Link>
+                  <Link
+                    href="/time-clock/audit"
+                    className={navClass(pathname.startsWith("/time-clock/audit"))}
+                  >
+                    Audit
+                  </Link>
+                  {admin ? (
+                    <>
+                      <Link
+                        href="/time-clock/teams"
+                        className={navClass(pathname.startsWith("/time-clock/teams"))}
+                      >
+                        Departments
+                      </Link>
+                      <Link
+                        href="/time-clock/settings"
+                        className={navClass(pathname.startsWith("/time-clock/settings"))}
+                      >
+                        Settings
+                      </Link>
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </nav>

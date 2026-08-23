@@ -462,6 +462,7 @@ export function AgentSettings({
             className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
           >
             <option value="Agent">Agent</option>
+            <option value="Supervisor">Supervisor</option>
             <option value="Admin">Admin</option>
           </select>
         </label>

@@ -203,6 +203,20 @@ async def ops_check_contract_expiry(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", **result})
 
 
+@app.post("/ops/check-time-clock-reminders")
+async def ops_check_time_clock_reminders(request: Request) -> JSONResponse:
+    """Alert when team members stay clocked in past the configured limit."""
+    _require_ops_token(request)
+    try:
+        from src.time_clock_alerts import check_time_clock_reminders
+
+        result = check_time_clock_reminders()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Time clock reminder scan failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", **result})
+
+
 @app.post("/webhooks/vonage/recording")
 async def vonage_recording(request: Request) -> JSONResponse:
     """
