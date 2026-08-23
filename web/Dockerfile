@@ -27,6 +27,10 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 
+# Next Image / fetch cache writes under .next/cache at runtime.
+RUN mkdir -p .next/cache \
+  && chown -R app:app /app
+
 USER app
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

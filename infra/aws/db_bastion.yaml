@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SSM bastion for private RPS Call QA PostgreSQL access (no SSH, no public IP).
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetId:
+    Type: AWS::EC2::Subnet::Id
+  AmiId:
+    Type: AWS::EC2::Image::Id
+  ProductionDatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  StagingDatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: rps-call-qa-db-bastion
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: rps-call-qa-db-bastion
+        - Key: Project
+          Value: rps-call-qa
+
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: rps-call-qa-db-bastion
+      Roles:
+        - !Ref BastionRole
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSM-only bastion for RPS Call QA database tunnels
+      GroupName: rps-call-qa-db-bastion
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Outbound for SSM and PostgreSQL
+      Tags:
+        - Key: Name
+          Value: rps-call-qa-db-bastion
+        - Key: Project
+          Value: rps-call-qa
+
+  ProductionDbFromBastion:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ProductionDatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: PostgreSQL from RPS Call QA DB bastion
+
+  StagingDbFromBastion:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref StagingDatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: PostgreSQL from RPS Call QA DB bastion
+
+  BastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      SubnetId: !Ref PrivateSubnetId
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      DisableApiTermination: true
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+      Tags:
+        - Key: Name
+          Value: rps-call-qa-db-bastion
+        - Key: Project
+          Value: rps-call-qa
+        - Key: Purpose
+          Value: ssm-db-tunnel
+
+Outputs:
+  BastionInstanceId:
+    Value: !Ref BastionInstance
+  BastionSecurityGroupId:
+    Value: !Ref BastionSecurityGroup
