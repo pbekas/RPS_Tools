@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { apiRequireModule } from "@/lib/requireAccess";
 import { isAdmin } from "@/lib/permissions";
-import { buildTimeClockReport, listTeamDaySummary } from "@/lib/timeClockDb";
+import { buildTimeClockReport, entryHours, listTeamDaySummary } from "@/lib/timeClockDb";
+import { buildTimeClockReportPdf } from "@/lib/timeClockPdf";
 
 export async function GET(req: Request) {
   const { session, error } = await apiRequireModule("time_clock");
@@ -40,11 +41,7 @@ export async function GET(req: Request) {
       const lines = [
         "user_email,user_name,clock_in,clock_out,hours,notes",
         ...report.entries.map((entry) => {
-          const hours = (
-            (entry.clock_out
-              ? new Date(entry.clock_out).getTime() - new Date(entry.clock_in).getTime()
-              : Date.now() - new Date(entry.clock_in).getTime()) / 3600000
-          ).toFixed(2);
+          const hours = entryHours(entry).toFixed(2);
           const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
           return [
             esc(entry.user_email),
@@ -60,6 +57,16 @@ export async function GET(req: Request) {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="time-clock-${from.slice(0, 10)}-${to.slice(0, 10)}.csv"`,
+        },
+      });
+    }
+
+    if (format === "pdf") {
+      const pdf = await buildTimeClockReportPdf(report);
+      return new NextResponse(new Uint8Array(pdf), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="time-clock-${from.slice(0, 10)}-${to.slice(0, 10)}.pdf"`,
         },
       });
     }

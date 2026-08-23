@@ -46,13 +46,13 @@ export function TimeClockReportPanel({
     }
   }
 
-  function exportCsv() {
+  function exportReport(format: "csv" | "pdf") {
     const fromIso = new Date(`${from}T00:00:00`).toISOString();
     const toIso = new Date(`${to}T23:59:59`).toISOString();
     const params = new URLSearchParams({
       from: fromIso,
       to: toIso,
-      format: "csv",
+      format,
       ...(teamMode ? { team: "1" } : {}),
     });
     window.location.href = `/api/time-clock/report?${params}`;
@@ -89,10 +89,17 @@ export function TimeClockReportPanel({
         </button>
         <button
           type="button"
-          onClick={exportCsv}
+          onClick={() => exportReport("csv")}
           className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
         >
           Export CSV
+        </button>
+        <button
+          type="button"
+          onClick={() => exportReport("pdf")}
+          className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
+        >
+          Export PDF
         </button>
       </div>
 
