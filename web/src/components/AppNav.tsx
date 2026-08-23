@@ -101,6 +101,51 @@ export function AppNav() {
             </nav>
           ) : null}
 
+          {current === "time_clock" ? (
+            <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft md:flex">
+              <Link
+                href="/time-clock"
+                className={navClass(pathname === "/time-clock")}
+              >
+                Clock
+              </Link>
+              <Link
+                href="/time-clock/history"
+                className={navClass(pathname.startsWith("/time-clock/history"))}
+              >
+                My hours
+              </Link>
+              {admin ? (
+                <>
+                  <Link
+                    href="/time-clock/team"
+                    className={navClass(pathname.startsWith("/time-clock/team"))}
+                  >
+                    Team
+                  </Link>
+                  <Link
+                    href="/time-clock/reports"
+                    className={navClass(pathname.startsWith("/time-clock/reports"))}
+                  >
+                    Reports
+                  </Link>
+                  <Link
+                    href="/time-clock/approvals"
+                    className={navClass(pathname.startsWith("/time-clock/approvals"))}
+                  >
+                    Approvals
+                  </Link>
+                  <Link
+                    href="/time-clock/settings"
+                    className={navClass(pathname.startsWith("/time-clock/settings"))}
+                  >
+                    Settings
+                  </Link>
+                </>
+              ) : null}
+            </nav>
+          ) : null}
+
           {current === "contracts" ? (
             <nav className="hidden items-center gap-4 text-sm font-semibold text-ink-soft md:flex">
               {contractAccess.canViewAgreements ? (

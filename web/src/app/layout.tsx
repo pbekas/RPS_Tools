@@ -16,7 +16,7 @@ const sans = Source_Sans_3({
 
 export const metadata: Metadata = {
   title: "Relevium Tools",
-  description: "Call QA and Contracts for Relevium Pain Specialists",
+  description: "Call QA, Contracts, and Time Clock for Relevium Pain Specialists",
 };
 
 export default function RootLayout({

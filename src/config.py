@@ -48,8 +48,10 @@ class Settings:
     gchat_webhook_url: str
     gchat_missed_calls_webhook_url: str
     gchat_contracts_webhook_url: str
+    gchat_time_clock_webhook_url: str
     alerts_enabled: bool
     contract_alerts_enabled: bool
+    time_clock_alerts_enabled: bool
     contract_alert_days: int
     missed_alert_window_minutes: int
     missed_alert_threshold: int
@@ -136,6 +138,9 @@ class Settings:
         self.gchat_contracts_webhook_url = (
             os.getenv("GCHAT_CONTRACTS_WEBHOOK_URL", "").strip()
         )
+        self.gchat_time_clock_webhook_url = (
+            os.getenv("GCHAT_TIME_CLOCK_WEBHOOK_URL", "").strip()
+        )
         self.alerts_enabled = os.getenv("ALERTS_ENABLED", "1").strip().lower() in {
             "1",
             "true",
@@ -144,6 +149,9 @@ class Settings:
         } and bool(self.gchat_webhook_url or self.gchat_missed_calls_webhook_url)
         self.contract_alerts_enabled = os.getenv(
             "CONTRACT_ALERTS_ENABLED", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self.time_clock_alerts_enabled = os.getenv(
+            "TIME_CLOCK_ALERTS_ENABLED", "1"
         ).strip().lower() in {"1", "true", "yes", "on"}
         self.contract_alert_days = int(os.getenv("CONTRACT_ALERT_DAYS", "90"))
         self.missed_alert_window_minutes = int(
