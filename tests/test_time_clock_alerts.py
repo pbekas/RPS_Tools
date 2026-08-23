@@ -7,10 +7,11 @@ from unittest.mock import MagicMock, patch
 from src.time_clock_alerts import check_time_clock_reminders
 
 
+@patch("src.time_clock_alerts.collect_time_clock_reminder_candidates", return_value=[])
 @patch("src.time_clock_alerts.list_open_entries_over_limit")
 @patch("src.time_clock_alerts.notify_gchat")
 @patch("src.time_clock_alerts.get_settings")
-def test_check_time_clock_reminders_disabled(mock_settings, mock_notify, mock_list):
+def test_check_time_clock_reminders_disabled(mock_settings, mock_notify, mock_list, _mock_collect):
     settings = MagicMock()
     settings.time_clock_alerts_enabled = False
     settings.gchat_time_clock_webhook_url = ""
@@ -23,10 +24,11 @@ def test_check_time_clock_reminders_disabled(mock_settings, mock_notify, mock_li
     mock_notify.assert_not_called()
 
 
+@patch("src.time_clock_alerts.collect_time_clock_reminder_candidates", return_value=[])
 @patch("src.time_clock_alerts.list_open_entries_over_limit")
 @patch("src.time_clock_alerts.notify_gchat", return_value=True)
 @patch("src.time_clock_alerts.get_settings")
-def test_check_time_clock_reminders_sends(mock_settings, mock_notify, mock_list):
+def test_check_time_clock_reminders_sends(mock_settings, mock_notify, mock_list, _mock_collect):
     from datetime import datetime, timezone
 
     settings = MagicMock()
