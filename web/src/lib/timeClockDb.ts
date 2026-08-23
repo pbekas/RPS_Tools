@@ -1,6 +1,5 @@
 import "server-only";
 
-import { randomUUID } from "crypto";
 import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import type {
