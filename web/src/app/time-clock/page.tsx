@@ -1,18 +1,25 @@
 import { requireModule } from "@/lib/requireAccess";
 import {
+  getEffectiveTimezone,
   getPunchStatus,
+  getTimeClockProfile,
   getTimeClockSettings,
   listTimeEntries,
 } from "@/lib/timeClockDb";
 import { startOfDayIso, addDaysIso } from "@/lib/timeClockFormat";
 import { TimeClockHome } from "@/components/TimeClockHome";
+import { TimeClockProfilePanel } from "@/components/TimeClockProfilePanel";
 
 export default async function TimeClockPage() {
   const session = await requireModule("time_clock");
   const email = session.user.email!.toLowerCase();
-  const settings = await getTimeClockSettings();
-  const from = startOfDayIso(new Date(), settings.timezone);
-  const to = addDaysIso(from, 1, settings.timezone);
+  const [settings, profile, userTz] = await Promise.all([
+    getTimeClockSettings(),
+    getTimeClockProfile(email),
+    getEffectiveTimezone(email),
+  ]);
+  const from = startOfDayIso(new Date(), userTz);
+  const to = addDaysIso(from, 1, userTz);
 
   const [status, { entries }] = await Promise.all([
     getPunchStatus(email),
@@ -25,11 +32,13 @@ export default async function TimeClockPage() {
       <p className="mt-1 text-ink-soft">
         Clock in and out for your shift. Use clock out for breaks and lunches, then clock back in.
       </p>
-      <div className="mt-6">
+      <div className="mt-6 space-y-6">
+        <TimeClockProfilePanel initialProfile={profile} />
         <TimeClockHome
           initialStatus={status}
           initialEntries={entries}
           settings={settings}
+          displayTimezone={userTz}
           from={from}
           to={to}
         />

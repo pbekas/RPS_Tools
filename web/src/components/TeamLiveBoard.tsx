@@ -9,7 +9,8 @@ const STATUS_ORDER: Record<TeamLiveStatusRow["status"], number> = {
   on_break: 1,
   forgot_to_punch: 2,
   not_started: 3,
-  clocked_out: 4,
+  on_pto: 4,
+  clocked_out: 5,
 };
 
 const STATUS_DOT: Record<TeamLiveStatusRow["status"], string> = {
@@ -17,6 +18,7 @@ const STATUS_DOT: Record<TeamLiveStatusRow["status"], string> = {
   on_break: "bg-warn",
   forgot_to_punch: "bg-fail",
   not_started: "bg-line",
+  on_pto: "bg-accent/60",
   clocked_out: "bg-ink-soft",
 };
 
@@ -85,6 +87,7 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
             ["clocked_in", "Clocked in"],
             ["on_break", "On break"],
             ["forgot_to_punch", "No punch"],
+            ["on_pto", "Time off"],
             ["not_started", "Not started"],
             ["clocked_out", "Done for day"],
           ] as const
@@ -162,6 +165,15 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
                 <div className="flex justify-between gap-3">
                   <dt>Last punch</dt>
                   <dd>{row.last_punch_label}</dd>
+                </div>
+              ) : null}
+              {row.time_off_kind ? (
+                <div className="flex justify-between gap-3">
+                  <dt>Time off</dt>
+                  <dd className="capitalize">
+                    {row.time_off_kind}
+                    {row.time_off_hours ? ` (${row.time_off_hours}h)` : ""}
+                  </dd>
                 </div>
               ) : null}
               {row.timesheet_status ? (

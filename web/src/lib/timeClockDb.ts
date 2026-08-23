@@ -22,6 +22,8 @@ import {
   weekRangeFromStart,
   weekStartDate,
 } from "@/lib/timeClockFormat";
+import { listTimeOffEntries, getTimeOffForDate } from "@/lib/timeOffDb";
+import { isValidTimeClockTimezone } from "@/lib/timeClockTimezones";
 
 const usePostgres = () => process.env.DB_BACKEND?.trim().toLowerCase() === "postgres";
 
@@ -78,10 +80,72 @@ async function auditSubject(
   });
 }
 
+function timeFromRow(value: unknown): string {
+  if (value instanceof Date) {
+    return `${String(value.getUTCHours()).padStart(2, "0")}:${String(value.getUTCMinutes()).padStart(2, "0")}`;
+  }
+  const text = String(value || "00:00");
+  return text.slice(0, 5);
+}
+
+export async function getEffectiveTimezone(userEmail: string): Promise<string> {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const rows = await query<{ timezone: string | null }>(
+    `SELECT timezone FROM users WHERE email = $1`,
+    [userEmail.toLowerCase()]
+  );
+  const userTz = rows[0]?.timezone ? String(rows[0].timezone).trim() : "";
+  return userTz || settings.timezone;
+}
+
+export async function getTimeClockProfile(userEmail: string) {
+  requirePostgres();
+  const settings = await getTimeClockSettings();
+  const rows = await query<{ email: string; name: string; timezone: string | null }>(
+    `SELECT email, name, timezone FROM users WHERE email = $1`,
+    [userEmail.toLowerCase()]
+  );
+  if (!rows[0]) throw new Error("User not found");
+  const timezone = rows[0].timezone ? String(rows[0].timezone).trim() : null;
+  return {
+    email: String(rows[0].email),
+    name: String(rows[0].name || rows[0].email),
+    timezone,
+    effective_timezone: timezone || settings.timezone,
+  };
+}
+
+export async function setUserTimezone(userEmail: string, timezone: string): Promise<string> {
+  requirePostgres();
+  const tz = timezone.trim();
+  if (!tz || !isValidTimeClockTimezone(tz)) {
+    throw new Error("Invalid timezone");
+  }
+  const before = await getTimeClockProfile(userEmail);
+  await query(`UPDATE users SET timezone = $2 WHERE email = $1`, [
+    userEmail.toLowerCase(),
+    tz,
+  ]);
+  await logTimeClockAudit({
+    actorEmail: userEmail,
+    subjectEmail: userEmail,
+    action: "profile.timezone_updated",
+    entityType: "user",
+    entityId: userEmail.toLowerCase(),
+    before: { timezone: before.timezone },
+    after: { timezone: tz },
+  });
+  return tz;
+}
+
 export async function getTimeClockSettings(): Promise<TimeClockSettings> {
   requirePostgres();
   const rows = await query(
     `SELECT id, max_open_hours::float8 AS max_open_hours, reminder_enabled, timezone,
+            remind_clock_in_enabled, remind_clock_in_after,
+            remind_clock_out_enabled, remind_clock_out_after,
+            remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
             updated_at, updated_by
      FROM time_clock_settings
      WHERE id = 'default'`
@@ -89,11 +153,32 @@ export async function getTimeClockSettings(): Promise<TimeClockSettings> {
   if (!rows[0]) {
     throw new Error("Time clock settings not initialized");
   }
-  return serializeRow<TimeClockSettings>(rows[0]);
+  const row = rows[0];
+  return serializeRow<TimeClockSettings>({
+    ...row,
+    remind_clock_in_after: timeFromRow(row.remind_clock_in_after),
+    remind_clock_out_after: timeFromRow(row.remind_clock_out_after),
+    remind_timesheet_after: timeFromRow(row.remind_timesheet_after),
+    remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
+  });
 }
 
 export async function updateTimeClockSettings(
-  patch: Partial<Pick<TimeClockSettings, "max_open_hours" | "reminder_enabled" | "timezone">>,
+  patch: Partial<
+    Pick<
+      TimeClockSettings,
+      | "max_open_hours"
+      | "reminder_enabled"
+      | "timezone"
+      | "remind_clock_in_enabled"
+      | "remind_clock_in_after"
+      | "remind_clock_out_enabled"
+      | "remind_clock_out_after"
+      | "remind_timesheet_enabled"
+      | "remind_timesheet_weekday"
+      | "remind_timesheet_after"
+    >
+  >,
   updatedBy: string
 ): Promise<TimeClockSettings> {
   requirePostgres();
@@ -101,19 +186,63 @@ export async function updateTimeClockSettings(
   const maxOpenHours = patch.max_open_hours ?? current.max_open_hours;
   const reminderEnabled = patch.reminder_enabled ?? current.reminder_enabled;
   const timezone = patch.timezone ?? current.timezone;
+  const remindClockInEnabled =
+    patch.remind_clock_in_enabled ?? current.remind_clock_in_enabled;
+  const remindClockInAfter =
+    patch.remind_clock_in_after ?? current.remind_clock_in_after;
+  const remindClockOutEnabled =
+    patch.remind_clock_out_enabled ?? current.remind_clock_out_enabled;
+  const remindClockOutAfter =
+    patch.remind_clock_out_after ?? current.remind_clock_out_after;
+  const remindTimesheetEnabled =
+    patch.remind_timesheet_enabled ?? current.remind_timesheet_enabled;
+  const remindTimesheetWeekday =
+    patch.remind_timesheet_weekday ?? current.remind_timesheet_weekday;
+  const remindTimesheetAfter =
+    patch.remind_timesheet_after ?? current.remind_timesheet_after;
+
   const rows = await query(
     `UPDATE time_clock_settings
      SET max_open_hours = $1,
          reminder_enabled = $2,
          timezone = $3,
+         remind_clock_in_enabled = $4,
+         remind_clock_in_after = $5::time,
+         remind_clock_out_enabled = $6,
+         remind_clock_out_after = $7::time,
+         remind_timesheet_enabled = $8,
+         remind_timesheet_weekday = $9,
+         remind_timesheet_after = $10::time,
          updated_at = now(),
-         updated_by = $4
+         updated_by = $11
      WHERE id = 'default'
      RETURNING id, max_open_hours::float8 AS max_open_hours, reminder_enabled, timezone,
+               remind_clock_in_enabled, remind_clock_in_after,
+               remind_clock_out_enabled, remind_clock_out_after,
+               remind_timesheet_enabled, remind_timesheet_weekday, remind_timesheet_after,
                updated_at, updated_by`,
-    [maxOpenHours, reminderEnabled, timezone, updatedBy.toLowerCase()]
+    [
+      maxOpenHours,
+      reminderEnabled,
+      timezone,
+      remindClockInEnabled,
+      remindClockInAfter,
+      remindClockOutEnabled,
+      remindClockOutAfter,
+      remindTimesheetEnabled,
+      remindTimesheetWeekday,
+      remindTimesheetAfter,
+      updatedBy.toLowerCase(),
+    ]
   );
-  const updated = serializeRow<TimeClockSettings>(rows[0]);
+  const row = rows[0];
+  const updated = serializeRow<TimeClockSettings>({
+    ...row,
+    remind_clock_in_after: timeFromRow(row.remind_clock_in_after),
+    remind_clock_out_after: timeFromRow(row.remind_clock_out_after),
+    remind_timesheet_after: timeFromRow(row.remind_timesheet_after),
+    remind_timesheet_weekday: Number(row.remind_timesheet_weekday ?? 5),
+  });
   await logTimeClockAudit({
     actorEmail: updatedBy,
     action: "settings.updated",
@@ -123,11 +252,25 @@ export async function updateTimeClockSettings(
       max_open_hours: current.max_open_hours,
       reminder_enabled: current.reminder_enabled,
       timezone: current.timezone,
+      remind_clock_in_enabled: current.remind_clock_in_enabled,
+      remind_clock_in_after: current.remind_clock_in_after,
+      remind_clock_out_enabled: current.remind_clock_out_enabled,
+      remind_clock_out_after: current.remind_clock_out_after,
+      remind_timesheet_enabled: current.remind_timesheet_enabled,
+      remind_timesheet_weekday: current.remind_timesheet_weekday,
+      remind_timesheet_after: current.remind_timesheet_after,
     },
     after: {
       max_open_hours: updated.max_open_hours,
       reminder_enabled: updated.reminder_enabled,
       timezone: updated.timezone,
+      remind_clock_in_enabled: updated.remind_clock_in_enabled,
+      remind_clock_in_after: updated.remind_clock_in_after,
+      remind_clock_out_enabled: updated.remind_clock_out_enabled,
+      remind_clock_out_after: updated.remind_clock_out_after,
+      remind_timesheet_enabled: updated.remind_timesheet_enabled,
+      remind_timesheet_weekday: updated.remind_timesheet_weekday,
+      remind_timesheet_after: updated.remind_timesheet_after,
     },
   });
   return updated;
@@ -828,14 +971,16 @@ export async function getWeeklyTimesheetDetail(
   weekStart: string
 ): Promise<WeeklyTimesheet> {
   requirePostgres();
-  const settings = await getTimeClockSettings();
-  const { from, to, week_end } = weekRangeFromStart(weekStart, settings.timezone);
-  const [{ entries }, sheet] = await Promise.all([
+  const userTz = await getEffectiveTimezone(userEmail);
+  const { from, to, week_end } = weekRangeFromStart(weekStart, userTz);
+  const [{ entries }, sheet, timeOff] = await Promise.all([
     listTimeEntries({ userEmail, from, to, limit: 500 }),
     ensureTimesheetRow(userEmail, weekStart),
+    listTimeOffEntries(userEmail, weekStart, week_end),
   ]);
 
   const totalHours = entries.reduce((sum, e) => sum + entryHours(e), 0);
+  const timeOffHours = timeOff.reduce((sum, e) => sum + e.hours, 0);
   const openEntry = entries.some((e) => !e.clock_out);
   const pendingEdits = await query<{ count: number }>(
     `SELECT COUNT(*)::int AS count
@@ -860,6 +1005,8 @@ export async function getWeeklyTimesheetDetail(
     week_end,
     total_hours: totalHours,
     entries,
+    time_off: timeOff,
+    time_off_hours: timeOffHours,
     has_open_entry: openEntry,
     has_pending_edits: Number(pendingEdits[0]?.count || 0) > 0,
   };
@@ -882,8 +1029,8 @@ export async function submitWeeklyTimesheet(
   if (detail.has_pending_edits) {
     throw new Error("Resolve pending edit requests before submitting");
   }
-  if (!detail.entries?.length) {
-    throw new Error("No time entries for this week");
+  if (!detail.entries?.length && !(detail.time_off?.length || 0)) {
+    throw new Error("No time entries or time off for this week");
   }
 
   await query(
@@ -988,6 +1135,7 @@ function statusLabel(status: TeamMemberLiveStatus): string {
     clocked_out: "Clocked out",
     not_started: "Not started",
     forgot_to_punch: "No punch today",
+    on_pto: "On time off",
   };
   return labels[status];
 }
@@ -1078,12 +1226,16 @@ export async function listTeamLiveStatus(
       lastPunchAt = clockOut || clockIn;
     }
 
-    const weekStart = weekStartDate(now, settings.timezone);
+    const weekStart = weekStartDate(now, tz);
     const timesheet = await getTimesheet(user.email, weekStart);
+    const todayDate = todayStart.slice(0, 10);
+    const timeOffToday = await getTimeOffForDate(user.email, todayDate);
 
     let status: TeamMemberLiveStatus;
     const openEntry = openRows[0];
-    if (openEntry) {
+    if (timeOffToday) {
+      status = "on_pto";
+    } else if (openEntry) {
       status = "clocked_in";
     } else if (!todayRows.length) {
       const isWorkday = weekday >= 1 && weekday <= 5;
@@ -1114,6 +1266,8 @@ export async function listTeamLiveStatus(
       timesheet_status: timesheet?.status ?? null,
       team_id: user.team_id ? String(user.team_id) : null,
       team_name: user.team_name ? String(user.team_name) : null,
+      time_off_kind: timeOffToday?.kind ?? null,
+      time_off_hours: timeOffToday?.hours ?? null,
     });
   }
 

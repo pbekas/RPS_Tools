@@ -29,6 +29,13 @@ export async function PATCH(req: Request) {
     max_open_hours?: number;
     reminder_enabled?: boolean;
     timezone?: string;
+    remind_clock_in_enabled?: boolean;
+    remind_clock_in_after?: string;
+    remind_clock_out_enabled?: boolean;
+    remind_clock_out_after?: string;
+    remind_timesheet_enabled?: boolean;
+    remind_timesheet_weekday?: number;
+    remind_timesheet_after?: string;
   } = {};
 
   if (body.max_open_hours != null) {
@@ -43,6 +50,31 @@ export async function PATCH(req: Request) {
   }
   if (typeof body.timezone === "string" && body.timezone.trim()) {
     patch.timezone = body.timezone.trim();
+  }
+  if (typeof body.remind_clock_in_enabled === "boolean") {
+    patch.remind_clock_in_enabled = body.remind_clock_in_enabled;
+  }
+  if (typeof body.remind_clock_in_after === "string" && /^\d{2}:\d{2}$/.test(body.remind_clock_in_after)) {
+    patch.remind_clock_in_after = body.remind_clock_in_after;
+  }
+  if (typeof body.remind_clock_out_enabled === "boolean") {
+    patch.remind_clock_out_enabled = body.remind_clock_out_enabled;
+  }
+  if (typeof body.remind_clock_out_after === "string" && /^\d{2}:\d{2}$/.test(body.remind_clock_out_after)) {
+    patch.remind_clock_out_after = body.remind_clock_out_after;
+  }
+  if (typeof body.remind_timesheet_enabled === "boolean") {
+    patch.remind_timesheet_enabled = body.remind_timesheet_enabled;
+  }
+  if (body.remind_timesheet_weekday != null) {
+    const weekday = Number(body.remind_timesheet_weekday);
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+      return NextResponse.json({ error: "Invalid remind_timesheet_weekday" }, { status: 400 });
+    }
+    patch.remind_timesheet_weekday = weekday;
+  }
+  if (typeof body.remind_timesheet_after === "string" && /^\d{2}:\d{2}$/.test(body.remind_timesheet_after)) {
+    patch.remind_timesheet_after = body.remind_timesheet_after;
   }
 
   try {

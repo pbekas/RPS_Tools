@@ -31,13 +31,41 @@ export type TimeEntryEditRequest = {
   entry?: TimeEntry;
 };
 
+export type TimeOffKind = "pto" | "sick" | "holiday" | "unpaid";
+
+export type TimeOffEntry = {
+  id: string;
+  user_email: string;
+  entry_date: string;
+  kind: TimeOffKind;
+  hours: number;
+  notes: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type TimeClockSettings = {
   id: string;
   max_open_hours: number;
   reminder_enabled: boolean;
   timezone: string;
+  remind_clock_in_enabled: boolean;
+  remind_clock_in_after: string;
+  remind_clock_out_enabled: boolean;
+  remind_clock_out_after: string;
+  remind_timesheet_enabled: boolean;
+  remind_timesheet_weekday: number;
+  remind_timesheet_after: string;
   updated_at: string;
   updated_by: string | null;
+};
+
+export type TimeClockProfile = {
+  email: string;
+  name: string;
+  timezone: string | null;
+  effective_timezone: string;
 };
 
 export type PunchStatus = {
@@ -89,6 +117,8 @@ export type WeeklyTimesheet = {
   entries?: TimeEntry[];
   has_open_entry?: boolean;
   has_pending_edits?: boolean;
+  time_off?: TimeOffEntry[];
+  time_off_hours?: number;
 };
 
 export type TeamMemberLiveStatus =
@@ -96,7 +126,8 @@ export type TeamMemberLiveStatus =
   | "on_break"
   | "clocked_out"
   | "not_started"
-  | "forgot_to_punch";
+  | "forgot_to_punch"
+  | "on_pto";
 
 export type TeamLiveStatusRow = {
   user_email: string;
@@ -112,6 +143,8 @@ export type TeamLiveStatusRow = {
   timesheet_status: TimesheetStatus | null;
   team_id: string | null;
   team_name: string | null;
+  time_off_kind: TimeOffKind | null;
+  time_off_hours: number | null;
 };
 
 export type TimeClockTeam = {
