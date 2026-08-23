@@ -37,36 +37,60 @@ export function daysBetweenYmd(start: string, end: string): number {
   return Math.floor((e - s) / 86400000);
 }
 
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function ymd(year: number, month: number, day: number): string {
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+/** Absolute semi-monthly index: 24 periods per year, 0 = Jan 1–15. */
+function semiMonthlyIndex(year: number, month: number, half: 0 | 1): number {
+  return year * 24 + (month - 1) * 2 + half;
+}
+
+function fromSemiMonthlyIndex(index: number): { year: number; month: number; half: 0 | 1 } {
+  const year = Math.floor(index / 24);
+  const rem = index - year * 24;
+  return {
+    year,
+    month: Math.floor(rem / 2) + 1,
+    half: (rem % 2) as 0 | 1,
+  };
+}
+
+/** Semi-monthly: 1st–15th and 16th–last day of the month. */
 export function resolvePayPeriod(
-  anchorDate: string,
-  lengthDays: number,
   timezone: string,
   reference: Date = new Date(),
   offset = 0
 ): PayPeriodBounds {
-  const anchor = anchorDate.slice(0, 10);
   const refYmd = dateToYmd(reference, timezone);
-  const daysSinceAnchor = daysBetweenYmd(anchor, refYmd);
-  const periodIndex =
-    daysSinceAnchor >= 0
-      ? Math.floor(daysSinceAnchor / lengthDays)
-      : Math.ceil(daysSinceAnchor / lengthDays) - 1;
-  const adjustedIndex = periodIndex + offset;
-  const period_start = addDaysYmd(anchor, adjustedIndex * lengthDays);
-  const period_end = addDaysYmd(period_start, lengthDays - 1);
+  const [year, month, day] = refYmd.split("-").map(Number);
+  const half = (day <= 15 ? 0 : 1) as 0 | 1;
+  const { year: y, month: m, half: h } = fromSemiMonthlyIndex(
+    semiMonthlyIndex(year, month, half) + offset
+  );
+  const period_start = h === 0 ? ymd(y, m, 1) : ymd(y, m, 16);
+  const period_end = h === 0 ? ymd(y, m, 15) : ymd(y, m, lastDayOfMonth(y, m));
   const from = fromDatetimeLocalValue(`${period_start}T00:00`, timezone);
   const to = fromDatetimeLocalValue(`${addDaysYmd(period_end, 1)}T00:00`, timezone);
   return {
     period_start,
     period_end,
-    period_number: adjustedIndex + 1,
+    period_number: h + 1,
     from,
     to,
   };
 }
 
+export function payPeriodHalfLabel(bounds: Pick<PayPeriodBounds, "period_number">): string {
+  return bounds.period_number === 1 ? "1–15" : "16–end";
+}
+
 export function formatPayPeriodLabel(bounds: PayPeriodBounds): string {
-  return `Pay period #${bounds.period_number}: ${bounds.period_start} – ${bounds.period_end}`;
+  return `Pay period ${payPeriodHalfLabel(bounds)}: ${bounds.period_start} – ${bounds.period_end}`;
 }
 
 export function weekStartsOverlappingRange(

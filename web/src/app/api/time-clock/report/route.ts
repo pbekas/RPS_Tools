@@ -25,12 +25,11 @@ export async function GET(req: Request) {
   const userEmail = searchParams.get("userEmail");
   const access = await resolveTimeClockAccess(session!.user);
 
-  if (!from || !to) {
-    return NextResponse.json({ error: "from and to are required" }, { status: 400 });
-  }
-
   try {
     if (view === "team_days") {
+      if (!from || !to) {
+        return NextResponse.json({ error: "from and to are required" }, { status: 400 });
+      }
       if (!access.isManager) {
         return NextResponse.json({ error: "Manager access required" }, { status: 403 });
       }
@@ -47,25 +46,15 @@ export async function GET(req: Request) {
     const payPeriodPreset = searchParams.get("pay_period");
     let payPeriodBounds;
     if (payPeriodPreset === "current") {
-      payPeriodBounds = resolvePayPeriod(
-        settings.pay_period_anchor_date,
-        settings.pay_period_length_days,
-        settings.timezone,
-        new Date(),
-        0
-      );
+      payPeriodBounds = resolvePayPeriod(settings.timezone, new Date(), 0);
     } else if (payPeriodPreset === "previous") {
-      payPeriodBounds = resolvePayPeriod(
-        settings.pay_period_anchor_date,
-        settings.pay_period_length_days,
-        settings.timezone,
-        new Date(),
-        -1
-      );
+      payPeriodBounds = resolvePayPeriod(settings.timezone, new Date(), -1);
+    } else if (!from || !to) {
+      return NextResponse.json({ error: "from and to are required" }, { status: 400 });
     }
 
-    const reportFrom = payPeriodBounds?.from || from;
-    const reportTo = payPeriodBounds?.to || to;
+    const reportFrom = payPeriodBounds?.from || from!;
+    const reportTo = payPeriodBounds?.to || to!;
     const includeApproval = format === "pdf" || searchParams.get("approval") === "1";
 
     let reportUserEmail: string | null = null;
@@ -109,7 +98,7 @@ export async function GET(req: Request) {
       return new NextResponse(lines.join("\n"), {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="time-clock-${from.slice(0, 10)}-${to.slice(0, 10)}.csv"`,
+          "Content-Disposition": `attachment; filename="time-clock-${reportFrom.slice(0, 10)}-${reportTo.slice(0, 10)}.csv"`,
         },
       });
     }

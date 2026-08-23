@@ -44,12 +44,6 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
   const [remindTimesheetAfter, setRemindTimesheetAfter] = useState(
     settings.remind_timesheet_after
   );
-  const [payPeriodAnchorDate, setPayPeriodAnchorDate] = useState(
-    settings.pay_period_anchor_date
-  );
-  const [payPeriodLengthDays, setPayPeriodLengthDays] = useState(
-    String(settings.pay_period_length_days)
-  );
   const [defaultAnnualPtoHours, setDefaultAnnualPtoHours] = useState(
     String(settings.default_annual_pto_hours)
   );
@@ -74,8 +68,6 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
           remind_timesheet_enabled: remindTimesheetEnabled,
           remind_timesheet_weekday: Number(remindTimesheetWeekday),
           remind_timesheet_after: remindTimesheetAfter,
-          pay_period_anchor_date: payPeriodAnchorDate,
-          pay_period_length_days: Number(payPeriodLengthDays),
           default_annual_pto_hours: Number(defaultAnnualPtoHours),
         }),
       });
@@ -95,8 +87,8 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
       <div>
         <h2 className="font-display text-xl text-ink">Reminder settings</h2>
         <p className="mt-1 text-sm text-ink-soft">
-          Google Chat alerts use each team member&apos;s timezone (or the practice
-          default). Time off days are skipped for forgot-to-punch reminders.
+          Times use each team member&apos;s timezone (or the practice default).
+          Time off days are skipped for forgot-to-punch windows.
         </p>
       </div>
 
@@ -204,30 +196,11 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
 
       <fieldset className="space-y-3 rounded-lg border border-line p-4">
         <legend className="px-1 text-sm font-semibold text-ink">Pay period (Plane PDF)</legend>
+        <p className="text-sm text-ink">Semi-monthly: 1st–15th, then 16th–last day of the month.</p>
         <p className="text-xs text-ink-soft">
-          Biweekly pay periods are calculated from the anchor date. Reports can preset
-          to the current or previous pay period for reimbursement exports.
+          Reports can preset to the current or previous pay period for reimbursement
+          exports. February uses the 28th or 29th as the last day.
         </p>
-        <label className="block text-sm">
-          <span className="font-semibold text-ink-soft">Anchor date (start of pay period #1)</span>
-          <input
-            type="date"
-            value={payPeriodAnchorDate}
-            onChange={(e) => setPayPeriodAnchorDate(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-line px-3 py-2"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="font-semibold text-ink-soft">Length (days)</span>
-          <input
-            type="number"
-            min={7}
-            max={31}
-            value={payPeriodLengthDays}
-            onChange={(e) => setPayPeriodLengthDays(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-line px-3 py-2"
-          />
-        </label>
       </fieldset>
 
       <fieldset className="space-y-3 rounded-lg border border-line p-4">

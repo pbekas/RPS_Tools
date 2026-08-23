@@ -145,7 +145,9 @@ function drawPayPeriodSummary(
   const periodLabel = period
     ? `${formatDateYmd(period.period_start, tz)} – ${formatDateYmd(period.period_end, tz)}`
     : `${formatDate(report.from, tz)} – ${formatDate(report.to, tz)}`;
-  const periodNumber = period ? `Pay Period #${period.period_number}` : "Custom period";
+  const periodNumber = period
+    ? `Pay period ${period.period_number === 1 ? "1–15" : "16–end of month"}`
+    : "Custom period";
 
   doc.font("Helvetica-Bold").fontSize(20).fillColor("#142433");
   doc.text("Pay Period Timesheet Report", { align: "left" });

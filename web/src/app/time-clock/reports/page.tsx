@@ -7,11 +7,7 @@ export default async function TimeClockReportsPage() {
   const { access } = await requireTimeClockManager();
 
   const settings = await getTimeClockSettings();
-  const currentPeriod = resolvePayPeriod(
-    settings.pay_period_anchor_date,
-    settings.pay_period_length_days,
-    settings.timezone
-  );
+  const currentPeriod = resolvePayPeriod(settings.timezone);
   const report = await buildTimeClockReport({
     from: currentPeriod.from,
     to: currentPeriod.to,
@@ -30,14 +26,12 @@ export default async function TimeClockReportsPage() {
       </p>
       <div className="mt-6">
         <TimeClockReportPanel
-          initialFrom={currentPeriod.from}
-          initialTo={currentPeriod.to}
+          initialFrom={currentPeriod.period_start}
+          initialTo={currentPeriod.period_end}
           initialReport={report}
           teamMode
           initialPreset="current"
           payPeriodConfig={{
-            anchorDate: settings.pay_period_anchor_date,
-            lengthDays: settings.pay_period_length_days,
             timezone: settings.timezone,
           }}
         />

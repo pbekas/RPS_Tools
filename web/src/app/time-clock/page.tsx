@@ -36,8 +36,6 @@ export default async function TimeClockPage() {
         Clock in and out for your shift. Use clock out for breaks and lunches, then clock back in.
       </p>
       <div className="mt-6 space-y-6">
-        <TimeClockProfilePanel initialProfile={profile} />
-        <TimeOffBankCard bank={bank} linkToHistory />
         <TimeClockHome
           initialStatus={status}
           initialEntries={entries}
@@ -46,6 +44,8 @@ export default async function TimeClockPage() {
           from={from}
           to={to}
         />
+        <TimeClockProfilePanel initialProfile={profile} />
+        <TimeOffBankCard bank={bank} linkToHistory />
       </div>
     </main>
   );

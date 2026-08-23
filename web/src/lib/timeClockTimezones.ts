@@ -7,6 +7,7 @@ export const TIME_CLOCK_TIMEZONES = [
   "America/Anchorage",
   "Pacific/Honolulu",
   "America/Puerto_Rico",
+  "Asia/Manila",
 ] as const;
 
 export type TimeClockTimezone = (typeof TIME_CLOCK_TIMEZONES)[number];

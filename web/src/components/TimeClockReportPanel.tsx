@@ -11,8 +11,6 @@ import {
 } from "@/lib/timeClockPayPeriod";
 
 type PayPeriodConfig = {
-  anchorDate: string;
-  lengthDays: number;
   timezone: string;
 };
 
@@ -51,8 +49,6 @@ export function TimeClockReportPanel({
   const activePayPeriod = useMemo((): PayPeriodBounds | null => {
     if (preset === "custom") return null;
     return resolvePayPeriod(
-      payPeriodConfig.anchorDate,
-      payPeriodConfig.lengthDays,
       payPeriodConfig.timezone,
       new Date(),
       preset === "previous" ? -1 : 0
@@ -64,8 +60,6 @@ export function TimeClockReportPanel({
       setPreset(next);
       if (next === "custom") return;
       const bounds = resolvePayPeriod(
-        payPeriodConfig.anchorDate,
-        payPeriodConfig.lengthDays,
         payPeriodConfig.timezone,
         new Date(),
         next === "previous" ? -1 : 0
@@ -200,7 +194,7 @@ export function TimeClockReportPanel({
           <div className="rounded-xl border border-line bg-white/90 px-4 py-4">
             <p className="text-sm text-ink-soft">
               {report.pay_period
-                ? `Pay period #${report.pay_period.period_number} total hours`
+                ? `Pay period ${report.pay_period.period_number === 1 ? "1–15" : "16–end"} total hours`
                 : "Total hours for period"}
             </p>
             <p className="font-display text-3xl text-ink">{formatHours(report.total_hours)}</p>
