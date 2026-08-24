@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import type { TimeClockSettings } from "@/lib/timeClockTypes";
-import { TIME_CLOCK_TIMEZONES } from "@/lib/timeClockTimezones";
+import {
+  timeClockTimezoneLabel,
+  timeClockTimezoneOptions,
+} from "@/lib/timeClockTimezones";
 
 type Props = {
   initialSettings: TimeClockSettings;
@@ -233,9 +236,9 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
           onChange={(e) => setTimezone(e.target.value)}
           className="mt-1 w-full rounded-lg border border-line px-3 py-2"
         >
-          {TIME_CLOCK_TIMEZONES.map((tz) => (
+          {timeClockTimezoneOptions(timezone).map((tz) => (
             <option key={tz} value={tz}>
-              {tz}
+              {timeClockTimezoneLabel(tz)}
             </option>
           ))}
         </select>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { resolveContractAccess } from "@/lib/contractAccess";
 import { ContractsSearch } from "@/components/ContractsSearch";
 import {
@@ -12,6 +12,7 @@ import {
   grantedToolsets,
   isAdmin,
   isSupervisor,
+  type ToolsetId,
 } from "@/lib/permissions";
 
 function navClass(active: boolean) {
@@ -21,6 +22,7 @@ function navClass(active: boolean) {
 export function AppNav() {
   const { data } = useSession();
   const pathname = usePathname();
+  const router = useRouter();
   if (!data?.user || pathname === "/login") return null;
 
   const admin = isAdmin(data.user);
@@ -47,31 +49,40 @@ export function AppNav() {
             Relevium <span className="text-accent">Tools</span>
           </Link>
 
-          {toolsets.length > 0 ? (
-            <div
-              className="flex items-center rounded-xl border border-line bg-paper/80 p-0.5 text-sm font-semibold"
-              role="group"
-              aria-label="Tool set"
-            >
-              {toolsets.map((id) => {
-                const set = TOOLSETS[id];
-                return (
-                  <Link
-                    key={id}
-                    href={set.href}
-                    className={`rounded-lg px-3 py-1.5 transition ${
-                      current === id
-                        ? "bg-accent text-white shadow-sm"
-                        : "text-ink-soft hover:text-ink"
-                    }`}
-                    aria-current={current === id ? "page" : undefined}
-                    title={set.description}
-                  >
-                    {set.label}
-                  </Link>
-                );
-              })}
-            </div>
+          {toolsets.length === 1 ? (
+            <span className="rounded-xl border border-line bg-white px-3 py-1.5 text-sm font-semibold text-accent">
+              {TOOLSETS[toolsets[0]].label}
+            </span>
+          ) : toolsets.length > 1 ? (
+            <label className="relative inline-flex shrink-0 items-center">
+              <span className="sr-only">Tool set</span>
+              <select
+                aria-label="Tool set"
+                value={current && toolsets.includes(current) ? current : ""}
+                onChange={(e) => {
+                  const next = TOOLSETS[e.target.value as ToolsetId];
+                  if (next) router.push(next.href);
+                }}
+                className="cursor-pointer appearance-none rounded-xl border border-line bg-white py-1.5 pl-3 pr-8 text-sm font-semibold text-ink hover:border-accent/40 focus:border-accent focus:outline-none"
+              >
+                {current && toolsets.includes(current) ? null : (
+                  <option value="" disabled>
+                    Tools
+                  </option>
+                )}
+                {toolsets.map((id) => (
+                  <option key={id} value={id} title={TOOLSETS[id].description}>
+                    {TOOLSETS[id].label}
+                  </option>
+                ))}
+              </select>
+              <span
+                className="pointer-events-none absolute right-2.5 text-[10px] leading-none text-ink-soft"
+                aria-hidden
+              >
+                ▾
+              </span>
+            </label>
           ) : null}
 
           {current === "call_qa" ? (
@@ -159,16 +170,14 @@ export function AppNav() {
                   >
                     Audit
                   </Link>
-                  {admin ? (
-                    <Link
-                      href="/time-clock/settings"
-                      className={navClass(pathname.startsWith("/time-clock/settings"))}
-                    >
-                      Settings
-                    </Link>
-                  ) : null}
                 </>
               ) : null}
+              <Link
+                href="/time-clock/settings"
+                className={navClass(pathname.startsWith("/time-clock/settings"))}
+              >
+                Settings
+              </Link>
             </nav>
           ) : null}
 

@@ -4,7 +4,12 @@ import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
 import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
-import type { TimeOffBank, TimeOffEntry, TimeOffKind } from "@/lib/timeClockTypes";
+import type {
+  TimeOffBank,
+  TimeOffEntry,
+  TimeOffKind,
+  TimeOffStatus,
+} from "@/lib/timeClockTypes";
 import {
   BANK_DEDUCTING_KINDS,
   deductsFromTimeOffBank,
@@ -25,6 +30,11 @@ export function isTimeOffKind(value: string): value is TimeOffKind {
   return TIME_OFF_KINDS.includes(value as TimeOffKind);
 }
 
+/** PTO banks apply to employees only, not Admin accounts. */
+export function roleHasTimeOffBank(role: string | null | undefined): boolean {
+  return (role || "").trim().toLowerCase() !== "admin";
+}
+
 export { deductsFromTimeOffBank };
 
 async function getDefaultAnnualPtoHours(): Promise<number> {
@@ -36,10 +46,17 @@ async function getDefaultAnnualPtoHours(): Promise<number> {
   return Number(rows[0]?.default_annual_pto_hours ?? 80);
 }
 
+const ENTRY_SELECT = `e.id, e.user_email, e.entry_date, e.kind, e.hours::float8 AS hours, e.notes,
+            e.created_by, e.created_at, e.updated_at,
+            e.status, e.reviewed_by, e.reviewed_at, e.review_notes,
+            u.name AS user_name, rev.name AS reviewer_name`;
+
 function entryFromRow(row: QueryResultRow): TimeOffEntry {
+  const status = String(row.status || "approved") as TimeOffStatus;
   return {
     id: String(row.id),
     user_email: String(row.user_email),
+    user_name: row.user_name ? String(row.user_name) : undefined,
     entry_date:
       row.entry_date instanceof Date
         ? row.entry_date.toISOString().slice(0, 10)
@@ -47,7 +64,14 @@ function entryFromRow(row: QueryResultRow): TimeOffEntry {
     kind: String(row.kind) as TimeOffKind,
     hours: Number(row.hours),
     notes: String(row.notes || ""),
+    status: ["pending", "approved", "denied"].includes(status) ? status : "approved",
     created_by: row.created_by ? String(row.created_by) : null,
+    reviewed_by: row.reviewed_by ? String(row.reviewed_by) : null,
+    reviewer_name: row.reviewer_name ? String(row.reviewer_name) : undefined,
+    reviewed_at: row.reviewed_at
+      ? new Date(row.reviewed_at as Date).toISOString()
+      : null,
+    review_notes: String(row.review_notes || ""),
     created_at: new Date(row.created_at as Date).toISOString(),
     updated_at: new Date(row.updated_at as Date).toISOString(),
   };
@@ -64,16 +88,70 @@ export async function listTimeOffEntries(
 ): Promise<TimeOffEntry[]> {
   requirePostgres();
   const rows = await query(
-    `SELECT id, user_email, entry_date, kind, hours::float8 AS hours, notes,
-            created_by, created_at, updated_at
-     FROM time_off_entries
-     WHERE user_email = $1
-       AND entry_date >= $2::date
-       AND entry_date <= $3::date
-     ORDER BY entry_date ASC`,
+    `SELECT ${ENTRY_SELECT}
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     WHERE e.user_email = $1
+       AND e.entry_date >= $2::date
+       AND e.entry_date <= $3::date
+     ORDER BY e.entry_date ASC`,
     [userEmail.toLowerCase(), fromDate, toDate]
   );
   return rows.map(entryFromRow);
+}
+
+export async function listPendingTimeOffRequests(
+  userEmails?: string[] | null
+): Promise<TimeOffEntry[]> {
+  requirePostgres();
+  const scope = allowlist(userEmails);
+  if (scope === "none") return [];
+  const params: unknown[] = [];
+  const emailClause =
+    scope === "all"
+      ? ""
+      : `AND e.user_email = ANY($1::citext[])`;
+  if (scope !== "all") params.push(scope.map((e) => String(e).toLowerCase()));
+  const rows = await query(
+    `SELECT ${ENTRY_SELECT}
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     WHERE e.status = 'pending'
+       ${emailClause}
+     ORDER BY e.entry_date ASC, u.name ASC`,
+    params
+  );
+  return rows.map(entryFromRow);
+}
+
+export async function getTimeOffEntryById(id: string): Promise<TimeOffEntry | null> {
+  requirePostgres();
+  const rows = await query(
+    `SELECT ${ENTRY_SELECT}
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     WHERE e.id = $1`,
+    [id]
+  );
+  return rows[0] ? entryFromRow(rows[0]) : null;
+}
+
+async function findTimeOffOnDate(
+  userEmail: string,
+  entryDate: string
+): Promise<TimeOffEntry | null> {
+  const rows = await query(
+    `SELECT ${ENTRY_SELECT}
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     WHERE e.user_email = $1 AND e.entry_date = $2::date`,
+    [userEmail.toLowerCase(), entryDate]
+  );
+  return rows[0] ? entryFromRow(rows[0]) : null;
 }
 
 export async function getTimeOffForDate(
@@ -81,14 +159,9 @@ export async function getTimeOffForDate(
   entryDate: string
 ): Promise<TimeOffEntry | null> {
   requirePostgres();
-  const rows = await query(
-    `SELECT id, user_email, entry_date, kind, hours::float8 AS hours, notes,
-            created_by, created_at, updated_at
-     FROM time_off_entries
-     WHERE user_email = $1 AND entry_date = $2::date`,
-    [userEmail.toLowerCase(), entryDate]
-  );
-  return rows[0] ? entryFromRow(rows[0]) : null;
+  const entry = await findTimeOffOnDate(userEmail, entryDate);
+  if (!entry || entry.status !== "approved") return null;
+  return entry;
 }
 
 async function sumUsedBankHours(
@@ -108,6 +181,7 @@ async function sumUsedBankHours(
      WHERE user_email = $1
        AND EXTRACT(YEAR FROM entry_date)::int = $2
        AND kind = ANY($3::text[])
+       AND status IN ('pending', 'approved')
        ${excludeClause}`,
     params
   );
@@ -129,7 +203,7 @@ export async function batchTimeOffBankSummaries(
   if (!emails.length) return result;
 
   const defaultAllotment = await getDefaultAnnualPtoHours();
-  const [bankRows, usedRows] = await Promise.all([
+  const [bankRows, usedRows, roleRows] = await Promise.all([
     query<{ user_email: string; allotted_hours: number }>(
       `SELECT user_email, allotted_hours::float8 AS allotted_hours
        FROM time_off_banks
@@ -142,11 +216,22 @@ export async function batchTimeOffBankSummaries(
        WHERE user_email = ANY($1::citext[])
          AND EXTRACT(YEAR FROM entry_date)::int = $2
          AND kind = ANY($3::text[])
+         AND status IN ('pending', 'approved')
        GROUP BY user_email`,
       [emails, year, BANK_DEDUCTING_KINDS]
     ),
+    query<{ email: string; role: string }>(
+      `SELECT email, role FROM users WHERE email = ANY($1::citext[])`,
+      [emails]
+    ),
   ]);
 
+  const roles = new Map(
+    roleRows.map((row) => [
+      String(row.email).toLowerCase(),
+      String(row.role || "Agent"),
+    ])
+  );
   const customAllotments = new Map(
     bankRows.map((row) => [String(row.user_email).toLowerCase(), Number(row.allotted_hours)])
   );
@@ -155,6 +240,14 @@ export async function batchTimeOffBankSummaries(
   );
 
   for (const email of emails) {
+    if (!roleHasTimeOffBank(roles.get(email))) {
+      result.set(email, {
+        allotted_hours: 0,
+        used_hours: 0,
+        remaining_hours: 0,
+      });
+      continue;
+    }
     const allotted = customAllotments.get(email) ?? defaultAllotment;
     const used = usedByEmail.get(email) ?? 0;
     result.set(email, {
@@ -175,8 +268,8 @@ export async function getTimeOffBank(
   const email = userEmail.toLowerCase();
 
   const [userRows, bankRows, used, defaultAllotment] = await Promise.all([
-    query<{ email: string; name: string }>(
-      `SELECT email, name FROM users WHERE email = $1`,
+    query<{ email: string; name: string; role: string }>(
+      `SELECT email, name, role FROM users WHERE email = $1`,
       [email]
     ),
     query(
@@ -190,6 +283,21 @@ export async function getTimeOffBank(
   ]);
 
   if (!userRows[0]) throw new Error("User not found");
+
+  const eligible = roleHasTimeOffBank(userRows[0].role);
+  if (!eligible) {
+    return {
+      user_email: email,
+      user_name: String(userRows[0].name || email),
+      year: bankYear,
+      allotted_hours: 0,
+      used_hours: 0,
+      remaining_hours: 0,
+      is_default_allotment: true,
+      notes: "",
+      eligible: false,
+    };
+  }
 
   const hasCustom = Boolean(bankRows[0]);
   const allotted = hasCustom
@@ -206,6 +314,7 @@ export async function getTimeOffBank(
     remaining_hours: remaining,
     is_default_allotment: !hasCustom,
     notes: hasCustom ? String(bankRows[0].notes || "") : "",
+    eligible: true,
   };
 }
 
@@ -230,6 +339,9 @@ export async function setTimeOffBankAllotment(input: {
 
   const email = input.userEmail.toLowerCase();
   const before = await getTimeOffBank(email, input.year);
+  if (!before.eligible) {
+    throw new Error("PTO banks are only for employees, not admins");
+  }
   if (input.allottedHours + 0.001 < before.used_hours) {
     throw new Error(
       `Cannot set allotment below hours already used (${before.used_hours}h used in ${input.year})`
@@ -283,19 +395,19 @@ export async function listTimeOffBanks(
   requirePostgres();
   if (allowlist(userEmails) === "none") return [];
   const emailFilter = userEmails?.length
-    ? `AND u.email = ANY($2::citext[])`
+    ? `AND u.email = ANY($1::citext[])`
     : "";
-  const params: unknown[] = [year];
-  if (userEmails?.length) {
-    params.push(userEmails.map((e) => e.toLowerCase()));
-  }
+  const params: unknown[] = userEmails?.length
+    ? [userEmails.map((e) => e.toLowerCase())]
+    : [];
 
   const users = await query<{ email: string; name: string }>(
     `SELECT u.email, u.name
      FROM users u
      WHERE u.active = true
+       AND lower(u.role::text) <> 'admin'
        AND (
-         u.role IN ('Admin', 'Supervisor')
+         u.role IN ('Supervisor')
          OR EXISTS (
            SELECT 1 FROM unnest(COALESCE(u.modules, ARRAY[]::text[])) AS m(mod)
            WHERE m.mod = 'time_clock'
@@ -323,6 +435,8 @@ async function assertBankAllowsHours(input: {
   if (!deductsFromTimeOffBank(input.kind)) return;
 
   const year = yearFromDate(input.entryDate);
+  const bank = await getTimeOffBank(input.userEmail, year);
+  if (!bank.eligible) return;
   const existingDeduct =
     input.existing && deductsFromTimeOffBank(input.existing.kind)
       ? input.existing.hours
@@ -332,7 +446,6 @@ async function assertBankAllowsHours(input: {
     year,
     input.existing?.id || null
   );
-  const bank = await getTimeOffBank(input.userEmail, year);
   const available = bank.allotted_hours - usedWithout;
   if (input.hours > available + 0.001) {
     throw new Error(
@@ -351,6 +464,7 @@ export async function upsertTimeOffEntry(input: {
   hours: number;
   notes?: string;
   actorEmail: string;
+  autoApprove?: boolean;
 }): Promise<TimeOffEntry> {
   requirePostgres();
   if (!isTimeOffKind(input.kind)) {
@@ -360,7 +474,12 @@ export async function upsertTimeOffEntry(input: {
     throw new Error("Hours must be between 0 and 24");
   }
 
-  const existing = await getTimeOffForDate(input.userEmail, input.entryDate);
+  const existing = await findTimeOffOnDate(input.userEmail, input.entryDate);
+  if (existing?.status === "approved" && !input.autoApprove) {
+    throw new Error(
+      "This day is already approved. Ask a supervisor or admin to change it."
+    );
+  }
   await assertBankAllowsHours({
     userEmail: input.userEmail,
     entryDate: input.entryDate,
@@ -369,16 +488,24 @@ export async function upsertTimeOffEntry(input: {
     existing,
   });
 
-  const rows = await query(
-    `INSERT INTO time_off_entries (user_email, entry_date, kind, hours, notes, created_by)
-     VALUES ($1, $2::date, $3, $4, $5, $6)
+  const status: TimeOffStatus = input.autoApprove ? "approved" : "pending";
+  const reviewedBy = input.autoApprove ? input.actorEmail.toLowerCase() : null;
+  const rows = await query<{ id: string }>(
+    `INSERT INTO time_off_entries (
+       user_email, entry_date, kind, hours, notes, created_by,
+       status, reviewed_by, reviewed_at, review_notes
+     )
+     VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, CASE WHEN $7 = 'approved' THEN now() ELSE NULL END, '')
      ON CONFLICT (user_email, entry_date) DO UPDATE
        SET kind = EXCLUDED.kind,
            hours = EXCLUDED.hours,
            notes = EXCLUDED.notes,
+           status = EXCLUDED.status,
+           reviewed_by = EXCLUDED.reviewed_by,
+           reviewed_at = EXCLUDED.reviewed_at,
+           review_notes = '',
            updated_at = now()
-     RETURNING id, user_email, entry_date, kind, hours::float8 AS hours, notes,
-               created_by, created_at, updated_at`,
+     RETURNING id`,
     [
       input.userEmail.toLowerCase(),
       input.entryDate,
@@ -386,9 +513,12 @@ export async function upsertTimeOffEntry(input: {
       input.hours,
       (input.notes || "").trim(),
       input.actorEmail.toLowerCase(),
+      status,
+      reviewedBy,
     ]
   );
-  const saved = entryFromRow(rows[0]);
+  const saved = await getTimeOffEntryById(String(rows[0].id));
+  if (!saved) throw new Error("Failed to save time off request");
   const teamId = await getTeamIdForUser(input.userEmail);
   const bankAfter = deductsFromTimeOffBank(saved.kind)
     ? await getTimeOffBank(input.userEmail, yearFromDate(saved.entry_date))
@@ -397,7 +527,7 @@ export async function upsertTimeOffEntry(input: {
     actorEmail: input.actorEmail,
     subjectEmail: input.userEmail,
     teamId: teamId || null,
-    action: existing ? "time_off.updated" : "time_off.created",
+    action: existing ? "time_off.updated" : "time_off.requested",
     entityType: "time_off",
     entityId: saved.id,
     before: existing
@@ -406,6 +536,7 @@ export async function upsertTimeOffEntry(input: {
           kind: existing.kind,
           hours: existing.hours,
           notes: existing.notes,
+          status: existing.status,
         }
       : {},
     after: {
@@ -413,6 +544,60 @@ export async function upsertTimeOffEntry(input: {
       kind: saved.kind,
       hours: saved.hours,
       notes: saved.notes,
+      status: saved.status,
+      bank_remaining: bankAfter?.remaining_hours,
+    },
+  });
+  return saved;
+}
+
+export async function reviewTimeOffEntry(input: {
+  id: string;
+  approve: boolean;
+  reviewerEmail: string;
+  notes?: string;
+}): Promise<TimeOffEntry> {
+  requirePostgres();
+  const existing = await getTimeOffEntryById(input.id);
+  if (!existing) throw new Error("Time off request not found");
+  if (existing.status !== "pending") {
+    throw new Error("This request has already been reviewed");
+  }
+  if (existing.user_email.toLowerCase() === input.reviewerEmail.toLowerCase()) {
+    throw new Error("You cannot approve or deny your own time-off request");
+  }
+  await query(
+    `UPDATE time_off_entries
+     SET status = $2,
+         reviewed_by = $3,
+         reviewed_at = now(),
+         review_notes = $4,
+         updated_at = now()
+     WHERE id = $1`,
+    [
+      input.id,
+      input.approve ? "approved" : "denied",
+      input.reviewerEmail.toLowerCase(),
+      (input.notes || "").trim(),
+    ]
+  );
+  const saved = await getTimeOffEntryById(input.id);
+  if (!saved) throw new Error("Time off request not found");
+  const teamId = await getTeamIdForUser(existing.user_email);
+  const bankAfter = deductsFromTimeOffBank(saved.kind)
+    ? await getTimeOffBank(existing.user_email, yearFromDate(saved.entry_date))
+    : null;
+  await logTimeClockAudit({
+    actorEmail: input.reviewerEmail,
+    subjectEmail: existing.user_email,
+    teamId: teamId || null,
+    action: input.approve ? "time_off.approved" : "time_off.denied",
+    entityType: "time_off",
+    entityId: saved.id,
+    before: { status: existing.status, hours: existing.hours, kind: existing.kind },
+    after: {
+      status: saved.status,
+      review_notes: saved.review_notes,
       bank_remaining: bankAfter?.remaining_hours,
     },
   });
@@ -422,18 +607,19 @@ export async function upsertTimeOffEntry(input: {
 export async function deleteTimeOffEntry(
   id: string,
   userEmail: string,
-  actorEmail: string
+  actorEmail: string,
+  opts?: { asManager?: boolean }
 ): Promise<void> {
   requirePostgres();
-  const rows = await query(
-    `SELECT id, user_email, entry_date, kind, hours::float8 AS hours, notes,
-            created_by, created_at, updated_at
-     FROM time_off_entries
-     WHERE id = $1 AND user_email = $2`,
-    [id, userEmail.toLowerCase()]
-  );
-  if (!rows[0]) throw new Error("Time off entry not found");
-  const existing = entryFromRow(rows[0]);
+  const existing = await getTimeOffEntryById(id);
+  if (!existing || existing.user_email.toLowerCase() !== userEmail.toLowerCase()) {
+    throw new Error("Time off entry not found");
+  }
+  if (existing.status === "approved" && !opts?.asManager) {
+    throw new Error(
+      "Approved time off can only be removed by a supervisor or admin"
+    );
+  }
   await query(`DELETE FROM time_off_entries WHERE id = $1`, [id]);
   const teamId = await getTeamIdForUser(userEmail);
   const bankAfter = deductsFromTimeOffBank(existing.kind)

@@ -2,31 +2,25 @@ import { requireModule } from "@/lib/requireAccess";
 import {
   getEffectiveTimezone,
   getPunchStatus,
-  getTimeClockProfile,
   getTimeClockSettings,
   listTimeEntries,
 } from "@/lib/timeClockDb";
-import { getTimeOffBank } from "@/lib/timeOffDb";
 import { startOfDayIso, addDaysIso } from "@/lib/timeClockFormat";
 import { TimeClockHome } from "@/components/TimeClockHome";
-import { TimeClockProfilePanel } from "@/components/TimeClockProfilePanel";
-import { TimeOffBankCard } from "@/components/TimeOffBankCard";
 
 export default async function TimeClockPage() {
   const session = await requireModule("time_clock");
   const email = session.user.email!.toLowerCase();
-  const [settings, profile, userTz] = await Promise.all([
+  const [settings, userTz] = await Promise.all([
     getTimeClockSettings(),
-    getTimeClockProfile(email),
     getEffectiveTimezone(email),
   ]);
   const from = startOfDayIso(new Date(), userTz);
   const to = addDaysIso(from, 1, userTz);
 
-  const [status, { entries }, bank] = await Promise.all([
+  const [status, { entries }] = await Promise.all([
     getPunchStatus(email),
     listTimeEntries({ userEmail: email, from, to, limit: 50 }),
-    getTimeOffBank(email, new Date().getFullYear()),
   ]);
 
   return (
@@ -44,8 +38,6 @@ export default async function TimeClockPage() {
           from={from}
           to={to}
         />
-        <TimeClockProfilePanel initialProfile={profile} />
-        <TimeOffBankCard bank={bank} linkToHistory />
       </div>
     </main>
   );

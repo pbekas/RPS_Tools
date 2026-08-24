@@ -6,6 +6,7 @@ import { weekRangeFromStart } from "@/lib/timeClockFormat";
 import {
   getTimeOffBank,
   isTimeOffKind,
+  listPendingTimeOffRequests,
   listTimeOffEntries,
   upsertTimeOffEntry,
 } from "@/lib/timeOffDb";
@@ -18,8 +19,25 @@ export async function GET(req: Request) {
   const weekStart = searchParams.get("week_start");
   const fromDate = searchParams.get("from");
   const toDate = searchParams.get("to");
+  const pending = searchParams.get("pending") === "1";
   const requestedUser = searchParams.get("userEmail");
   const access = await resolveTimeClockAccess(session!.user!);
+
+  if (pending) {
+    if (!access.isManager) {
+      return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+    }
+    try {
+      const entries = await listPendingTimeOffRequests(access.visibleUserEmails);
+      return NextResponse.json({ entries });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Failed to load time off" },
+        { status: 400 }
+      );
+    }
+  }
+
   const userEmail =
     access.isManager && requestedUser
       ? requestedUser.toLowerCase()
@@ -93,6 +111,7 @@ export async function POST(req: Request) {
       hours,
       notes,
       actorEmail: session!.user!.email!,
+      autoApprove: access.isManager && userEmail !== session!.user!.email!.toLowerCase(),
     });
     const bank = await getTimeOffBank(userEmail, Number(entryDate.slice(0, 4)));
     return NextResponse.json({ entry, bank });

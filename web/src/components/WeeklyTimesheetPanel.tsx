@@ -179,7 +179,7 @@ export function WeeklyTimesheetPanel({
         weekEnd={timesheet.week_end}
         initialEntries={timesheet.time_off || []}
         initialBank={bank}
-        canEdit={canEdit}
+        canEdit
         onChanged={() => loadWeek(weekStart)}
       />
     </div>

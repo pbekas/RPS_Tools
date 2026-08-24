@@ -40,14 +40,22 @@ export function deductsFromTimeOffBank(kind: TimeOffKind): boolean {
   return BANK_DEDUCTING_KINDS.includes(kind);
 }
 
+export type TimeOffStatus = "pending" | "approved" | "denied";
+
 export type TimeOffEntry = {
   id: string;
   user_email: string;
+  user_name?: string;
   entry_date: string;
   kind: TimeOffKind;
   hours: number;
   notes: string;
+  status: TimeOffStatus;
   created_by: string | null;
+  reviewed_by: string | null;
+  reviewer_name?: string;
+  reviewed_at: string | null;
+  review_notes: string;
   created_at: string;
   updated_at: string;
 };
@@ -61,6 +69,8 @@ export type TimeOffBank = {
   remaining_hours: number;
   is_default_allotment: boolean;
   notes: string;
+  /** False for Admin users — PTO banks are employees only. */
+  eligible: boolean;
 };
 
 export type TimeClockSettings = {
@@ -182,14 +192,10 @@ export type TeamLiveStatusRow = {
   last_punch_at: string | null;
   last_punch_label: string | null;
   clocked_in_since: string | null;
-  timesheet_status: TimesheetStatus | null;
   team_id: string | null;
   team_name: string | null;
   time_off_kind: TimeOffKind | null;
   time_off_hours: number | null;
-  time_off_bank_remaining: number;
-  time_off_bank_used: number;
-  time_off_bank_allotted: number;
 };
 
 export type TimeClockTeam = {

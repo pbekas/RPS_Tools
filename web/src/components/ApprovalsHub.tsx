@@ -1,23 +1,35 @@
 "use client";
 
 import { useState } from "react";
-import type { TimeClockSettings, TimeEntryEditRequest, WeeklyTimesheet } from "@/lib/timeClockTypes";
+import type {
+  TimeClockSettings,
+  TimeEntryEditRequest,
+  TimeOffEntry,
+  WeeklyTimesheet,
+} from "@/lib/timeClockTypes";
 import { EditApprovals } from "@/components/EditApprovals";
 import { TimesheetApprovals } from "@/components/TimesheetApprovals";
+import { TimeOffApprovals } from "@/components/TimeOffApprovals";
 
 type Props = {
   initialEditRequests: TimeEntryEditRequest[];
   initialTimesheets: WeeklyTimesheet[];
+  initialTimeOffRequests: TimeOffEntry[];
   settings: TimeClockSettings;
 };
 
 export function ApprovalsHub({
   initialEditRequests,
   initialTimesheets,
+  initialTimeOffRequests,
   settings,
 }: Props) {
-  const [tab, setTab] = useState<"timesheets" | "edits">(
-    initialTimesheets.length ? "timesheets" : "edits"
+  const [tab, setTab] = useState<"timesheets" | "edits" | "timeoff">(
+    initialTimeOffRequests.length
+      ? "timeoff"
+      : initialTimesheets.length
+        ? "timesheets"
+        : "edits"
   );
 
   return (
@@ -43,12 +55,24 @@ export function ApprovalsHub({
           Time edits
           {initialEditRequests.length ? ` (${initialEditRequests.length})` : ""}
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("timeoff")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+            tab === "timeoff" ? "bg-white text-accent shadow-sm" : "text-ink-soft"
+          }`}
+        >
+          Time off
+          {initialTimeOffRequests.length ? ` (${initialTimeOffRequests.length})` : ""}
+        </button>
       </div>
 
       {tab === "timesheets" ? (
         <TimesheetApprovals initialTimesheets={initialTimesheets} settings={settings} />
-      ) : (
+      ) : tab === "edits" ? (
         <EditApprovals initialRequests={initialEditRequests} settings={settings} />
+      ) : (
+        <TimeOffApprovals initialRequests={initialTimeOffRequests} />
       )}
     </div>
   );

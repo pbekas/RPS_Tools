@@ -25,7 +25,6 @@ import {
   weekStartDate,
 } from "@/lib/timeClockFormat";
 import {
-  batchTimeOffBankSummaries,
   getTimeOffForDate,
   listTimeOffEntries,
 } from "@/lib/timeOffDb";
@@ -1228,8 +1227,9 @@ export async function getWeeklyTimesheetDetail(
     listTimeOffEntries(userEmail, weekStart, week_end),
   ]);
 
+  const approvedTimeOff = timeOff.filter((entry) => entry.status === "approved");
   const totalHours = entries.reduce((sum, e) => sum + entryHours(e), 0);
-  const timeOffHours = timeOff.reduce((sum, e) => sum + e.hours, 0);
+  const timeOffHours = approvedTimeOff.reduce((sum, e) => sum + e.hours, 0);
   const openEntry = entries.some((e) => !e.clock_out);
   const pendingEdits = await query<{ count: number }>(
     `SELECT COUNT(*)::int AS count
@@ -1254,7 +1254,7 @@ export async function getWeeklyTimesheetDetail(
     week_end,
     total_hours: totalHours,
     entries,
-    time_off: timeOff,
+    time_off: approvedTimeOff,
     time_off_hours: timeOffHours,
     has_open_entry: openEntry,
     has_pending_edits: Number(pendingEdits[0]?.count || 0) > 0,
@@ -1408,8 +1408,9 @@ export async function listTeamLiveStatus(
     timezone: string | null;
     team_id: string | null;
     team_name: string | null;
+    role: string;
   }>(
-    `SELECT u.email, u.name, u.timezone, t.id AS team_id, t.name AS team_name
+    `SELECT u.email, u.name, u.timezone, u.role, t.id AS team_id, t.name AS team_name
      FROM users u
      LEFT JOIN time_clock_team_members m ON m.user_email = u.email
      LEFT JOIN time_clock_teams t ON t.id = m.team_id
@@ -1427,11 +1428,6 @@ export async function listTeamLiveStatus(
   );
 
   const now = new Date();
-  const bankYear = now.getFullYear();
-  const bankByEmail = await batchTimeOffBankSummaries(
-    users.map((u) => String(u.email)),
-    bankYear
-  );
   const rows: TeamLiveStatusRow[] = [];
 
   for (const user of users) {
@@ -1482,8 +1478,6 @@ export async function listTeamLiveStatus(
       lastPunchAt = clockOut || clockIn;
     }
 
-    const weekStart = weekStartDate(now, tz);
-    const timesheet = await getTimesheet(user.email, weekStart);
     const todayDate = todayStart.slice(0, 10);
     const timeOffToday = await getTimeOffForDate(user.email, todayDate);
 
@@ -1506,12 +1500,6 @@ export async function listTeamLiveStatus(
       status = "clocked_out";
     }
 
-    const bank = bankByEmail.get(String(user.email).toLowerCase()) || {
-      allotted_hours: 0,
-      used_hours: 0,
-      remaining_hours: 0,
-    };
-
     rows.push({
       user_email: user.email,
       user_name: user.name || user.email,
@@ -1525,14 +1513,10 @@ export async function listTeamLiveStatus(
       clocked_in_since: openEntry
         ? new Date(openEntry.clock_in as Date).toISOString()
         : null,
-      timesheet_status: timesheet?.status ?? null,
       team_id: user.team_id ? String(user.team_id) : null,
       team_name: user.team_name ? String(user.team_name) : null,
       time_off_kind: timeOffToday?.kind ?? null,
       time_off_hours: timeOffToday?.hours ?? null,
-      time_off_bank_remaining: bank.remaining_hours,
-      time_off_bank_used: bank.used_hours,
-      time_off_bank_allotted: bank.allotted_hours,
     });
   }
 

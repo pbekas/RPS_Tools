@@ -8,6 +8,7 @@ type Props = {
 };
 
 export function TimeOffBankCard({ bank, linkToHistory = false }: Props) {
+  if (bank.eligible === false) return null;
   const bankPercent =
     bank.allotted_hours > 0
       ? Math.min(100, Math.round((bank.used_hours / bank.allotted_hours) * 100))
@@ -38,7 +39,7 @@ export function TimeOffBankCard({ bank, linkToHistory = false }: Props) {
       </div>
       {linkToHistory ? (
         <p className="mt-3 text-sm text-ink-soft">
-          Log PTO or sick on{" "}
+          Request time off on{" "}
           <Link href="/time-clock/history" className="font-semibold text-accent hover:underline">
             My hours
           </Link>

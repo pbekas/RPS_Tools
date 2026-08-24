@@ -16,7 +16,7 @@ export default async function TimeOffBanksPage() {
       <h1 className="font-display text-3xl text-ink">Time-off banks</h1>
       <p className="mt-1 text-ink-soft">
         Set annual time-off hours per employee. PTO and sick days deduct from the bank;
-        holiday and unpaid do not.
+        holiday and unpaid do not. Admins are not assigned a PTO bank.
       </p>
       <div className="mt-6">
         <TimeOffBanksPanel

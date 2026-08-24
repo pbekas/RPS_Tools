@@ -81,7 +81,7 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
         {(
           [
             ["clocked_in", "Clocked in"],
@@ -96,14 +96,14 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
             key={status}
             type="button"
             onClick={() => setFilter(filter === status ? "all" : status)}
-            className={`rounded-xl border px-4 py-3 text-left transition ${
+            className={`rounded-lg border px-3 py-2 text-left transition ${
               filter === status ? "border-accent bg-wash" : "border-line bg-white/90"
             }`}
           >
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
               {label}
             </p>
-            <p className="mt-1 font-display text-2xl text-ink">{summary[status] || 0}</p>
+            <p className="mt-0.5 font-display text-xl text-ink">{summary[status] || 0}</p>
           </button>
         ))}
       </div>
@@ -129,74 +129,33 @@ export function TeamLiveBoard({ initialRows, initialRefreshedAt }: Props) {
         </p>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {filtered.map((row) => (
-          <div
-            key={row.user_email}
-            className="rounded-xl border border-line bg-white/90 px-4 py-4 shadow-sm"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-ink">{row.user_name}</p>
-                <p className="text-sm text-ink-soft">{row.user_email}</p>
-                {row.team_name ? (
-                  <p className="text-xs text-ink-soft">{row.team_name}</p>
-                ) : null}
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {filtered.map((row) => {
+          const details = [
+            row.local_time,
+            `${formatHours(row.today_hours)} today`,
+            row.last_punch_label ? `last ${row.last_punch_label}` : null,
+            row.time_off_kind
+              ? `${row.time_off_kind}${row.time_off_hours ? ` ${row.time_off_hours}h` : ""}`
+              : null,
+          ].filter(Boolean);
+          return (
+            <div
+              key={row.user_email}
+              className="rounded-lg border border-line bg-white/90 px-3 py-2"
+              title={row.user_email}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-sm font-semibold text-ink">{row.user_name}</p>
+                <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-accent">
+                  {row.status_label}
+                  <span className={`h-2 w-2 rounded-full ${STATUS_DOT[row.status]}`} />
+                </span>
               </div>
-              <span className={`mt-1 h-3 w-3 shrink-0 rounded-full ${STATUS_DOT[row.status]}`} />
+              <p className="mt-0.5 truncate text-xs text-ink-soft">{details.join(" · ")}</p>
             </div>
-            <p className="mt-3 text-sm font-semibold text-accent">{row.status_label}</p>
-            <dl className="mt-3 space-y-1 text-sm text-ink-soft">
-              <div className="flex justify-between gap-3">
-                <dt>Local time</dt>
-                <dd className="font-semibold text-ink">{row.local_time}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt>Today</dt>
-                <dd className="font-semibold text-ink">{formatHours(row.today_hours)}</dd>
-              </div>
-              {row.clocked_in_since ? (
-                <div className="flex justify-between gap-3">
-                  <dt>Since</dt>
-                  <dd>{formatDateTime(row.clocked_in_since, row.timezone)}</dd>
-                </div>
-              ) : null}
-              {row.last_punch_label ? (
-                <div className="flex justify-between gap-3">
-                  <dt>Last punch</dt>
-                  <dd>{row.last_punch_label}</dd>
-                </div>
-              ) : null}
-              {row.time_off_kind ? (
-                <div className="flex justify-between gap-3">
-                  <dt>Time off</dt>
-                  <dd className="capitalize">
-                    {row.time_off_kind}
-                    {row.time_off_hours ? ` (${row.time_off_hours}h)` : ""}
-                  </dd>
-                </div>
-              ) : null}
-              {row.timesheet_status ? (
-                <div className="flex justify-between gap-3">
-                  <dt>This week</dt>
-                  <dd className="capitalize">{row.timesheet_status}</dd>
-                </div>
-              ) : null}
-              <div className="flex justify-between gap-3">
-                <dt>PTO bank</dt>
-                <dd className="text-right">
-                  <span className="font-semibold text-ink">
-                    {formatHours(row.time_off_bank_remaining)} left
-                  </span>
-                  <span className="block text-xs text-ink-soft">
-                    {formatHours(row.time_off_bank_used)} /{" "}
-                    {formatHours(row.time_off_bank_allotted)} used
-                  </span>
-                </dd>
-              </div>
-            </dl>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -97,7 +97,7 @@ def run_sync_cycle(
             len(summary.get("errors") or []),
         )
 
-        # Opportunistic contracts + time clock reminder scans (same 5-minute cycle)
+        # Opportunistic contracts maintenance (same 5-minute cycle)
         result: dict[str, Any] = {**summary, "call_logs": cdr_summary}
         try:
             from src.contracts_pipeline import process_pending_contracts
@@ -112,14 +112,6 @@ def run_sync_cycle(
         except Exception as contracts_exc:  # noqa: BLE001
             logger.exception("Contracts maintenance during poll cycle failed")
             result["contracts_error"] = str(contracts_exc)
-
-        try:
-            from src.time_clock_alerts import check_time_clock_reminders
-
-            result["time_clock_reminders"] = check_time_clock_reminders()
-        except Exception as clock_exc:  # noqa: BLE001
-            logger.exception("Time clock reminders during poll cycle failed")
-            result["time_clock_reminders_error"] = str(clock_exc)
 
         return result
     except Exception as exc:  # noqa: BLE001
