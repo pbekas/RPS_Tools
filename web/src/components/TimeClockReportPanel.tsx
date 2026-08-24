@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { TimeClockReport } from "@/lib/timeClockTypes";
+import type { TimeClockReport, TimeEntry } from "@/lib/timeClockTypes";
 import { WeeklyBreakdownTable } from "@/components/TimeClockEntries";
-import { formatHours } from "@/lib/timeClockFormat";
+import {
+  formatHours,
+  formatTime,
+  formatYmd,
+  localYmd,
+} from "@/lib/timeClockFormat";
 import {
   formatPayPeriodLabel,
   resolvePayPeriod,
@@ -21,6 +26,7 @@ type Props = {
   teamMode?: boolean;
   payPeriodConfig: PayPeriodConfig;
   initialPreset?: "current" | "previous" | "custom";
+  scopeLabel?: string;
 };
 
 const APPROVAL_STYLES: Record<string, string> = {
@@ -31,6 +37,90 @@ const APPROVAL_STYLES: Record<string, string> = {
   none: "text-ink-soft",
 };
 
+function punchHours(entry: TimeEntry): number {
+  const end = entry.clock_out ? new Date(entry.clock_out).getTime() : Date.now();
+  return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3600);
+}
+
+type DayGroup = {
+  date: string;
+  hours: number;
+  entries: TimeEntry[];
+};
+
+function groupEntriesByDay(entries: TimeEntry[], timezone: string): DayGroup[] {
+  const groups = new Map<string, DayGroup>();
+  const sorted = [...entries].sort((a, b) => a.clock_in.localeCompare(b.clock_in));
+  for (const entry of sorted) {
+    const date = localYmd(entry.clock_in, timezone);
+    const existing = groups.get(date);
+    const hours = punchHours(entry);
+    if (existing) {
+      existing.hours += hours;
+      existing.entries.push(entry);
+    } else {
+      groups.set(date, { date, hours, entries: [entry] });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function DailyPunches({
+  entries,
+  timezone,
+}: {
+  entries: TimeEntry[];
+  timezone: string;
+}) {
+  const days = useMemo(
+    () => groupEntriesByDay(entries, timezone),
+    [entries, timezone]
+  );
+
+  if (!days.length) {
+    return (
+      <p className="px-4 py-3 text-sm text-ink-soft">No punches in this period.</p>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-line/70 border-t border-line">
+      {days.map((day) => (
+        <div key={day.date} className="px-4 py-3">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <p className="text-sm font-semibold text-ink">
+              {formatYmd(day.date)}
+            </p>
+            <p className="text-sm font-semibold text-ink">{formatHours(day.hours)}</p>
+          </div>
+          <ul className="space-y-1.5">
+            {day.entries.map((entry) => (
+              <li
+                key={entry.id}
+                className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[minmax(0,14rem)_auto]"
+              >
+                <p className="text-ink">
+                  {formatTime(entry.clock_in, timezone)}
+                  <span className="text-ink-soft"> – </span>
+                  {entry.clock_out
+                    ? formatTime(entry.clock_out, timezone)
+                    : "Open"}
+                </p>
+                <p className="text-right font-medium text-ink">
+                  {formatHours(punchHours(entry))}
+                </p>
+                {entry.notes ? (
+                  <p className="col-span-2 text-xs text-ink-soft">{entry.notes}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function TimeClockReportPanel({
   initialFrom,
   initialTo,
@@ -38,6 +128,7 @@ export function TimeClockReportPanel({
   teamMode = false,
   payPeriodConfig,
   initialPreset = "current",
+  scopeLabel,
 }: Props) {
   const [preset, setPreset] = useState<"current" | "previous" | "custom">(initialPreset);
   const [from, setFrom] = useState(initialFrom.slice(0, 10));
@@ -45,6 +136,8 @@ export function TimeClockReportPanel({
   const [report, setReport] = useState(initialReport);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const activePayPeriod = useMemo((): PayPeriodBounds | null => {
     if (preset === "custom") return null;
@@ -70,6 +163,17 @@ export function TimeClockReportPanel({
     [payPeriodConfig]
   );
 
+  const people = useMemo(() => {
+    const rows = report?.by_user || [];
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter(
+      (user) =>
+        user.user_name.toLowerCase().includes(needle) ||
+        user.user_email.toLowerCase().includes(needle)
+    );
+  }, [report, query]);
+
   async function loadReport() {
     setBusy(true);
     setMsg("");
@@ -88,6 +192,7 @@ export function TimeClockReportPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load report");
       setReport(data.report);
+      setExpanded({});
       if (data.report?.pay_period) {
         setFrom(data.report.pay_period.period_start);
         setTo(data.report.pay_period.period_end);
@@ -116,11 +221,15 @@ export function TimeClockReportPanel({
     window.location.href = `/api/time-clock/report?${params}`;
   }
 
+  function togglePerson(email: string) {
+    setExpanded((current) => ({ ...current, [email]: !current[email] }));
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-white/90 p-4">
         <label className="text-sm">
-          <span className="font-semibold text-ink-soft">Date range</span>
+          <span className="font-semibold text-ink-soft">Pay period</span>
           <select
             value={preset}
             onChange={(e) =>
@@ -203,44 +312,103 @@ export function TimeClockReportPanel({
                 {report.pay_period.period_start} – {report.pay_period.period_end}
               </p>
             ) : null}
-            <p className="mt-1 text-xs text-ink-soft">{report.timezone}</p>
+            <p className="mt-1 text-xs text-ink-soft">
+              {scopeLabel ? `${scopeLabel} · ` : ""}
+              {report.timezone}
+            </p>
           </div>
 
-          {teamMode && report.by_user?.length ? (
-            <div className="space-y-4">
-              <h2 className="font-display text-xl text-ink">By employee</h2>
-              {report.by_user.map((user) => (
-                <div
-                  key={user.user_email}
-                  className="rounded-xl border border-line bg-white/90 px-4 py-4"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-ink">{user.user_name}</p>
-                      <p className="text-sm text-ink-soft">{user.user_email}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-semibold text-accent">
-                        {formatHours(user.total_hours)}
-                      </p>
-                      {user.approval ? (
-                        <p
-                          className={`text-xs font-semibold uppercase tracking-wide ${
-                            APPROVAL_STYLES[user.approval.status] || APPROVAL_STYLES.none
-                          }`}
-                        >
-                          {user.approval.status === "approved"
-                            ? `Approved by ${user.approval.reviewed_by_name || "manager"}`
-                            : user.approval.status}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="mt-3">
-                    <WeeklyBreakdownTable rows={user.weekly_breakdown} />
-                  </div>
+          {teamMode ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-xl text-ink">Hours by person</h2>
+                  <p className="text-sm text-ink-soft">
+                    Expand a person to see daily punches and times.
+                  </p>
                 </div>
-              ))}
+                {(report.by_user?.length || 0) > 8 ? (
+                  <label className="text-sm">
+                    <span className="sr-only">Search people</span>
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search people"
+                      className="rounded-lg border border-line px-3 py-2"
+                    />
+                  </label>
+                ) : null}
+              </div>
+
+              {people.length ? (
+                <div className="overflow-hidden rounded-xl border border-line bg-white/90">
+                  {people.map((user) => {
+                    const open = Boolean(expanded[user.user_email]);
+                    return (
+                      <div
+                        key={user.user_email}
+                        className="border-b border-line/70 last:border-0"
+                      >
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          onClick={() => togglePerson(user.user_email)}
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-wash/70"
+                        >
+                          <span
+                            className={`text-ink-soft transition-transform ${
+                              open ? "rotate-90" : ""
+                            }`}
+                            aria-hidden
+                          >
+                            ▸
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-semibold text-ink">
+                              {user.user_name}
+                            </span>
+                            <span className="block truncate text-sm text-ink-soft">
+                              {user.user_email}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-right">
+                            <span className="block text-lg font-semibold text-accent">
+                              {formatHours(user.total_hours)}
+                            </span>
+                            {user.approval ? (
+                              <span
+                                className={`block text-xs font-semibold uppercase tracking-wide ${
+                                  APPROVAL_STYLES[user.approval.status] ||
+                                  APPROVAL_STYLES.none
+                                }`}
+                              >
+                                {user.approval.status === "approved"
+                                  ? `Approved by ${
+                                      user.approval.reviewed_by_name || "manager"
+                                    }`
+                                  : user.approval.status}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                        {open ? (
+                          <DailyPunches
+                            entries={user.entries}
+                            timezone={report.timezone}
+                          />
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-line bg-white/90 px-4 py-4 text-sm text-ink-soft">
+                  {query.trim()
+                    ? "No people match that search."
+                    : "No people in this report."}
+                </p>
+              )}
             </div>
           ) : (
             <div>

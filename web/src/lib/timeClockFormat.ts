@@ -39,6 +39,38 @@ export function formatDateTime(iso: string | null, timezone?: string): string {
   }).format(new Date(iso));
 }
 
+export function formatDate(iso: string, timezone?: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(iso));
+}
+
+/** Format a civil YYYY-MM-DD date without shifting it across timezones. */
+export function formatYmd(ymd: string): string {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+/** Local calendar date (YYYY-MM-DD) for an instant in the given timezone. */
+export function localYmd(iso: string, timezone?: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 export function toDatetimeLocalValue(iso: string | null, timezone?: string): string {
   if (!iso) return "";
   const d = new Date(iso);

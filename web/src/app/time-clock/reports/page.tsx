@@ -21,8 +21,8 @@ export default async function TimeClockReportsPage() {
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Time reports</h1>
       <p className="mt-1 text-ink-soft">
-        Export pay-period hours by employee with manager approval stamps for Plane
-        reimbursement.
+        Hours worked by pay period. Expand a person to see daily punches and
+        times.
       </p>
       <div className="mt-6">
         <TimeClockReportPanel
@@ -31,6 +31,9 @@ export default async function TimeClockReportsPage() {
           initialReport={report}
           teamMode
           initialPreset="current"
+          scopeLabel={
+            access.isAdmin ? "All Time Clock users" : "Your team"
+          }
           payPeriodConfig={{
             timezone: settings.timezone,
           }}

@@ -491,7 +491,7 @@ export async function listTimeEntries(
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 5000);
   const offset = Math.max(opts.offset ?? 0, 0);
 
   const countRes = await query<{ total: number }>(
@@ -824,6 +824,31 @@ function weekStartInTimezone(iso: string, timezone: string): Date {
   return local;
 }
 
+async function listReportRoster(
+  emails: string[] | null | undefined
+): Promise<Array<{ email: string; name: string }>> {
+  requirePostgres();
+  const scope = allowlist(emails);
+  if (scope === "none") return [];
+  if (scope === "all") {
+    return (await listUsersWithTimeClockAccess()).map((user) => ({
+      email: user.email.toLowerCase(),
+      name: user.name,
+    }));
+  }
+  const rows = await query(
+    `SELECT email, name
+     FROM users
+     WHERE email = ANY($1::citext[])
+     ORDER BY name ASC, email ASC`,
+    [scope.map((email) => String(email).toLowerCase())]
+  );
+  return rows.map((row) => ({
+    email: String(row.email).toLowerCase(),
+    name: String(row.name || row.email),
+  }));
+}
+
 export async function buildTimeClockReport(opts: {
   from: string;
   to: string;
@@ -838,6 +863,7 @@ export async function buildTimeClockReport(opts: {
   const timezone = settings.timezone;
 
   if (opts.team) {
+    const roster = await listReportRoster(opts.userEmails);
     const { entries } = await listTimeEntries({
       from: opts.from,
       to: opts.to,
@@ -845,18 +871,24 @@ export async function buildTimeClockReport(opts: {
       limit: 5000,
     });
     const byUser = new Map<string, TimeEntry[]>();
+    const nameByEmail = new Map<string, string>();
+    for (const person of roster) {
+      byUser.set(person.email, []);
+      nameByEmail.set(person.email, person.name);
+    }
     for (const entry of entries) {
       const key = entry.user_email.toLowerCase();
       const list = byUser.get(key) || [];
       list.push(entry);
       byUser.set(key, list);
+      if (entry.user_name) nameByEmail.set(key, entry.user_name);
     }
 
     const users = Array.from(byUser.entries()).map(([email, userEntries]) => {
       const totalHours = userEntries.reduce((sum, e) => sum + entryHours(e), 0);
       return {
         user_email: email,
-        user_name: userEntries[0]?.user_name || email,
+        user_name: nameByEmail.get(email) || userEntries[0]?.user_name || email,
         total_hours: totalHours,
         weekly_breakdown: buildWeeklyBreakdown(
           userEntries,
