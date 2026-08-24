@@ -39,7 +39,7 @@ const APPROVAL_STYLES: Record<string, string> = {
 
 function punchHours(entry: TimeEntry): number {
   const end = entry.clock_out ? new Date(entry.clock_out).getTime() : Date.now();
-  return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3600);
+  return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3_600_000);
 }
 
 type DayGroup = {
