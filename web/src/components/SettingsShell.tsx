@@ -5,7 +5,6 @@ import type {
   FlagSet,
   QaRuleset,
   TopicSet,
-  UnmappedAgentRow,
   UserDoc,
 } from "@/lib/database";
 import type { ContractGroup } from "@/lib/contractTypes";
@@ -16,7 +15,6 @@ import { TopicSettings } from "@/components/TopicSettings";
 
 type Props = {
   initialUsers: UserDoc[];
-  initialUnmapped: UnmappedAgentRow[];
   initialTopicset: TopicSet;
   initialRuleset: QaRuleset;
   initialFlagset: FlagSet;
@@ -27,7 +25,6 @@ type Props = {
 
 export function SettingsShell({
   initialUsers,
-  initialUnmapped,
   initialTopicset,
   initialRuleset,
   initialFlagset,
@@ -74,7 +71,6 @@ export function SettingsShell({
       {tab === "agents" ? (
         <AgentSettings
           initialUsers={initialUsers}
-          initialUnmapped={initialUnmapped}
           domain={domain}
           contractGroups={contractGroups}
           teamsEnabled={teamsEnabled}

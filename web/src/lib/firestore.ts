@@ -744,6 +744,7 @@ export async function listUsers(): Promise<UserDoc[]> {
   const snap = await getDb().collection("users").limit(200).get();
   return snap.docs
     .map((d) => serializeDoc<UserDoc>(d.id, d.data()))
+    .filter((u) => !u.provisional && !u.email.toLowerCase().startsWith("unmapped."))
     .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
 }
 
@@ -1000,12 +1001,12 @@ export async function importAndMapAgent(input: {
     throw new Error(`Email must be @${domain}`);
   }
 
-  const user = await upsertUser({
-    email: target,
-    name: cleaned,
-    role: input.role || "Agent",
-    provisional: false,
-  });
+  const user = await getUser(target);
+  if (!user) {
+    throw new Error(
+      `${target} is not in the directory. Users are no longer created from calls.`
+    );
+  }
 
   const calls = await listCalls({
     status: "complete",
@@ -1050,35 +1051,17 @@ export async function assignCallAgent(input: {
   const call = await getCall(input.callId);
   if (!call) throw new Error("Call not found");
 
-  const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase();
   let email = (input.agentEmail || "").trim().toLowerCase();
   let name = (input.agentName || "").trim();
 
-  if (input.createName?.trim()) {
-    name = input.createName.trim();
-    email = (input.createEmail || "").trim().toLowerCase();
-    if (!email) {
-      throw new Error("Workspace email is required for a new agent");
-    }
-    if (!email.endsWith(`@${domain}`)) {
-      throw new Error(`Email must be @${domain}`);
-    }
-    await upsertUser({
-      email,
-      name,
-      role: "Agent",
-      provisional: false,
-    });
-  } else if (email) {
-    const user = await getUser(email);
-    if (user) {
-      name = user.name || name || email;
-    } else if (!name) {
-      throw new Error("Unknown agent email");
-    }
-  } else {
-    throw new Error("Select an agent or create one");
+  if (!email) {
+    throw new Error("Select an existing directory user");
   }
+  const user = await getUser(email);
+  if (!user) {
+    throw new Error("Unknown agent email — pick someone from Users & access");
+  }
+  name = user.name || name || email;
 
   const now = new Date();
   await getDb()

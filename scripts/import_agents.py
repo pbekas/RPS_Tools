@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Import & map AI-detected agents onto {name}@releviumpain.com users.
+"""Map AI-detected agent names onto existing directory users.
+
+Does not create users. The target email must already exist.
 
 Usage:
   python scripts/import_agents.py              # list candidates
-  python scripts/import_agents.py --apply      # create users + remap calls
   python scripts/import_agents.py --apply --name Diana --email diana@releviumpain.com
 """
 
@@ -21,8 +22,8 @@ from src.agent_identity import discover_unmapped_agents, import_and_map_agent
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Import/map call agents to users")
-    parser.add_argument("--apply", action="store_true", help="Create users and remap calls")
+    parser = argparse.ArgumentParser(description="Map call agents to existing directory users")
+    parser.add_argument("--apply", action="store_true", help="Remap calls to an existing user")
     parser.add_argument("--name", type=str, default="", help="Only import this agent name")
     parser.add_argument("--email", type=str, default="", help="Override email for --name")
     args = parser.parse_args()

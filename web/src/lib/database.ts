@@ -665,7 +665,11 @@ export async function remapCallsForExtension(input: {
 export async function listUsers(): Promise<UserDoc[]> {
   if (!usePostgres()) return firestore.listUsers();
   const rows = await query(
-    "SELECT * FROM users ORDER BY coalesce(nullif(name, ''), email::text), email LIMIT $1",
+    `SELECT * FROM users
+      WHERE coalesce(provisional, false) = false
+        AND email::text NOT ILIKE 'unmapped.%'
+      ORDER BY coalesce(nullif(name, ''), email::text), email
+      LIMIT $1`,
     [200]
   );
   return rows.map((row) => {
@@ -832,15 +836,14 @@ export async function importAndMapAgent(input: {
   const email = (input.email || suggestedAgentEmail(name)).trim().toLowerCase();
   if (!email.endsWith(`@${domain}`)) throw new Error(`Email must be @${domain}`);
   return withTransaction(async (client) => {
-    const userResult = await client.query(
-      `INSERT INTO users (email, name, role, provisional)
-       VALUES ($1, $2, $3, false)
-       ON CONFLICT (email) DO UPDATE SET
-         name = EXCLUDED.name, role = EXCLUDED.role,
-         provisional = false, updated_at = now()
-       RETURNING *`,
-      [email, name, input.role || "Agent"]
-    );
+    const userResult = await client.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+    if (!userResult.rows[0]) {
+      throw new Error(
+        `${email} is not in the directory. Users are no longer created from calls.`
+      );
+    }
     const candidates = await client.query<{ id: string; agent_name: string; agent_email: string | null }>(
       "SELECT id, agent_name, agent_email::text FROM calls WHERE status = $1 FOR UPDATE",
       ["complete"]
@@ -873,7 +876,6 @@ export async function assignCallAgent(input: {
   createEmail?: string | null;
 }): Promise<CallDoc> {
   if (!usePostgres()) return firestore.assignCallAgent(input);
-  const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase();
   return withTransaction(async (client) => {
     const call = await client.query("SELECT id FROM calls WHERE id = $1 FOR UPDATE", [
       input.callId,
@@ -881,28 +883,17 @@ export async function assignCallAgent(input: {
     if (!call.rows[0]) throw new Error("Call not found");
     let email = (input.agentEmail || "").trim().toLowerCase();
     let name = (input.agentName || "").trim();
-    if (input.createName?.trim()) {
-      name = input.createName.trim();
-      email = (input.createEmail || "").trim().toLowerCase();
-      if (!email) throw new Error("Workspace email is required for a new agent");
-      if (!email.endsWith(`@${domain}`)) throw new Error(`Email must be @${domain}`);
-      await client.query(
-        `INSERT INTO users (email, name, role, provisional)
-         VALUES ($1, $2, 'Agent', false)
-         ON CONFLICT (email) DO UPDATE SET
-           name = EXCLUDED.name, provisional = false, updated_at = now()`,
-        [email, name]
-      );
-    } else if (email) {
-      const user = await client.query<{ name: string }>(
-        "SELECT name FROM users WHERE email = $1",
-        [email]
-      );
-      if (user.rows[0]) name = user.rows[0].name || name || email;
-      else if (!name) throw new Error("Unknown agent email");
-    } else {
-      throw new Error("Select an agent or create one");
+    if (!email) {
+      throw new Error("Select an existing directory user");
     }
+    const user = await client.query<{ name: string }>(
+      "SELECT name FROM users WHERE email = $1",
+      [email]
+    );
+    if (!user.rows[0]) {
+      throw new Error("Unknown agent email — pick someone from Users & access");
+    }
+    name = user.rows[0].name || name || email;
     await client.query(
       "UPDATE calls SET agent_email = $2, agent_name = $3, updated_at = now() WHERE id = $1",
       [input.callId, email, name]

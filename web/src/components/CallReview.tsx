@@ -35,9 +35,6 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
   const [savedMsg, setSavedMsg] = useState("");
   const [agentEmail, setAgentEmail] = useState(call.agent_email || "");
   const [agentName, setAgentName] = useState(call.agent_name || "");
-  const [agentMode, setAgentMode] = useState<"pick" | "create">("pick");
-  const [createName, setCreateName] = useState(call.agent_name || "");
-  const [createEmail, setCreateEmail] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignMsg, setAssignMsg] = useState("");
   const [reanalyzing, setReanalyzing] = useState(false);
@@ -62,9 +59,6 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     setFeedback(call.manager_feedback || "");
     setAgentEmail(call.agent_email || "");
     setAgentName(call.agent_name || "");
-    setCreateName(call.agent_name || "");
-    setCreateEmail("");
-    setAgentMode("pick");
     setActiveTurn(null);
     setSavedMsg("");
     setAssignMsg("");
@@ -127,13 +121,7 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
     setAssigning(true);
     setAssignMsg("");
     try {
-      if (agentMode === "create" && !createEmail.trim()) {
-        throw new Error("Workspace email is required for a new agent");
-      }
-      const body =
-        agentMode === "create"
-          ? { create_name: createName, create_email: createEmail }
-          : { agent_email: agentEmail, agent_name: agentName };
+      const body = { agent_email: agentEmail, agent_name: agentName };
       const res = await fetch(`/api/calls/${call.id}/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -382,71 +370,29 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                 <div className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
                   Agent
                 </div>
-                <div className="mt-2 flex gap-2 text-xs font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => setAgentMode("pick")}
-                    className={`rounded-lg px-2.5 py-1 ${
-                      agentMode === "pick"
-                        ? "bg-accent text-white"
-                        : "border border-line text-ink-soft"
-                    }`}
-                  >
-                    Select existing
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAgentMode("create")}
-                    className={`rounded-lg px-2.5 py-1 ${
-                      agentMode === "create"
-                        ? "bg-accent text-white"
-                        : "border border-line text-ink-soft"
-                    }`}
-                  >
-                    Create / new
-                  </button>
-                </div>
-                {agentMode === "pick" ? (
-                  <select
-                    value={agentEmail}
-                    onChange={(e) => {
-                      const email = e.target.value;
-                      setAgentEmail(email);
-                      const match = agents.find((a) => a.email === email);
-                      setAgentName(match?.name || "");
-                    }}
-                    className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">Select agent…</option>
-                    {agents.map((a) => (
+                <select
+                  value={agentEmail}
+                  onChange={(e) => {
+                    const email = e.target.value;
+                    setAgentEmail(email);
+                    const match = agents.find((a) => a.email === email);
+                    setAgentName(match?.name || "");
+                  }}
+                  className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">Select agent…</option>
+                  {agents
+                    .filter(
+                      (a) =>
+                        !a.provisional &&
+                        !a.email.startsWith("unmapped.")
+                    )
+                    .map((a) => (
                       <option key={a.email} value={a.email}>
                         {a.name || a.email}
-                        {a.provisional || a.email.startsWith("unmapped.")
-                          ? " (provisional)"
-                          : ""}
                       </option>
                     ))}
-                  </select>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    <input
-                      value={createName}
-                      onChange={(e) => setCreateName(e.target.value)}
-                      placeholder="Agent display name"
-                      className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={createEmail}
-                      onChange={(e) => setCreateEmail(e.target.value)}
-                      placeholder="Workspace email (required)"
-                      className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
-                    />
-                    <p className="text-[11px] text-ink-soft">
-                      Must be an @releviumpain.com employee. Do not add the
-                      person who answered an outbound call.
-                    </p>
-                  </div>
-                )}
+                </select>
                 <button
                   type="button"
                   disabled={assigning}

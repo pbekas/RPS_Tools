@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { UnmappedAgentRow, UserDoc } from "@/lib/database";
+import type { UserDoc } from "@/lib/database";
 import type { ContractGroup } from "@/lib/contractTypes";
 import {
   buildModuleGrants,
@@ -18,7 +18,6 @@ import { TimeClockTeamsPanel } from "@/components/TimeClockTeamsPanel";
 
 type Props = {
   initialUsers: UserDoc[];
-  initialUnmapped: UnmappedAgentRow[];
   domain: string;
   embedded?: boolean;
   contractGroups?: ContractGroup[];
@@ -32,14 +31,12 @@ function toolsetsForUser(user: UserDoc): ToolsetId[] {
 
 export function AgentSettings({
   initialUsers,
-  initialUnmapped,
   domain,
   embedded = false,
   contractGroups = [],
   teamsEnabled = false,
 }: Props) {
   const [users, setUsers] = useState(initialUsers);
-  const [unmapped, setUnmapped] = useState(initialUnmapped);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [extension, setExtension] = useState("");
@@ -54,20 +51,16 @@ export function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
-  const [edits, setEdits] = useState<Record<string, string>>({});
-
-  const needsImport = useMemo(
-    () => unmapped.filter((r) => !r.mapped),
-    [unmapped]
-  );
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return users.filter((u) => {
+      const addr = (u.email || "").toLowerCase();
+      if (u.provisional || addr.startsWith("unmapped.")) return false;
       if (!needle) return true;
       return (
         (u.name || "").toLowerCase().includes(needle) ||
-        (u.email || "").toLowerCase().includes(needle) ||
+        addr.includes(needle) ||
         (u.extension || "").toLowerCase().includes(needle) ||
         (u.role || "").toLowerCase().includes(needle)
       );
@@ -75,80 +68,17 @@ export function AgentSettings({
   }, [users, q]);
 
   async function refresh() {
-    const res = await fetch("/api/users?unmapped=1");
+    const res = await fetch("/api/users?unmapped=0");
     const data = await res.json();
     if (res.ok) {
       setUsers(data.users || []);
-      setUnmapped(data.unmapped || []);
     }
-  }
-
-  function emailFor(row: UnmappedAgentRow) {
-    return (edits[row.agent_name] || row.suggested_email).trim().toLowerCase();
   }
 
   function toggleFormToolset(id: ToolsetId) {
     setToolsets((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
-  }
-
-  async function importOne(row: UnmappedAgentRow) {
-    setSaving(true);
-    setMsg("");
-    try {
-      const res = await fetch("/api/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "import_map",
-          agent_name: row.agent_name,
-          email: emailFor(row),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-      setMsg(
-        `Imported ${data.name} → ${data.email}` +
-          (data.remappedCalls ? ` · ${data.remappedCalls} calls mapped` : "")
-      );
-      await refresh();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Import failed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function importAll() {
-    setSaving(true);
-    setMsg("");
-    try {
-      const results: string[] = [];
-      for (const row of needsImport) {
-        const res = await fetch("/api/users", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "import_map",
-            agent_name: row.agent_name,
-            email: emailFor(row),
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          results.push(`${row.agent_name}: ${data.error || "failed"}`);
-        } else {
-          results.push(`${data.name} → ${data.email} (${data.remappedCalls} calls)`);
-        }
-      }
-      setMsg(results.join(" · ") || "Nothing to import");
-      await refresh();
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Import failed");
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function saveUser(e: React.FormEvent) {
@@ -274,16 +204,16 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Users & access</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            People first — search, edit access, assign departments, then import
-            anyone still missing from call recordings.
+            Directory people only — search, edit access, and assign departments.
+            Call recordings no longer create users.
           </p>
         </div>
       ) : (
         <div className="mb-8">
           <h2 className="font-display text-2xl text-ink">Users & access</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Grant Call QA, Contracts, and/or Time Clock per person. Import agents found on calls as{" "}
-            <code className="rounded bg-wash px-1">{`{name}@${domain}`}</code>.
+            Grant Call QA, Contracts, and/or Time Clock per person. Users come
+            from the Workspace directory, not from call recordings.
           </p>
         </div>
       )}
@@ -572,78 +502,6 @@ export function AgentSettings({
           {saving ? "Saving…" : "Save person"}
         </button>
       </form>
-
-      <section className="rounded-2xl border border-line bg-white/85 p-5 shadow-soft">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="font-display text-2xl text-ink">Import from calls</h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              Names detected on calls that still need a Workspace email.
-            </p>
-          </div>
-          {needsImport.length > 0 ? (
-            <button
-              type="button"
-              disabled={saving}
-              onClick={importAll}
-              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-            >
-              {saving ? "Importing…" : `Import all (${needsImport.length})`}
-            </button>
-          ) : null}
-        </div>
-
-        {needsImport.length === 0 ? (
-          <p className="mt-6 text-sm text-ink-soft">
-            No unmapped agents right now — everyone found on recent calls is mapped.
-          </p>
-        ) : (
-          <div className="mt-4 overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-line bg-wash/70 text-xs uppercase tracking-wide text-ink-soft">
-                <tr>
-                  <th className="px-3 py-2">Name on calls</th>
-                  <th className="px-3 py-2">Calls</th>
-                  <th className="px-3 py-2">Map to email</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {needsImport.map((row) => (
-                  <tr key={row.agent_name} className="border-b border-line/70 last:border-0">
-                    <td className="px-3 py-3 font-semibold text-ink">
-                      {row.agent_name}
-                    </td>
-                    <td className="px-3 py-3 text-ink-soft">{row.call_count}</td>
-                    <td className="px-3 py-3">
-                      <input
-                        value={edits[row.agent_name] ?? row.suggested_email}
-                        onChange={(e) =>
-                          setEdits((prev) => ({
-                            ...prev,
-                            [row.agent_name]: e.target.value,
-                          }))
-                        }
-                        className="w-full min-w-[14rem] rounded-lg border border-line px-2 py-1.5 text-sm"
-                      />
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => importOne(row)}
-                        className="rounded-lg border border-accent px-3 py-1.5 text-xs font-semibold text-accent hover:bg-wash disabled:opacity-60"
-                      >
-                        Import & map
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
     </div>
   );
 }

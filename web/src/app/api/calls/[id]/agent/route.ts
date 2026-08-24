@@ -21,8 +21,6 @@ export async function POST(
       callId: id,
       agentEmail: body.agent_email,
       agentName: body.agent_name,
-      createName: body.create_name,
-      createEmail: body.create_email,
     });
     return NextResponse.json({ ok: true, call });
   } catch (e) {

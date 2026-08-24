@@ -297,8 +297,7 @@ def import_and_map_agent(
     extension: str | None = None,
 ) -> dict[str, Any]:
     """
-    Create/update the user as {name}@domain (or provided email) and remap calls
-    that share this agent_name (and empty/provisional emails).
+    Remap calls for an existing directory user. Never creates a user.
     """
     cleaned = (agent_name or "").strip()
     if not cleaned or cleaned.lower() == "unknown":
@@ -313,13 +312,11 @@ def import_and_map_agent(
         raise ValueError(f"Email must be @{domain}")
 
     ext = normalize_extension(extension)
-    user = db.upsert_user(
-        email=target,
-        name=cleaned,
-        role=role or "Agent",
-        provisional=False,
-        extension=ext,
-    )
+    user = db.get_user(target)
+    if not user:
+        raise ValueError(
+            f"{target} is not in the directory. Users are no longer created from calls."
+        )
 
     # Remap calls with this name that are unassigned / provisional / already this email
     calls = db.list_calls(limit=500, status="complete", require_min_duration=False)

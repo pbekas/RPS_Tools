@@ -2,7 +2,6 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import {
-  discoverUnmappedAgents,
   getCallFlags,
   getCallTopics,
   getQaRules,
@@ -16,9 +15,8 @@ export default async function SettingsPage() {
   if (!session?.user?.email) redirect("/login");
   if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
 
-  const [users, unmapped, topicset, ruleset, flagset, groups] = await Promise.all([
+  const [users, topicset, ruleset, flagset, groups] = await Promise.all([
     listUsers(),
-    discoverUnmappedAgents(),
     getCallTopics(),
     getQaRules(),
     getCallFlags(),
@@ -31,7 +29,6 @@ export default async function SettingsPage() {
   return (
     <SettingsShell
       initialUsers={users}
-      initialUnmapped={unmapped}
       initialTopicset={topicset}
       initialRuleset={ruleset}
       initialFlagset={flagset}

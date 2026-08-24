@@ -2,8 +2,6 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import {
-  discoverUnmappedAgents,
-  importAndMapAgent,
   linkProvisionalAgent,
   listUsers,
   remapCallsForExtension,
@@ -32,16 +30,13 @@ function allowedDomains(): string[] {
   return [(process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com").toLowerCase()];
 }
 
-export async function GET(req: Request) {
+export async function GET() {
   const session = await getServerSession(authOptions);
   const denied = requireAdmin(session);
   if (denied) return denied;
 
-  const { searchParams } = new URL(req.url);
-  const includeUnmapped = searchParams.get("unmapped") !== "0";
   const users = await listUsers();
-  const unmapped = includeUnmapped ? await discoverUnmappedAgents() : [];
-  return NextResponse.json({ users, unmapped, toolsets: ALL_TOOLSET_IDS });
+  return NextResponse.json({ users, unmapped: [], toolsets: ALL_TOOLSET_IDS });
 }
 
 export async function POST(req: Request) {
@@ -127,42 +122,6 @@ export async function POST(req: Request) {
       }
       const user = await setUserModules(email, modules);
       return NextResponse.json({ ok: true, user });
-    }
-
-    if (action === "import_map") {
-      const result = await importAndMapAgent({
-        agentName: String(body.agent_name || ""),
-        email: body.email ? String(body.email) : null,
-        role: body.role ? String(body.role) : "Agent",
-      });
-      return NextResponse.json({ ok: true, ...result });
-    }
-
-    if (action === "import_map_all") {
-      const rows = await discoverUnmappedAgents();
-      const results = [];
-      for (const row of rows) {
-        if (row.mapped) continue;
-        try {
-          const out = await importAndMapAgent({
-            agentName: row.agent_name,
-            email: row.suggested_email,
-          });
-          results.push({
-            ok: true,
-            name: out.name,
-            email: out.email,
-            remappedCalls: out.remappedCalls,
-          });
-        } catch (e) {
-          results.push({
-            ok: false,
-            name: row.agent_name,
-            error: e instanceof Error ? e.message : "failed",
-          });
-        }
-      }
-      return NextResponse.json({ ok: true, results });
     }
 
     if (action === "link_provisional") {
