@@ -60,6 +60,18 @@ export type TimeOffEntry = {
   updated_at: string;
 };
 
+export type TeamTimeOffEntry = TimeOffEntry & {
+  team_id: string | null;
+  team_name: string | null;
+};
+
+export const TIME_OFF_KIND_LABELS: Record<TimeOffKind, string> = {
+  pto: "Time Off",
+  sick: "Sick",
+  holiday: "Holiday",
+  unpaid: "Unpaid",
+};
+
 export type TimeOffBank = {
   user_email: string;
   user_name?: string;

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type {
   TimeClockSettings,
   TimeEntryEditRequest,
+  TeamTimeOffEntry,
   TimeOffEntry,
   WeeklyTimesheet,
 } from "@/lib/timeClockTypes";
@@ -15,6 +16,7 @@ type Props = {
   initialEditRequests: TimeEntryEditRequest[];
   initialTimesheets: WeeklyTimesheet[];
   initialTimeOffRequests: TimeOffEntry[];
+  overlapEntries: TeamTimeOffEntry[];
   settings: TimeClockSettings;
 };
 
@@ -22,6 +24,7 @@ export function ApprovalsHub({
   initialEditRequests,
   initialTimesheets,
   initialTimeOffRequests,
+  overlapEntries,
   settings,
 }: Props) {
   const [tab, setTab] = useState<"timesheets" | "edits" | "timeoff">(
@@ -72,7 +75,10 @@ export function ApprovalsHub({
       ) : tab === "edits" ? (
         <EditApprovals initialRequests={initialEditRequests} settings={settings} />
       ) : (
-        <TimeOffApprovals initialRequests={initialTimeOffRequests} />
+        <TimeOffApprovals
+          initialRequests={initialTimeOffRequests}
+          overlapEntries={overlapEntries}
+        />
       )}
     </div>
   );

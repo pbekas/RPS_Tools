@@ -159,6 +159,12 @@ export function AppNav() {
                     Approvals
                   </Link>
                   <Link
+                    href="/time-clock/time-off"
+                    className={navClass(pathname.startsWith("/time-clock/time-off"))}
+                  >
+                    Time off
+                  </Link>
+                  <Link
                     href="/time-clock/banks"
                     className={navClass(pathname.startsWith("/time-clock/banks"))}
                   >

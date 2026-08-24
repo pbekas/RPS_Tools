@@ -5,6 +5,7 @@ import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
 import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
 import type {
+  TeamTimeOffEntry,
   TimeOffBank,
   TimeOffEntry,
   TimeOffKind,
@@ -124,6 +125,56 @@ export async function listPendingTimeOffRequests(
     params
   );
   return rows.map(entryFromRow);
+}
+
+export async function listTeamTimeOff(opts: {
+  from: string;
+  to: string;
+  userEmails?: string[] | null;
+  statuses?: TimeOffStatus[];
+}): Promise<TeamTimeOffEntry[]> {
+  requirePostgres();
+  const scope = allowlist(opts.userEmails);
+  if (scope === "none") return [];
+  const statuses = opts.statuses?.length
+    ? opts.statuses
+    : (["pending", "approved"] as TimeOffStatus[]);
+  const params: unknown[] = [opts.from, opts.to, statuses];
+  let emailClause = "";
+  if (scope !== "all") {
+    params.push(scope.map((email) => String(email).toLowerCase()));
+    emailClause = `AND e.user_email = ANY($4::citext[])`;
+  }
+  const rows = await query(
+    `SELECT DISTINCT ON (e.id)
+            ${ENTRY_SELECT},
+            t.id AS team_id,
+            t.name AS team_name
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     LEFT JOIN time_clock_team_members m ON m.user_email = e.user_email
+     LEFT JOIN time_clock_teams t ON t.id = m.team_id
+     WHERE e.entry_date >= $1::date
+       AND e.entry_date <= $2::date
+       AND e.status = ANY($3::text[])
+       ${emailClause}
+     ORDER BY e.id, t.name ASC NULLS LAST`,
+    params
+  );
+  return rows
+    .map((row) => ({
+      ...entryFromRow(row),
+      team_id: row.team_id ? String(row.team_id) : null,
+      team_name: row.team_name ? String(row.team_name) : null,
+    }))
+    .sort((a, b) => {
+      const byDate = a.entry_date.localeCompare(b.entry_date);
+      if (byDate) return byDate;
+      const byTeam = (a.team_name || "zzz").localeCompare(b.team_name || "zzz");
+      if (byTeam) return byTeam;
+      return (a.user_name || a.user_email).localeCompare(b.user_name || b.user_email);
+    });
 }
 
 export async function getTimeOffEntryById(id: string): Promise<TimeOffEntry | null> {

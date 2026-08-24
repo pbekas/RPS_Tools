@@ -7,6 +7,7 @@ import {
   getTimeOffBank,
   isTimeOffKind,
   listPendingTimeOffRequests,
+  listTeamTimeOff,
   listTimeOffEntries,
   upsertTimeOffEntry,
 } from "@/lib/timeOffDb";
@@ -29,6 +30,31 @@ export async function GET(req: Request) {
     }
     try {
       const entries = await listPendingTimeOffRequests(access.visibleUserEmails);
+      return NextResponse.json({ entries });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Failed to load time off" },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (searchParams.get("view") === "team") {
+    if (!access.isManager) {
+      return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+    }
+    if (!fromDate || !toDate) {
+      return NextResponse.json(
+        { error: "from and to dates are required" },
+        { status: 400 }
+      );
+    }
+    try {
+      const entries = await listTeamTimeOff({
+        from: fromDate,
+        to: toDate,
+        userEmails: access.visibleUserEmails,
+      });
       return NextResponse.json({ entries });
     } catch (err) {
       return NextResponse.json(

@@ -5,7 +5,7 @@ import {
   listEditRequests,
   listSubmittedTimesheets,
 } from "@/lib/timeClockDb";
-import { listPendingTimeOffRequests } from "@/lib/timeOffDb";
+import { listPendingTimeOffRequests, listTeamTimeOff } from "@/lib/timeOffDb";
 import { ApprovalsHub } from "@/components/ApprovalsHub";
 
 export default async function TimeClockApprovalsPage() {
@@ -28,6 +28,15 @@ export default async function TimeClockApprovalsPage() {
     )
   );
 
+  const pendingDates = timeOffRequests.map((entry) => entry.entry_date).sort();
+  const overlapEntries = pendingDates.length
+    ? await listTeamTimeOff({
+        from: pendingDates[0],
+        to: pendingDates[pendingDates.length - 1],
+        userEmails: access.visibleUserEmails,
+      })
+    : [];
+
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Approvals</h1>
@@ -39,6 +48,7 @@ export default async function TimeClockApprovalsPage() {
           initialEditRequests={requests}
           initialTimesheets={timesheets}
           initialTimeOffRequests={timeOffRequests}
+          overlapEntries={overlapEntries}
           settings={settings}
         />
       </div>
