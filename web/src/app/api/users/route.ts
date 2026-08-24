@@ -8,8 +8,10 @@ import {
   setUserActive,
   setUserModules,
   upsertUser,
+  getUser,
 } from "@/lib/database";
-import { ALL_TOOLSET_IDS, normalizeModuleGrants } from "@/lib/permissions";
+import { normalizeModuleGrants } from "@/lib/permissions";
+import { accessGrantCaps, constrainModuleGrants } from "@/lib/contractAccess";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {
@@ -36,7 +38,12 @@ export async function GET() {
   if (denied) return denied;
 
   const users = await listUsers();
-  return NextResponse.json({ users, unmapped: [], toolsets: ALL_TOOLSET_IDS });
+  const caps = accessGrantCaps(session!.user);
+  return NextResponse.json({
+    users,
+    unmapped: [],
+    toolsets: caps.toolsets,
+  });
 }
 
 export async function POST(req: Request) {
@@ -82,9 +89,17 @@ export async function POST(req: Request) {
         extension: extensionRaw,
       });
       if (role === "Supervisor") {
-        const mods = normalizeModuleGrants([...(user.modules || []), "time_clock"]);
-        const withClock = await setUserModules(email, mods);
-        user.modules = withClock.modules;
+        const mods = normalizeModuleGrants(
+          constrainModuleGrants(
+            session!.user,
+            user.modules || [],
+            [...(user.modules || []), "time_clock"]
+          )
+        );
+        if (mods.length) {
+          const withClock = await setUserModules(email, mods);
+          user.modules = withClock.modules;
+        }
       }
       let remappedCalls = 0;
       if (extensionRaw !== undefined) {
@@ -113,7 +128,10 @@ export async function POST(req: Request) {
       const requested = Array.isArray(body.modules)
         ? body.modules.map((m: unknown) => String(m))
         : [];
-      const modules = normalizeModuleGrants(requested);
+      const existing = await getUser(email);
+      const modules = normalizeModuleGrants(
+        constrainModuleGrants(session!.user, existing?.modules || [], requested)
+      );
       if (!modules.length) {
         return NextResponse.json(
           { error: "Grant at least one tool set (Call QA, Contracts, or Time Clock)" },

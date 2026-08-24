@@ -8,6 +8,7 @@ import {
   listUsers,
 } from "@/lib/database";
 import { listContractGroups } from "@/lib/contractsDb";
+import { accessGrantCaps } from "@/lib/contractAccess";
 import { SettingsShell } from "@/components/SettingsShell";
 
 export default async function SettingsPage() {
@@ -35,6 +36,7 @@ export default async function SettingsPage() {
       domain={domain}
       contractGroups={groups}
       teamsEnabled={process.env.DB_BACKEND?.trim().toLowerCase() === "postgres"}
+      grantCaps={accessGrantCaps(session.user)}
     />
   );
 }

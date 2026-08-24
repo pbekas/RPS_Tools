@@ -1,7 +1,8 @@
 import type { ContractGroup } from "@/lib/contractTypes";
 import {
   ALL_TOOLSET_IDS,
-  isAdmin,
+  grantedToolsets,
+  hasModule,
   type SessionUserLike,
   type ToolsetId,
 } from "@/lib/permissions";
@@ -57,15 +58,12 @@ export function resolveContractAccess(
     mods.includes(CONTRACT_VENDOR_CONTACTS) ||
     mods.includes(CONTRACT_VENDOR_FILES);
   const legacyFull = mods.includes("contracts") && !hasExplicitCaps;
-  const adminFull = isAdmin(user) && hasNav;
-  const allGroups = adminFull || legacyFull;
+  const allGroups = legacyFull;
   const canViewAgreements = allGroups || groupSlugs.length > 0;
   const canViewVendorContacts =
-    adminFull ||
-    legacyFull ||
-    mods.includes(CONTRACT_VENDOR_CONTACTS);
+    legacyFull || mods.includes(CONTRACT_VENDOR_CONTACTS);
   const canManageVendorFiles =
-    adminFull || legacyFull || mods.includes(CONTRACT_VENDOR_FILES);
+    legacyFull || mods.includes(CONTRACT_VENDOR_FILES);
   return {
     hasContractsNav: hasNav,
     allGroups,
@@ -134,16 +132,130 @@ export function parseContractGrantState(
   vendorFiles: boolean;
 } {
   const mods = modulesList(user);
-  const toolsets: ToolsetId[] = ALL_TOOLSET_IDS.filter((id) => mods.includes(id));
-  if (!toolsets.length && !mods.some(isContractsModule)) {
+  const toolsets: ToolsetId[] = ALL_TOOLSET_IDS.filter((id) => {
+    if (id === "contracts") return mods.some(isContractsModule);
+    return mods.includes(id);
+  });
+  if (!toolsets.length) {
     toolsets.push("call_qa");
   }
   const access = resolveContractAccess(user);
   return {
-    toolsets: toolsets.length ? toolsets : (["call_qa"] as ToolsetId[]),
-    allContractTypes: access.allGroups || access.groupSlugs.length === 0,
+    toolsets,
+    allContractTypes: access.allGroups,
     groupSlugs: access.allGroups ? groups.map((g) => g.slug) : access.groupSlugs,
     vendorContacts: access.canViewVendorContacts,
     vendorFiles: access.canManageVendorFiles,
   };
+}
+
+export type AccessGrantCaps = {
+  toolsets: ToolsetId[];
+  allContractTypes: boolean;
+  contractGroupSlugs: string[];
+  vendorContacts: boolean;
+  vendorFiles: boolean;
+};
+
+export function accessGrantCaps(
+  actor: SessionUserLike | null | undefined
+): AccessGrantCaps {
+  const access = resolveContractAccess(actor);
+  const toolsets = grantedToolsets(actor).filter((id) => {
+    if (id !== "contracts") return true;
+    return access.canViewAgreements;
+  });
+  return {
+    toolsets,
+    allContractTypes: access.allGroups,
+    contractGroupSlugs: access.allGroups ? [] : access.groupSlugs,
+    vendorContacts: access.canViewVendorContacts,
+    vendorFiles: access.canManageVendorFiles,
+  };
+}
+
+function isFullContractsGrant(modules: string[]): boolean {
+  const mods = modulesList({ modules });
+  return (
+    mods.includes("contracts") &&
+    !mods.some((m) => m.startsWith("contracts:"))
+  );
+}
+
+export function actorCanAssignModule(
+  actor: SessionUserLike | null | undefined,
+  module: string
+): boolean {
+  const value = String(module || "").trim();
+  if (!value || !actor?.email) return false;
+  if (value === "contracts") {
+    return resolveContractAccess(actor).canViewAgreements;
+  }
+  if ((ALL_TOOLSET_IDS as string[]).includes(value)) {
+    return hasModule(actor, value as ToolsetId);
+  }
+  const access = resolveContractAccess(actor);
+  if (value === CONTRACT_VENDOR_CONTACTS) return access.canViewVendorContacts;
+  if (value === CONTRACT_VENDOR_FILES) return access.canManageVendorFiles;
+  if (value.startsWith(CONTRACT_GROUP_PREFIX)) {
+    return canAccessContractGroup(
+      access,
+      value.slice(CONTRACT_GROUP_PREFIX.length)
+    );
+  }
+  return false;
+}
+
+function expandBareContractsToActorScope(
+  actor: SessionUserLike,
+  modules: string[]
+): string[] {
+  const access = resolveContractAccess(actor);
+  const hasExtras = modules.some((m) => m.startsWith("contracts:"));
+  if (!modules.includes("contracts") || hasExtras) return modules;
+  if (
+    access.allGroups &&
+    access.canViewVendorContacts &&
+    access.canManageVendorFiles
+  ) {
+    return modules;
+  }
+  const extras: string[] = [];
+  for (const slug of access.groupSlugs) extras.push(contractGroupGrant(slug));
+  if (access.canViewVendorContacts) extras.push(CONTRACT_VENDOR_CONTACTS);
+  if (access.canManageVendorFiles) extras.push(CONTRACT_VENDOR_FILES);
+  return Array.from(new Set([...modules, ...extras]));
+}
+
+/** Apply only the grants the actor themselves has. Other modules on the target stay as-is. */
+export function constrainModuleGrants(
+  actor: SessionUserLike | null | undefined,
+  existing: string[] | null | undefined,
+  requested: string[] | null | undefined
+): string[] {
+  const existingN = modulesList({ modules: existing || [] });
+  let requestedN = modulesList({ modules: requested || [] });
+  if (!actor?.email) return existingN;
+
+  const actorFull =
+    isFullContractsGrant(modulesList(actor)) ||
+    (resolveContractAccess(actor).allGroups &&
+      resolveContractAccess(actor).canViewVendorContacts &&
+      resolveContractAccess(actor).canManageVendorFiles);
+
+  if (isFullContractsGrant(existingN) && !actorFull) {
+    const lockedContracts = existingN.filter(isContractsModule);
+    const lockedOther = existingN.filter(
+      (m) => !isContractsModule(m) && !actorCanAssignModule(actor, m)
+    );
+    const nextOther = requestedN.filter(
+      (m) => !isContractsModule(m) && actorCanAssignModule(actor, m)
+    );
+    return Array.from(new Set([...lockedContracts, ...lockedOther, ...nextOther]));
+  }
+
+  requestedN = expandBareContractsToActorScope(actor, requestedN);
+  const locked = existingN.filter((m) => !actorCanAssignModule(actor, m));
+  const next = requestedN.filter((m) => actorCanAssignModule(actor, m));
+  return Array.from(new Set([...locked, ...next]));
 }

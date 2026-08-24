@@ -8,6 +8,7 @@ import type {
   UserDoc,
 } from "@/lib/database";
 import type { ContractGroup } from "@/lib/contractTypes";
+import type { AccessGrantCaps } from "@/lib/contractAccess";
 import { AgentSettings } from "@/components/AgentSettings";
 import { FlagSettings } from "@/components/FlagSettings";
 import { RuleSettings } from "@/components/RuleSettings";
@@ -21,6 +22,7 @@ type Props = {
   domain: string;
   contractGroups?: ContractGroup[];
   teamsEnabled?: boolean;
+  grantCaps?: AccessGrantCaps;
 };
 
 export function SettingsShell({
@@ -31,6 +33,7 @@ export function SettingsShell({
   domain,
   contractGroups = [],
   teamsEnabled = false,
+  grantCaps,
 }: Props) {
   const [tab, setTab] = useState<"agents" | "topics" | "rules" | "flags">(
     "agents"
@@ -74,6 +77,7 @@ export function SettingsShell({
           domain={domain}
           contractGroups={contractGroups}
           teamsEnabled={teamsEnabled}
+          grantCaps={grantCaps}
           embedded
         />
       ) : (

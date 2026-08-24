@@ -1,6 +1,7 @@
 import { requireAdminSession } from "@/lib/requireAccess";
 import { listUsers } from "@/lib/database";
 import { listContractGroups } from "@/lib/contractsDb";
+import { accessGrantCaps } from "@/lib/contractAccess";
 import { AgentSettings } from "@/components/AgentSettings";
 
 function isPostgres() {
@@ -11,7 +12,7 @@ function isPostgres() {
 }
 
 export default async function UsersAccessPage() {
-  await requireAdminSession();
+  const session = await requireAdminSession();
   const postgres = isPostgres();
   const [users, groups] = await Promise.all([
     listUsers(),
@@ -25,6 +26,7 @@ export default async function UsersAccessPage() {
       domain={domain}
       contractGroups={groups}
       teamsEnabled={postgres}
+      grantCaps={accessGrantCaps(session.user)}
     />
   );
 }

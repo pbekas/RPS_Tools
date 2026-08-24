@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UserDoc } from "@/lib/database";
 import type { ContractGroup } from "@/lib/contractTypes";
 import {
   buildModuleGrants,
   parseContractGrantState,
+  type AccessGrantCaps,
 } from "@/lib/contractAccess";
 import {
-  ALL_TOOLSET_IDS,
   TOOLSETS,
   normalizeModuleGrants,
   normalizeToolsetGrants,
@@ -22,6 +22,7 @@ type Props = {
   embedded?: boolean;
   contractGroups?: ContractGroup[];
   teamsEnabled?: boolean;
+  grantCaps?: AccessGrantCaps;
 };
 
 function toolsetsForUser(user: UserDoc): ToolsetId[] {
@@ -35,13 +36,35 @@ export function AgentSettings({
   embedded = false,
   contractGroups = [],
   teamsEnabled = false,
+  grantCaps,
 }: Props) {
+  const caps: AccessGrantCaps = grantCaps || {
+    toolsets: [],
+    allContractTypes: false,
+    contractGroupSlugs: [],
+    vendorContacts: false,
+    vendorFiles: false,
+  };
+  const grantableToolsets = caps.toolsets;
+  const visibleGroups = caps.allContractTypes
+    ? contractGroups
+    : contractGroups.filter((g) => caps.contractGroupSlugs.includes(g.slug));
+  const canGrantContracts =
+    grantableToolsets.includes("contracts") ||
+    caps.vendorContacts ||
+    caps.vendorFiles;
+  const defaultToolsets: ToolsetId[] = grantableToolsets.includes("call_qa")
+    ? ["call_qa"]
+    : grantableToolsets[0]
+      ? [grantableToolsets[0]]
+      : [];
+
   const [users, setUsers] = useState(initialUsers);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [extension, setExtension] = useState("");
   const [role, setRole] = useState("Agent");
-  const [toolsets, setToolsets] = useState<ToolsetId[]>(["call_qa"]);
+  const [toolsets, setToolsets] = useState<ToolsetId[]>(defaultToolsets);
   const [allContractTypes, setAllContractTypes] = useState(true);
   const [groupSlugs, setGroupSlugs] = useState<string[]>(
     contractGroups.map((g) => g.slug)
@@ -51,6 +74,35 @@ export function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [q, setQ] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [emailLocked, setEmailLocked] = useState(false);
+
+  function resetForm() {
+    setName("");
+    setEmail("");
+    setExtension("");
+    setRole("Agent");
+    setToolsets(defaultToolsets);
+    setAllContractTypes(false);
+    setGroupSlugs([]);
+    setVendorContacts(false);
+    setVendorFiles(false);
+    setEmailLocked(false);
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    resetForm();
+  }
+
+  useEffect(() => {
+    if (!formOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !saving) closeForm();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [formOpen, saving]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -76,6 +128,7 @@ export function AgentSettings({
   }
 
   function toggleFormToolset(id: ToolsetId) {
+    if (!grantableToolsets.includes(id)) return;
     setToolsets((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
@@ -100,12 +153,12 @@ export function AgentSettings({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed");
       const modules = buildModuleGrants({
-        toolsets,
-        allContractTypes,
+        toolsets: toolsets.filter((id) => grantableToolsets.includes(id)),
+        allContractTypes: caps.allContractTypes && allContractTypes,
         groupSlugs,
-        knownGroupSlugs: contractGroups.map((g) => g.slug),
-        vendorContacts,
-        vendorFiles,
+        knownGroupSlugs: visibleGroups.map((g) => g.slug),
+        vendorContacts: caps.vendorContacts && vendorContacts,
+        vendorFiles: caps.vendorFiles && vendorFiles,
       });
       const modRes = await fetch("/api/users", {
         method: "POST",
@@ -119,15 +172,7 @@ export function AgentSettings({
           ? ` · remapped ${data.remappedCalls} call${data.remappedCalls === 1 ? "" : "s"} by extension`
           : "";
       setMsg(`Saved ${data.user.email}${remapped}`);
-      setName("");
-      setEmail("");
-      setExtension("");
-      setRole("Agent");
-      setToolsets(["call_qa"]);
-      setAllContractTypes(true);
-      setGroupSlugs(contractGroups.map((g) => g.slug));
-      setVendorContacts(true);
-      setVendorFiles(true);
+      closeForm();
       await refresh();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
@@ -155,33 +200,42 @@ export function AgentSettings({
     await refresh();
   }
 
+  function openAdd() {
+    setMsg("");
+    resetForm();
+    setFormOpen(true);
+  }
+
   function editUser(user: UserDoc) {
+    setMsg("");
     setName(user.name || "");
     setEmail(user.email);
     setExtension(user.extension || "");
     setRole(user.role || "Agent");
-    const parsed = parseContractGrantState(user, contractGroups);
-    setToolsets(parsed.toolsets.length ? parsed.toolsets : toolsetsForUser(user));
-    setAllContractTypes(parsed.allContractTypes);
+    const parsed = parseContractGrantState(user, visibleGroups);
+    setToolsets(parsed.toolsets.filter((id) => grantableToolsets.includes(id)));
+    setAllContractTypes(Boolean(caps.allContractTypes && parsed.allContractTypes));
     setGroupSlugs(
-      parsed.groupSlugs.length ? parsed.groupSlugs : contractGroups.map((g) => g.slug)
+      parsed.groupSlugs.filter((slug) =>
+        visibleGroups.some((g) => g.slug === slug)
+      )
     );
-    setVendorContacts(parsed.vendorContacts);
-    setVendorFiles(parsed.vendorFiles);
-    document
-      .getElementById("person-form")
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setVendorContacts(Boolean(caps.vendorContacts && parsed.vendorContacts));
+    setVendorFiles(Boolean(caps.vendorFiles && parsed.vendorFiles));
+    setEmailLocked(true);
+    setFormOpen(true);
   }
 
   async function setUserToolsets(user: UserDoc, next: ToolsetId[]) {
+    const allowed = new Set(grantableToolsets);
+    const requested = normalizeToolsetGrants(next).filter((id) => allowed.has(id));
     setMsg("");
-    const existing = (user.modules || []).filter((m) => String(m).startsWith("contracts:"));
-    const base = normalizeToolsetGrants(next).length
-      ? normalizeToolsetGrants(next)
-      : ["call_qa"];
-    const modules = next.includes("contracts")
-      ? normalizeModuleGrants([...base, ...existing])
-      : base;
+    const existingExtras = (user.modules || []).filter((m) =>
+      String(m).startsWith("contracts:")
+    );
+    const modules = requested.includes("contracts")
+      ? normalizeModuleGrants([...requested, ...existingExtras])
+      : requested;
     const res = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -212,8 +266,8 @@ export function AgentSettings({
         <div className="mb-8">
           <h2 className="font-display text-2xl text-ink">Users & access</h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Grant Call QA, Contracts, and/or Time Clock per person. Users come
-            from the Workspace directory, not from call recordings.
+            Grant only the tool sets you have. Other people’s access you don’t
+            share stays unchanged.
           </p>
         </div>
       )}
@@ -226,12 +280,21 @@ export function AgentSettings({
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl text-ink">People</h2>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search name or email…"
-          className="rounded-xl border border-line bg-white px-3 py-2 text-sm"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name or email…"
+            className="rounded-xl border border-line bg-white px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={openAdd}
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep"
+          >
+            Add person
+          </button>
+        </div>
       </div>
 
       <div className="mb-8 overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
@@ -270,16 +333,20 @@ export function AgentSettings({
                     <td className="px-4 py-3">{u.role || "Agent"}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
-                        {ALL_TOOLSET_IDS.map((id) => {
+                        {grantableToolsets.length ? (
+                          grantableToolsets.map((id) => {
                           const on = granted.includes(id);
                           return (
                             <button
                               key={id}
                               type="button"
                               onClick={() => {
+                                const grantable = granted.filter((x) =>
+                                  grantableToolsets.includes(x)
+                                );
                                 const next = on
-                                  ? granted.filter((x) => x !== id)
-                                  : [...granted, id];
+                                  ? grantable.filter((x) => x !== id)
+                                  : [...grantable, id];
                                 void setUserToolsets(u, next);
                               }}
                               className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
@@ -296,7 +363,10 @@ export function AgentSettings({
                               {TOOLSETS[id].label}
                             </button>
                           );
-                        })}
+                        })
+                        ) : (
+                          <span className="text-ink-soft">—</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -354,154 +424,207 @@ export function AgentSettings({
         </section>
       ) : null}
 
-      <form
-        id="person-form"
-        onSubmit={saveUser}
-        className="mb-8 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
-      >
-        <h2 className="font-display text-2xl text-ink">Add / update person</h2>
-        <p className="mt-1 text-sm text-ink-soft">
-          Set role, Vonage extension (for recording credit), tool sets, and
-          contract visibility.
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              Display name
-            </span>
-            <input
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2"
-              placeholder="Diana"
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              Workspace email
-            </span>
-            <input
-              required
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2"
-              placeholder={`diana@${domain}`}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-              Vonage extension
-            </span>
-            <input
-              value={extension}
-              onChange={(e) => setExtension(e.target.value)}
-              className="w-full rounded-lg border border-line px-3 py-2 font-mono"
-              placeholder="3101"
-              inputMode="numeric"
-            />
-          </label>
-        </div>
-        <label className="mt-3 block text-sm">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
-            Role
-          </span>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
+      {formOpen ? (
+        <div
+          className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/40 p-4 py-10"
+          onClick={() => {
+            if (!saving) closeForm();
+          }}
+        >
+          <form
+            id="person-form"
+            onSubmit={saveUser}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl rounded-2xl border border-line bg-white p-5 shadow-xl"
           >
-            <option value="Agent">Agent</option>
-            <option value="Supervisor">Supervisor</option>
-            <option value="Admin">Admin</option>
-          </select>
-        </label>
-        <fieldset className="mt-4">
-          <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-soft">
-            Tool set access
-          </legend>
-          <div className="flex flex-wrap gap-4">
-            {ALL_TOOLSET_IDS.map((id) => (
-              <label key={id} className="flex items-center gap-2 text-sm text-ink">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-2xl text-ink">
+                  {emailLocked ? "Edit person" : "Add person"}
+                </h2>
+                <p className="mt-1 text-sm text-ink-soft">
+                  Set role, Vonage extension (for recording credit), tool sets, and
+                  contract visibility.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={saving}
+                className="rounded-lg px-2 py-1 text-sm font-semibold text-ink-soft hover:bg-wash disabled:opacity-60"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            {msg ? (
+              <p className="mt-3 rounded-xl border border-line bg-wash px-3 py-2 text-sm text-ink-soft">
+                {msg}
+              </p>
+            ) : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                  Display name
+                </span>
+                <input
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-lg border border-line px-3 py-2"
+                  placeholder="Diana"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                  Workspace email
+                </span>
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  readOnly={emailLocked}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={`w-full rounded-lg border border-line px-3 py-2 ${
+                    emailLocked ? "bg-wash text-ink-soft" : ""
+                  }`}
+                  placeholder={`diana@${domain}`}
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                  Vonage extension
+                </span>
+                <input
+                  value={extension}
+                  onChange={(e) => setExtension(e.target.value)}
+                  className="w-full rounded-lg border border-line px-3 py-2 font-mono"
+                  placeholder="3101"
+                  inputMode="numeric"
+                />
+              </label>
+            </div>
+            <label className="mt-3 block text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Role
+              </span>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full max-w-xs rounded-lg border border-line px-3 py-2"
+              >
+                <option value="Agent">Agent</option>
+                <option value="Supervisor">Supervisor</option>
+                <option value="Admin">Admin</option>
+              </select>
+            </label>
+            <fieldset className="mt-4">
+              <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Tool set access
+              </legend>
+              <div className="flex flex-wrap gap-4">
+                {grantableToolsets.map((id) => (
+                  <label key={id} className="flex items-center gap-2 text-sm text-ink">
+                    <input
+                      type="checkbox"
+                      checked={toolsets.includes(id)}
+                      onChange={() => toggleFormToolset(id)}
+                    />
+                    {TOOLSETS[id].label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {canGrantContracts ? (
+            <fieldset className="mt-4 rounded-xl border border-line bg-paper/50 p-4">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+                Contract permissions
+              </legend>
+              {caps.allContractTypes ? (
+              <label className="flex items-center gap-2 text-sm text-ink">
                 <input
                   type="checkbox"
-                  checked={toolsets.includes(id)}
-                  onChange={() => toggleFormToolset(id)}
+                  checked={allContractTypes && toolsets.includes("contracts")}
+                  disabled={!toolsets.includes("contracts")}
+                  onChange={(e) => setAllContractTypes(e.target.checked)}
                 />
-                {TOOLSETS[id].label}
+                All agreement types
               </label>
-            ))}
-          </div>
-        </fieldset>
-        <fieldset className="mt-4 rounded-xl border border-line bg-paper/50 p-4">
-          <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">
-            Contract permissions
-          </legend>
-          <label className="flex items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={allContractTypes && toolsets.includes("contracts")}
-              disabled={!toolsets.includes("contracts")}
-              onChange={(e) => setAllContractTypes(e.target.checked)}
-            />
-            All agreement types
-          </label>
-          {contractGroups.length ? (
-            <div className="mt-2 flex flex-wrap gap-3">
-              {contractGroups.map((group) => (
-                <label key={group.id} className="flex items-center gap-2 text-sm text-ink">
+              ) : null}
+              {visibleGroups.length ? (
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {visibleGroups.map((group) => (
+                    <label key={group.id} className="flex items-center gap-2 text-sm text-ink">
+                      <input
+                        type="checkbox"
+                        disabled={!toolsets.includes("contracts") || allContractTypes}
+                        checked={
+                          toolsets.includes("contracts") &&
+                          (allContractTypes || groupSlugs.includes(group.slug))
+                        }
+                        onChange={() =>
+                          setGroupSlugs((prev) =>
+                            prev.includes(group.slug)
+                              ? prev.filter((s) => s !== group.slug)
+                              : [...prev, group.slug]
+                          )
+                        }
+                      />
+                      {group.name}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-3 flex flex-wrap gap-4">
+                {caps.vendorContacts ? (
+                <label className="flex items-center gap-2 text-sm text-ink">
                   <input
                     type="checkbox"
-                    disabled={!toolsets.includes("contracts") || allContractTypes}
-                    checked={
-                      toolsets.includes("contracts") &&
-                      (allContractTypes || groupSlugs.includes(group.slug))
-                    }
-                    onChange={() =>
-                      setGroupSlugs((prev) =>
-                        prev.includes(group.slug)
-                          ? prev.filter((s) => s !== group.slug)
-                          : [...prev, group.slug]
-                      )
-                    }
+                    checked={vendorContacts}
+                    onChange={(e) => setVendorContacts(e.target.checked)}
                   />
-                  {group.name}
+                  Vendor contacts
                 </label>
-              ))}
+                ) : null}
+                {caps.vendorFiles ? (
+                <label className="flex items-center gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    checked={vendorFiles}
+                    onChange={(e) => setVendorFiles(e.target.checked)}
+                  />
+                  Vendor files (W-9 / COI)
+                </label>
+                ) : null}
+              </div>
+              {caps.vendorContacts ? (
+              <p className="mt-2 text-xs text-ink-soft">
+                Contacts without agreement types lets someone see people, not PDFs or
+                commercial terms.
+              </p>
+              ) : null}
+            </fieldset>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeForm}
+                disabled={saving}
+                className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink-soft disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
+              >
+                {saving ? "Saving…" : "Save person"}
+              </button>
             </div>
-          ) : null}
-          <div className="mt-3 flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={vendorContacts}
-                onChange={(e) => setVendorContacts(e.target.checked)}
-              />
-              Vendor contacts
-            </label>
-            <label className="flex items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                checked={vendorFiles}
-                onChange={(e) => setVendorFiles(e.target.checked)}
-              />
-              Vendor files (W-9 / COI)
-            </label>
-          </div>
-          <p className="mt-2 text-xs text-ink-soft">
-            Contacts without agreement types lets someone see people, not PDFs or
-            commercial terms.
-          </p>
-        </fieldset>
-        <button
-          type="submit"
-          disabled={saving}
-          className="mt-4 rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save person"}
-        </button>
-      </form>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
