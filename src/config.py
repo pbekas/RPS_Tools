@@ -65,6 +65,8 @@ class Settings:
     twilio_missed_sms_cooldown_minutes: int
     twilio_missed_sms_max_age_minutes: int
     twilio_status_callback_url: str
+    ses_from_email: str
+    time_clock_email_enabled: bool
 
     def __init__(self) -> None:
         self.database_backend = (
@@ -178,6 +180,11 @@ class Settings:
         self.twilio_status_callback_url = os.getenv(
             "TWILIO_STATUS_CALLBACK_URL", ""
         ).strip()
+        # Time clock reminders — Amazon SES to the employee's Google account
+        self.ses_from_email = os.getenv("SES_FROM_EMAIL", "").strip()
+        self.time_clock_email_enabled = os.getenv(
+            "TIME_CLOCK_EMAIL_ENABLED", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"} and bool(self.ses_from_email)
 
     @staticmethod
     def _parse_service_account(raw: str) -> dict[str, Any] | None:

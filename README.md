@@ -45,6 +45,8 @@ Optional env:
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | empty | Twilio REST credentials + From number (E.164) |
 | `TWILIO_MISSED_SMS_COOLDOWN_MINUTES` | `90` | Per-number dedup window (`alert_state`) |
 | `TWILIO_MISSED_SMS_MAX_AGE_MINUTES` | `120` | Ignore older CDRs (avoids SMS on backfill) |
+| `TIME_CLOCK_EMAIL_ENABLED` | `1` | Kill switch for Time Clock reminder email |
+| `SES_FROM_EMAIL` | empty locally | From address for Time Clock reminders (verified SES identity) |
 
 Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
 so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
@@ -87,7 +89,9 @@ corrected flag. Raw Vonage `result` stays `Missed` for audit.
 */5 * * * * curl -s -X POST http://127.0.0.1:8080/poller/sync-now
 ```
 
-On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task. The same poll cycle also runs contract expiry alerts.
+On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task. The same poll cycle also runs contract expiry alerts and Time Clock reminder emails.
+
+**Time clock reminder email:** when **Enable time clock reminders** is on in `/time-clock/settings`, the poller emails the team member (not Chat) for a long open punch, a missed weekday clock-in, a forgotten clock-out, or an unsubmitted weekly timesheet. Delivery uses Amazon SES (`SES_FROM_EMAIL`, production `no_reply@releviumpain.com`). Approved time-off days skip forgot-to-punch windows. Dedup uses `alert_state`.
 
 ## Firestore schema
 

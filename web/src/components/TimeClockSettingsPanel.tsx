@@ -90,19 +90,25 @@ export function TimeClockSettingsPanel({ initialSettings }: Props) {
       <div>
         <h2 className="font-display text-xl text-ink">Reminder settings</h2>
         <p className="mt-1 text-sm text-ink-soft">
-          Times use each team member&apos;s timezone (or the practice default).
-          Time off days are skipped for forgot-to-punch windows.
+          Reminders are emailed to each team member at their Google account.
+          Times use that person&apos;s timezone (or the practice default).
+          Approved time-off days skip forgot-to-punch windows.
         </p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm font-semibold text-ink">
-        <input
-          type="checkbox"
-          checked={reminderEnabled}
-          onChange={(e) => setReminderEnabled(e.target.checked)}
-        />
-        Enable time clock reminders
-      </label>
+      <div>
+        <label className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <input
+            type="checkbox"
+            checked={reminderEnabled}
+            onChange={(e) => setReminderEnabled(e.target.checked)}
+          />
+          Enable time clock reminders
+        </label>
+        <p className="mt-1 text-xs text-ink-soft">
+          Each reminder is emailed to the team member from no_reply@releviumpain.com.
+        </p>
+      </div>
 
       <fieldset className="space-y-3 rounded-lg border border-line p-4" disabled={!reminderEnabled}>
         <legend className="px-1 text-sm font-semibold text-ink">Long open punch</legend>

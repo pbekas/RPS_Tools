@@ -113,6 +113,14 @@ def run_sync_cycle(
             logger.exception("Contracts maintenance during poll cycle failed")
             result["contracts_error"] = str(contracts_exc)
 
+        try:
+            from src.time_clock_alerts import check_time_clock_reminders
+
+            result["time_clock_reminders"] = check_time_clock_reminders()
+        except Exception as clock_exc:  # noqa: BLE001
+            logger.exception("Time clock reminders during poll cycle failed")
+            result["time_clock_reminders_error"] = str(clock_exc)
+
         return result
     except Exception as exc:  # noqa: BLE001
         with _lock:

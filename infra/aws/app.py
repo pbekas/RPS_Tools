@@ -339,6 +339,8 @@ class RpsCallQaStack(Stack):
                 # Missed-inbound patient SMS stays off until secret flag is enabled.
                 "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": "90",
                 "TWILIO_MISSED_SMS_MAX_AGE_MINUTES": "120",
+                "TIME_CLOCK_EMAIL_ENABLED": "1",
+                "SES_FROM_EMAIL": "Relevium Time Clock <no_reply@releviumpain.com>",
                 # Defaults keep Firestore primary until shadow validation.
                 "DB_BACKEND": db_backend,
                 "DB_DUAL_WRITE": "1" if db_dual_write else "0",
@@ -489,6 +491,13 @@ class RpsCallQaStack(Stack):
                     resources=["*"],
                 )
             )
+
+        poller_td.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ses:SendEmail", "ses:SendRawEmail"],
+                resources=["*"],
+            )
+        )
 
         CfnOutput(self, "LoadBalancerDNS", value=web.load_balancer.load_balancer_dns_name)
         CfnOutput(self, "AppURL", value=f"https://{domain}")
