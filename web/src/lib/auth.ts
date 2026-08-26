@@ -5,8 +5,11 @@ import {
   setUserModules,
   upsertUser,
 } from "@/lib/database";
-import { ALL_TOOLSET_IDS } from "@/lib/permissions";
+import { ALL_TOOLSET_IDS, isSupervisor } from "@/lib/permissions";
 import { resolveTimeClockAccess } from "@/lib/timeClockAccess";
+
+/** First-time Workspace sign-in: employee account that can punch. */
+const DEFAULT_AGENT_MODULES = ["time_clock"];
 
 function allowedDomains(): string[] {
   const multi = (process.env.ALLOWED_EMAIL_DOMAINS || "")
@@ -68,6 +71,7 @@ export const authOptions: NextAuthOptions = {
       if (!emailAllowed(email)) return false;
       try {
         const existing = await getUser(email);
+        if (existing && existing.active === false) return false;
         const bootstrap = bootstrapAdminEmails().has(email);
         if (!existing) {
           await upsertUser({
@@ -77,7 +81,7 @@ export const authOptions: NextAuthOptions = {
           });
           await setUserModules(
             email,
-            bootstrap ? [...ALL_TOOLSET_IDS] : ["call_qa"]
+            bootstrap ? [...ALL_TOOLSET_IDS] : [...DEFAULT_AGENT_MODULES]
           );
         } else {
           if (user.name && existing.name !== user.name) {
@@ -120,6 +124,10 @@ export const authOptions: NextAuthOptions = {
           });
           token.timeClockManager = access.isManager;
           token.timeClockAdmin = access.isAdmin;
+          token.teamManager =
+            access.isAdmin ||
+            access.isTeamSupervisor ||
+            isSupervisor({ role: token.role as string });
         } catch {
           token.role = token.role || "Agent";
           token.modules = token.modules || [];
@@ -135,6 +143,7 @@ export const authOptions: NextAuthOptions = {
         session.user.modules = Array.isArray(token.modules) ? token.modules : [];
         session.user.timeClockManager = Boolean(token.timeClockManager);
         session.user.timeClockAdmin = Boolean(token.timeClockAdmin);
+        session.user.teamManager = Boolean(token.teamManager);
       }
       return session;
     },

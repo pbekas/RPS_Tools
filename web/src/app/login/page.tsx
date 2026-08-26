@@ -36,7 +36,9 @@ function LoginInner() {
           Employee Tools
         </h1>
         <p className="mt-2 text-center text-sm text-white/70">
-          Call QA, Contracts, and Time Clock — switch tool sets after you sign in.
+          Sign in with your Google Workspace account. First visit creates an
+          Agent login with Time Clock. An admin can add Call QA or Contracts
+          later.
         </p>
         {error ? (
           <p className="mt-4 rounded-lg bg-red-50/10 px-3 py-2 text-center text-sm text-red-300">

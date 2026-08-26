@@ -91,7 +91,7 @@ corrected flag. Raw Vonage `result` stays `Missed` for audit.
 
 On AWS, EventBridge rule `rate(5 minutes)` → Lambda/ECS that hits `/poller/sync-now`, or run the poller script as a long-lived ECS task. The same poll cycle also runs contract expiry alerts and Time Clock reminder emails.
 
-**Time clock reminder email:** when **Enable time clock reminders** is on in `/time-clock/settings`, the poller emails the team member (not Chat) for a long open punch, a missed weekday clock-in, a forgotten clock-out, or an unsubmitted weekly timesheet. Delivery uses Amazon SES (`SES_FROM_EMAIL`, production `no_reply@releviumpain.com`). Approved time-off days skip forgot-to-punch windows. Dedup uses `alert_state`.
+**Time clock reminder email:** when **Enable time clock reminders** is on in `/time-clock/settings`, the poller emails the team member (not Chat) for a long open punch, a missed weekday clock-in, a forgotten clock-out, or an unsubmitted weekly timesheet. Delivery uses Amazon SES (`SES_FROM_EMAIL`, production `no_reply@releviumpain.com`). Approved time-off days skip forgot-to-punch windows. Dedup uses `alert_state`. New time-off and punch-edit requests also email the team supervisor (admins if the person has no supervisor).
 
 ## Firestore schema
 

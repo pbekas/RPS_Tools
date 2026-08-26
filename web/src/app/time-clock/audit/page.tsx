@@ -1,9 +1,9 @@
-import { requireTimeClockManager } from "@/lib/requireAccess";
+import { requireTimeClockAdmin } from "@/lib/requireAccess";
 import { listTimeClockAuditLog } from "@/lib/timeClockAudit";
 import { TimeClockAuditLog } from "@/components/TimeClockAuditLog";
 
 export default async function TimeClockAuditPage() {
-  const { access } = await requireTimeClockManager();
+  const { access } = await requireTimeClockAdmin();
 
   const { entries, total } = await listTimeClockAuditLog({
     limit: 100,

@@ -10,9 +10,10 @@ type AgentOption = { email: string; name?: string };
 
 type Props = {
   agents: AgentOption[];
+  allowUnknown?: boolean;
 };
 
-export function SampleQueue({ agents }: Props) {
+export function SampleQueue({ agents, allowUnknown = true }: Props) {
   const [days, setDays] = useState(14);
   const [perAgent, setPerAgent] = useState(3);
   const [unknownCount, setUnknownCount] = useState(0);
@@ -38,10 +39,10 @@ export function SampleQueue({ agents }: Props) {
         body: JSON.stringify({
           days,
           per_agent: perAgent,
-          unknown_count: unknownCount,
+          unknown_count: allowUnknown ? unknownCount : 0,
           unreviewed_only: unreviewedOnly,
           overweight_fails: overweightFails,
-          include_unknown: includeUnknown,
+          include_unknown: allowUnknown && includeUnknown,
           agent_emails: allSelected ? null : selectedAgents,
         }),
       });
@@ -87,8 +88,9 @@ export function SampleQueue({ agents }: Props) {
         </p>
         <h1 className="mt-1 font-display text-4xl text-ink">QA review queue</h1>
         <p className="mt-2 max-w-2xl text-ink-soft">
-          Pull a random sample by agent — plus unknowns — then work through calls
-          one at a time.
+          {allowUnknown
+            ? "Pull a random sample by agent — plus unknowns — then work through calls one at a time."
+            : "Pull a random sample of your team's calls, then work through them one at a time."}
         </p>
       </div>
 
@@ -119,10 +121,10 @@ export function SampleQueue({ agents }: Props) {
               type="number"
               min={0}
               max={30}
-              value={unknownCount}
+              value={allowUnknown ? unknownCount : 0}
               onChange={(e) => setUnknownCount(Number(e.target.value))}
               className="w-full rounded-lg border border-line px-3 py-2 text-sm"
-              disabled={!includeUnknown}
+              disabled={!allowUnknown || !includeUnknown}
             />
           </Field>
           <div className="flex flex-col justify-end gap-2 text-sm font-semibold text-ink-soft">
@@ -142,14 +144,16 @@ export function SampleQueue({ agents }: Props) {
               />
               Overweight AI fails
             </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={includeUnknown}
-                onChange={(e) => setIncludeUnknown(e.target.checked)}
-              />
-              Include unassigned calls
-            </label>
+            {allowUnknown ? (
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={includeUnknown}
+                  onChange={(e) => setIncludeUnknown(e.target.checked)}
+                />
+                Include unassigned calls
+              </label>
+            ) : null}
           </div>
         </div>
 
@@ -167,7 +171,7 @@ export function SampleQueue({ agents }: Props) {
                   : "border-line text-ink-soft hover:bg-wash"
               }`}
             >
-              All agents
+              All {allowUnknown ? "agents" : "team"}
             </button>
             {agents.map((a) => {
               const on = selectedAgents.includes(a.email);

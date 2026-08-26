@@ -290,6 +290,115 @@ export function buildIssueHeatmap(calls: CallDoc[]): HeatmapData {
   return { agents, rules, cells, maxRate: maxRate || 1 };
 }
 
+export type QaTeamRating = {
+  key: string;
+  name: string;
+  email: string | null;
+  calls: number;
+  avgQuality: number | null;
+  avgEmpathy: number | null;
+  fcrRate: number | null;
+  failCount: number;
+  criticalCount: number;
+};
+
+function ratingFromCalls(
+  key: string,
+  name: string,
+  email: string | null,
+  calls: CallDoc[]
+): QaTeamRating {
+  let qualitySum = 0;
+  let qualityN = 0;
+  let empathySum = 0;
+  let empathyN = 0;
+  let fcrN = 0;
+  let failCount = 0;
+  let criticalCount = 0;
+  for (const call of calls) {
+    if (typeof call.quality_score === "number") {
+      qualitySum += call.quality_score;
+      qualityN += 1;
+    }
+    if (typeof call.ai_empathy_score === "number") {
+      empathySum += call.ai_empathy_score;
+      empathyN += 1;
+    }
+    if (call.fcr) fcrN += 1;
+    if (call.auto_failed || (call.rule_results || []).some((r) => !r.passed)) {
+      failCount += 1;
+    }
+    if (call.has_critical_flags || (call.critical_flags || []).length) {
+      criticalCount += 1;
+    }
+  }
+  const n = calls.length;
+  return {
+    key,
+    name,
+    email,
+    calls: n,
+    avgQuality: qualityN ? qualitySum / qualityN : null,
+    avgEmpathy: empathyN ? empathySum / empathyN : null,
+    fcrRate: n ? fcrN / n : null,
+    failCount,
+    criticalCount,
+  };
+}
+
+export function buildQaTeamRatings(
+  calls: CallDoc[],
+  users: Array<{
+    email?: string | null;
+    name?: string | null;
+    role?: string | null;
+    provisional?: boolean;
+    active?: boolean;
+  }>
+): { team: QaTeamRating; agents: QaTeamRating[] } {
+  const byEmail = new Map<string, CallDoc[]>();
+  for (const call of calls) {
+    const email = (call.agent_email || "").trim().toLowerCase();
+    if (!email) continue;
+    const rows = byEmail.get(email) || [];
+    rows.push(call);
+    byEmail.set(email, rows);
+  }
+
+  const agents: QaTeamRating[] = [];
+  const seen = new Set<string>();
+  for (const user of users.filter(isMappedAgentUser)) {
+    const email = (user.email || "").trim().toLowerCase();
+    if (!email) continue;
+    seen.add(email);
+    agents.push(
+      ratingFromCalls(
+        email,
+        user.name || email,
+        email,
+        byEmail.get(email) || []
+      )
+    );
+  }
+  for (const [email, rows] of byEmail) {
+    if (seen.has(email)) continue;
+    agents.push(
+      ratingFromCalls(email, rows[0]?.agent_name || email, email, rows)
+    );
+  }
+  agents.sort(
+    (a, b) =>
+      (b.avgQuality ?? -1) - (a.avgQuality ?? -1) ||
+      b.calls - a.calls ||
+      a.name.localeCompare(b.name)
+  );
+
+  return {
+    team: ratingFromCalls("team", "Team", null, calls),
+    agents,
+  };
+}
+
 export type StoredQueue = {
   createdAt: string;
   ids: string[];

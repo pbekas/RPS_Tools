@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { apiRequireTimeClockManager } from "@/lib/requireAccess";
+import { apiRequireTimeClockAdmin } from "@/lib/requireAccess";
 import { listTimeClockAuditLog } from "@/lib/timeClockAudit";
 
 export async function GET(req: Request) {
-  const { error, access } = await apiRequireTimeClockManager();
+  const { error, access } = await apiRequireTimeClockAdmin();
   if (error) return error;
 
   const { searchParams } = new URL(req.url);

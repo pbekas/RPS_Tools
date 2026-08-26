@@ -3,6 +3,7 @@ import "server-only";
 import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
+import { notifyPunchEditPending } from "@/lib/timeClockApprovalMail";
 import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
 import type {
   PunchStatus,
@@ -620,6 +621,17 @@ export async function createEditRequest(input: {
       reason: input.reason,
     },
   });
+  const settings = await getTimeClockSettings();
+  await notifyPunchEditPending(
+    {
+      ...request,
+      requester_name: entry.user_name || request.requester_name,
+    },
+    {
+      employeeName: entry.user_name,
+      timezone: settings.timezone,
+    }
+  );
   return request;
 }
 

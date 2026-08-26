@@ -1,20 +1,22 @@
-import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { listUsers } from "@/lib/database";
 import { isMappedAgentUser } from "@/lib/qa";
 import { SampleQueue } from "@/components/SampleQueue";
+import { requireCallQaManager } from "@/lib/requireAccess";
+import { canViewCallAgent } from "@/lib/orgTeamAccess";
 
 export default async function QueuePage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
-  if ((session.user.role || "").toLowerCase() !== "admin") redirect("/");
+  const { scope } = await requireCallQaManager();
 
   const users = await listUsers();
-  const agents = users.filter(isMappedAgentUser).map((u) => ({
-    email: u.email.toLowerCase(),
-    name: u.name,
-  }));
+  const agents = users
+    .filter(isMappedAgentUser)
+    .filter((u) => canViewCallAgent(scope, u.email))
+    .map((u) => ({
+      email: u.email.toLowerCase(),
+      name: u.name,
+    }));
 
-  return <SampleQueue agents={agents} />;
+  return (
+    <SampleQueue agents={agents} allowUnknown={scope.isAdmin} />
+  );
 }

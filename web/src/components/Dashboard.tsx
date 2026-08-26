@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { CallDoc } from "@/lib/database";
-import type { HeatmapData } from "@/lib/qa";
+import type { HeatmapData, QaTeamRating } from "@/lib/qa";
 import { agentBucketKey } from "@/lib/qa";
 import {
   criticalFlagLabels,
@@ -24,6 +24,7 @@ type Props = {
   canViewTeam?: boolean;
   heatmap?: HeatmapData | null;
   heatmapDays?: number;
+  teamRatings?: { team: QaTeamRating; agents: QaTeamRating[] } | null;
 };
 
 export function Dashboard({
@@ -32,6 +33,7 @@ export function Dashboard({
   canViewTeam = false,
   heatmap,
   heatmapDays = 14,
+  teamRatings = null,
 }: Props) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -113,7 +115,9 @@ export function Dashboard({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Call QA dashboard</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            Review scored calls, spot issue patterns, and pull a manager sample queue.
+            {canViewTeam
+              ? "Team quality ratings, issue patterns, and a sample queue for your people."
+              : "Review scored calls, spot issue patterns, and pull a manager sample queue."}
           </p>
         </div>
         {isAdmin ? (
@@ -127,12 +131,33 @@ export function Dashboard({
       </div>
 
       <div className="mb-8 grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Stat label="Calls" value={String(stats.total)} />
-        <Stat label="Avg quality" value={stats.avgQ.toFixed(1)} />
-        <Stat label="Avg empathy" value={stats.avgE.toFixed(1)} />
+        <Stat label={canViewTeam ? "Team calls" : "Calls"} value={String(stats.total)} />
+        <Stat
+          label={canViewTeam ? "Team quality" : "Avg quality"}
+          value={stats.avgQ.toFixed(1)}
+        />
+        <Stat
+          label={canViewTeam ? "Team empathy" : "Avg empathy"}
+          value={stats.avgE.toFixed(1)}
+        />
         <Stat label="FCR rate" value={`${stats.fcrRate.toFixed(0)}%`} />
         <Stat label="Critical flags" value={String(stats.criticalCount)} />
       </div>
+
+      {canViewTeam && teamRatings ? (
+        <TeamRatingsTable
+          ratings={teamRatings}
+          days={heatmapDays}
+          selectedAgent={agentFilter}
+          onSelectAgent={(email) => {
+            if (!email || email === agentFilter) {
+              router.push("/");
+              return;
+            }
+            router.push(`/?agent=${encodeURIComponent(email)}`);
+          }}
+        />
+      ) : null}
 
       {canViewTeam && heatmap ? (
         <div className="mb-10">
@@ -315,6 +340,97 @@ function Stat({ label, value }: { label: string; value: string }) {
       </div>
       <div className="mt-1 font-display text-3xl text-ink">{value}</div>
     </div>
+  );
+}
+
+function formatRating(value: number | null, digits = 1): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return value.toFixed(digits);
+}
+
+function TeamRatingsTable({
+  ratings,
+  days,
+  selectedAgent,
+  onSelectAgent,
+}: {
+  ratings: { team: QaTeamRating; agents: QaTeamRating[] };
+  days: number;
+  selectedAgent: string;
+  onSelectAgent: (email: string) => void;
+}) {
+  const rows = [ratings.team, ...ratings.agents];
+  return (
+    <section className="mb-10 overflow-hidden rounded-2xl border border-line bg-white/80 shadow-soft">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="font-display text-xl text-ink">Team ratings</h2>
+        <p className="text-sm text-ink-soft">
+          Quality, empathy, and FCR for your team · last {days} days. Click a
+          person to filter calls.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="border-b border-line bg-wash/70 text-[11px] uppercase tracking-wide text-ink-soft">
+            <tr>
+              <th className="px-4 py-2 font-semibold">Person</th>
+              <th className="px-4 py-2 text-right font-semibold">Calls</th>
+              <th className="px-4 py-2 text-right font-semibold">Quality</th>
+              <th className="px-4 py-2 text-right font-semibold">Empathy</th>
+              <th className="px-4 py-2 text-right font-semibold">FCR</th>
+              <th className="px-4 py-2 text-right font-semibold">Needs attention</th>
+              <th className="px-4 py-2 text-right font-semibold">Flags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const isTeam = row.key === "team";
+              const selected = !isTeam && selectedAgent === row.key;
+              return (
+                <tr
+                  key={row.key}
+                  className={`border-b border-line/70 last:border-0 ${
+                    isTeam ? "bg-wash/40 font-semibold" : "cursor-pointer hover:bg-wash/50"
+                  } ${selected ? "bg-wash/70" : ""}`}
+                  onClick={() => {
+                    if (isTeam) {
+                      if (selectedAgent) onSelectAgent("");
+                      return;
+                    }
+                    onSelectAgent(row.email || row.key);
+                  }}
+                >
+                  <td className="px-4 py-2.5 text-ink">
+                    {row.name}
+                    {!isTeam && row.email ? (
+                      <div className="text-xs font-normal text-ink-soft">{row.email}</div>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{row.calls}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatRating(row.avgQuality)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatRating(row.avgEmpathy)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {row.fcrRate == null ? "—" : `${Math.round(row.fcrRate * 100)}%`}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{row.failCount}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {row.criticalCount ? (
+                      <span className="font-semibold text-fail">{row.criticalCount}</span>
+                    ) : (
+                      "0"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

@@ -27,10 +27,10 @@ export function AppNav() {
 
   const admin = isAdmin(data.user);
   const supervisor = isSupervisor(data.user);
+  const teamManager = Boolean(data.user.teamManager) || admin || supervisor;
+  const callQaManager = admin || teamManager;
   const timeClockManager =
-    Boolean((data.user as { timeClockManager?: boolean }).timeClockManager) ||
-    admin ||
-    supervisor;
+    Boolean(data.user.timeClockManager) || admin || supervisor;
   const toolsets = grantedToolsets(data.user);
   const current = activeToolset(pathname);
   const contractAccess = resolveContractAccess(data.user);
@@ -96,7 +96,7 @@ export function AppNav() {
               >
                 Coaching
               </Link>
-              {admin ? (
+              {callQaManager ? (
                 <>
                   <Link href="/ops" className={navClass(pathname.startsWith("/ops"))}>
                     Call ops
@@ -107,12 +107,14 @@ export function AppNav() {
                   >
                     QA queue
                   </Link>
-                  <Link
-                    href="/settings"
-                    className={navClass(pathname.startsWith("/settings"))}
-                  >
-                    QA settings
-                  </Link>
+                  {admin ? (
+                    <Link
+                      href="/settings"
+                      className={navClass(pathname.startsWith("/settings"))}
+                    >
+                      QA settings
+                    </Link>
+                  ) : null}
                 </>
               ) : null}
             </nav>
@@ -170,12 +172,14 @@ export function AppNav() {
                   >
                     PTO banks
                   </Link>
-                  <Link
-                    href="/time-clock/audit"
-                    className={navClass(pathname.startsWith("/time-clock/audit"))}
-                  >
-                    Audit
-                  </Link>
+                  {admin || Boolean(data.user.timeClockAdmin) ? (
+                    <Link
+                      href="/time-clock/audit"
+                      className={navClass(pathname.startsWith("/time-clock/audit"))}
+                    >
+                      Audit
+                    </Link>
+                  ) : null}
                 </>
               ) : null}
               <Link
@@ -250,7 +254,7 @@ export function AppNav() {
               canOpenVendors={contractAccess.canOpenVendors}
             />
           ) : null}
-          {admin ? (
+          {admin || teamManager ? (
             <Link
               href="/users"
               className={`hidden font-semibold sm:inline ${

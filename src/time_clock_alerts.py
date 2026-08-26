@@ -89,6 +89,7 @@ def get_time_clock_settings() -> dict[str, Any] | None:
 
 
 def list_time_clock_users() -> list[dict[str, Any]]:
+    """Active members of an active Time Clock team (people expected to punch)."""
     from src.postgres_db import get_connection
 
     with get_connection() as conn:
@@ -97,12 +98,12 @@ def list_time_clock_users() -> list[dict[str, Any]]:
             SELECT u.email, u.name, u.timezone
             FROM users u
             WHERE u.active = true
-              AND (
-                u.role IN ('Admin', 'Supervisor')
-                OR EXISTS (
-                  SELECT 1 FROM unnest(COALESCE(u.modules, ARRAY[]::text[])) AS m(mod)
-                  WHERE m.mod = 'time_clock'
-                )
+              AND EXISTS (
+                SELECT 1
+                FROM time_clock_team_members m
+                JOIN time_clock_teams t ON t.id = m.team_id
+                WHERE m.user_email = u.email
+                  AND t.active = true
               )
             ORDER BY u.name ASC, u.email ASC
             """

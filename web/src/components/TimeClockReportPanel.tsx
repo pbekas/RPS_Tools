@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { TimeClockReport, TimeEntry } from "@/lib/timeClockTypes";
 import { WeeklyBreakdownTable } from "@/components/TimeClockEntries";
+import type { TimeClockReport, TimeEntry } from "@/lib/timeClockTypes";
 import {
   formatHours,
   formatTime,
@@ -14,6 +14,8 @@ import {
   resolvePayPeriod,
   type PayPeriodBounds,
 } from "@/lib/timeClockPayPeriod";
+
+type ReportUser = NonNullable<TimeClockReport["by_user"]>[number];
 
 type PayPeriodConfig = {
   timezone: string;
@@ -63,6 +65,59 @@ function groupEntriesByDay(entries: TimeEntry[], timezone: string): DayGroup[] {
     }
   }
   return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function PersonRow({
+  user,
+  timezone,
+  open,
+  onToggle,
+}: {
+  user: ReportUser;
+  timezone: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="border-b border-line/70 last:border-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-wash/70"
+      >
+        <span
+          className={`text-ink-soft transition-transform ${open ? "rotate-90" : ""}`}
+          aria-hidden
+        >
+          ▸
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold text-ink">{user.user_name}</span>
+          <span className="block truncate text-sm text-ink-soft">
+            {user.user_email}
+          </span>
+        </span>
+        <span className="shrink-0 text-right">
+          <span className="block text-lg font-semibold text-accent">
+            {formatHours(user.total_hours)}
+          </span>
+          {user.approval ? (
+            <span
+              className={`block text-xs font-semibold uppercase tracking-wide ${
+                APPROVAL_STYLES[user.approval.status] || APPROVAL_STYLES.none
+              }`}
+            >
+              {user.approval.status === "approved"
+                ? `Approved by ${user.approval.reviewed_by_name || "manager"}`
+                : user.approval.status}
+            </span>
+          ) : null}
+        </span>
+      </button>
+      {open ? <DailyPunches entries={user.entries} timezone={timezone} /> : null}
+    </div>
+  );
 }
 
 function DailyPunches({
@@ -138,6 +193,7 @@ export function TimeClockReportPanel({
   const [msg, setMsg] = useState("");
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [noPunchesOpen, setNoPunchesOpen] = useState(false);
 
   const activePayPeriod = useMemo((): PayPeriodBounds | null => {
     if (preset === "custom") return null;
@@ -174,6 +230,15 @@ export function TimeClockReportPanel({
     );
   }, [report, query]);
 
+  const withHours = useMemo(
+    () => people.filter((user) => user.total_hours > 0),
+    [people]
+  );
+  const noPunches = useMemo(
+    () => people.filter((user) => user.total_hours <= 0),
+    [people]
+  );
+
   async function loadReport() {
     setBusy(true);
     setMsg("");
@@ -193,6 +258,7 @@ export function TimeClockReportPanel({
       if (!res.ok) throw new Error(data.error || "Failed to load report");
       setReport(data.report);
       setExpanded({});
+      setNoPunchesOpen(false);
       if (data.report?.pay_period) {
         setFrom(data.report.pay_period.period_start);
         setTo(data.report.pay_period.period_end);
@@ -324,7 +390,8 @@ export function TimeClockReportPanel({
                 <div>
                   <h2 className="font-display text-xl text-ink">Hours by person</h2>
                   <p className="text-sm text-ink-soft">
-                    Expand a person to see daily punches and times.
+                    Expand a person to see daily punches and times. People with
+                    no hours are under No punches.
                   </p>
                 </div>
                 {(report.by_user?.length || 0) > 8 ? (
@@ -341,66 +408,63 @@ export function TimeClockReportPanel({
                 ) : null}
               </div>
 
-              {people.length ? (
-                <div className="overflow-hidden rounded-xl border border-line bg-white/90">
-                  {people.map((user) => {
-                    const open = Boolean(expanded[user.user_email]);
-                    return (
-                      <div
-                        key={user.user_email}
-                        className="border-b border-line/70 last:border-0"
-                      >
-                        <button
-                          type="button"
-                          aria-expanded={open}
-                          onClick={() => togglePerson(user.user_email)}
-                          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-wash/70"
-                        >
+              {withHours.length || noPunches.length ? (
+                <div className="space-y-3">
+                  {withHours.length ? (
+                    <div className="overflow-hidden rounded-xl border border-line bg-white/90">
+                      {withHours.map((user) => (
+                        <PersonRow
+                          key={user.user_email}
+                          user={user}
+                          timezone={report.timezone}
+                          open={Boolean(expanded[user.user_email])}
+                          onToggle={() => togglePerson(user.user_email)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-line bg-white/90 px-4 py-4 text-sm text-ink-soft">
+                      {query.trim()
+                        ? "No matching people with hours in this period."
+                        : "No hours in this period."}
+                    </p>
+                  )}
+
+                  {noPunches.length ? (
+                    <details
+                      className="group overflow-hidden rounded-xl border border-line bg-white/90"
+                      open={query.trim() ? true : noPunchesOpen}
+                      onToggle={(event) => {
+                        if (query.trim()) return;
+                        setNoPunchesOpen(
+                          (event.currentTarget as HTMLDetailsElement).open
+                        );
+                      }}
+                    >
+                      <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-ink-soft hover:bg-wash/70 [&::-webkit-details-marker]:hidden">
+                        <span className="inline-flex items-center gap-2">
                           <span
-                            className={`text-ink-soft transition-transform ${
-                              open ? "rotate-90" : ""
-                            }`}
+                            className="inline-block transition-transform group-open:rotate-90"
                             aria-hidden
                           >
                             ▸
                           </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-semibold text-ink">
-                              {user.user_name}
-                            </span>
-                            <span className="block truncate text-sm text-ink-soft">
-                              {user.user_email}
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-right">
-                            <span className="block text-lg font-semibold text-accent">
-                              {formatHours(user.total_hours)}
-                            </span>
-                            {user.approval ? (
-                              <span
-                                className={`block text-xs font-semibold uppercase tracking-wide ${
-                                  APPROVAL_STYLES[user.approval.status] ||
-                                  APPROVAL_STYLES.none
-                                }`}
-                              >
-                                {user.approval.status === "approved"
-                                  ? `Approved by ${
-                                      user.approval.reviewed_by_name || "manager"
-                                    }`
-                                  : user.approval.status}
-                              </span>
-                            ) : null}
-                          </span>
-                        </button>
-                        {open ? (
-                          <DailyPunches
-                            entries={user.entries}
+                          No punches ({noPunches.length})
+                        </span>
+                      </summary>
+                      <div className="border-t border-line">
+                        {noPunches.map((user) => (
+                          <PersonRow
+                            key={user.user_email}
+                            user={user}
                             timezone={report.timezone}
+                            open={Boolean(expanded[user.user_email])}
+                            onToggle={() => togglePerson(user.user_email)}
                           />
-                        ) : null}
+                        ))}
                       </div>
-                    );
-                  })}
+                    </details>
+                  ) : null}
                 </div>
               ) : (
                 <p className="rounded-xl border border-line bg-white/90 px-4 py-4 text-sm text-ink-soft">

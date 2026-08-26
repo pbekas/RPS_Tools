@@ -1,21 +1,24 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
 import { assignCallAgent } from "@/lib/database";
+import { apiRequireCallQaManageCall } from "@/lib/requireAccess";
+import { canViewCallAgent } from "@/lib/orgTeamAccess";
 
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
   const { id } = await context.params;
+  const { error, scope } = await apiRequireCallQaManageCall(id);
+  if (error) return error;
+  if (!scope) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await req.json().catch(() => ({}));
+  const agentEmail = String(body.agent_email || "").trim().toLowerCase();
+  if (agentEmail && !canViewCallAgent(scope, agentEmail)) {
+    return NextResponse.json({ error: "Agent is outside your team" }, { status: 403 });
+  }
   try {
     const call = await assignCallAgent({
       callId: id,

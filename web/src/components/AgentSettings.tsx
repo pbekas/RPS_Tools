@@ -23,6 +23,7 @@ type Props = {
   contractGroups?: ContractGroup[];
   teamsEnabled?: boolean;
   grantCaps?: AccessGrantCaps;
+  canEditPeople?: boolean;
 };
 
 function toolsetsForUser(user: UserDoc): ToolsetId[] {
@@ -37,6 +38,7 @@ export function AgentSettings({
   contractGroups = [],
   teamsEnabled = false,
   grantCaps,
+  canEditPeople = true,
 }: Props) {
   const caps: AccessGrantCaps = grantCaps || {
     toolsets: [],
@@ -258,8 +260,9 @@ export function AgentSettings({
           </p>
           <h1 className="mt-1 font-display text-4xl text-ink">Users & access</h1>
           <p className="mt-2 max-w-2xl text-ink-soft">
-            Directory people only — search, edit access, and assign departments.
-            Call recordings no longer create users.
+            {canEditPeople
+              ? "Anyone with an allowed Workspace account can sign in. First visit creates them as Agent with Time Clock. Grant Call QA or Contracts here, and assign a team if they should punch with a supervisor."
+              : "People on your team. You can add or remove members; role and tool-set changes stay with an admin."}
           </p>
         </div>
       ) : (
@@ -287,13 +290,15 @@ export function AgentSettings({
             placeholder="Search name or email…"
             className="rounded-xl border border-line bg-white px-3 py-2 text-sm"
           />
-          <button
-            type="button"
-            onClick={openAdd}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep"
-          >
-            Add person
-          </button>
+          {canEditPeople ? (
+            <button
+              type="button"
+              onClick={openAdd}
+              className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-deep"
+            >
+              Add person
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -333,7 +338,7 @@ export function AgentSettings({
                     <td className="px-4 py-3">{u.role || "Agent"}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
-                        {grantableToolsets.length ? (
+                        {grantableToolsets.length && canEditPeople ? (
                           grantableToolsets.map((id) => {
                           const on = granted.includes(id);
                           return (
@@ -365,7 +370,9 @@ export function AgentSettings({
                           );
                         })
                         ) : (
-                          <span className="text-ink-soft">—</span>
+                          <span className="text-ink-soft">
+                            {granted.map((id) => TOOLSETS[id].label).join(" · ") || "—"}
+                          </span>
                         )}
                       </div>
                     </td>
@@ -381,22 +388,24 @@ export function AgentSettings({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => editUser(u)}
-                          className="text-xs font-semibold text-accent hover:underline"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleActive(u)}
-                          className="text-xs font-semibold text-ink-soft hover:underline"
-                        >
-                          {active ? "Deactivate" : "Activate"}
-                        </button>
-                      </div>
+                      {canEditPeople ? (
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => editUser(u)}
+                            className="text-xs font-semibold text-accent hover:underline"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleActive(u)}
+                            className="text-xs font-semibold text-ink-soft hover:underline"
+                          >
+                            {active ? "Deactivate" : "Activate"}
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -410,8 +419,9 @@ export function AgentSettings({
         <section id="teams" className="mb-8 scroll-mt-24">
           <h2 className="mb-3 font-display text-2xl text-ink">Teams & departments</h2>
           <p className="mb-4 max-w-2xl text-sm text-ink-soft">
-            Shared across Call QA and Time Clock. Supervisors see coaching and
-            time for the people on their team.
+            {canEditPeople
+              ? "Shared across Call QA and Time Clock. Supervisors see coaching and time for the people on their team."
+              : "Add or remove people on your team. You cannot move someone who already belongs to another department."}
           </p>
           <TimeClockTeamsPanel
             initialTeams={[]}
@@ -420,11 +430,13 @@ export function AgentSettings({
               name: user.name || user.email,
               role: user.role || "Agent",
             }))}
+            canCreateTeams={canEditPeople}
+            canEditSupervisor={canEditPeople}
           />
         </section>
       ) : null}
 
-      {formOpen ? (
+      {formOpen && canEditPeople ? (
         <div
           className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-ink/40 p-4 py-10"
           onClick={() => {

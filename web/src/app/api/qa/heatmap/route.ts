@@ -1,16 +1,13 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
 import { listCalls, listUsers } from "@/lib/database";
 import { buildIssueHeatmap, filterMappedQaCalls } from "@/lib/qa";
+import { apiRequireCallQaManager } from "@/lib/requireAccess";
 
 export async function GET(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  const { error, scope } = await apiRequireCallQaManager();
+  if (error) return error;
+  if (!scope) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { searchParams } = new URL(req.url);
@@ -21,6 +18,7 @@ export async function GET(req: Request) {
       status: "complete",
       limit: 500,
       sinceMs,
+      agentEmails: scope.agentEmails,
     }),
     listUsers(),
   ]);

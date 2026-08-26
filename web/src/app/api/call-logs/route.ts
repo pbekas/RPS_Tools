@@ -1,14 +1,13 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
-import { listCallLogs, summarizeCallLogs } from "@/lib/database";
+import { listCallLogs, listUsers, summarizeCallLogs } from "@/lib/database";
+import { filterCallLogsForPeople } from "@/lib/callLogs";
+import { apiRequireCallQaManager } from "@/lib/requireAccess";
+import { canViewCallAgent } from "@/lib/orgTeamAccess";
 
 export async function GET(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
+  const { error, scope } = await apiRequireCallQaManager();
+  if (error) return error;
+  if (!scope) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -25,7 +24,7 @@ export async function GET(req: Request) {
   if (recordedParam === "true" || recordedParam === "1") recorded = true;
   if (recordedParam === "false" || recordedParam === "0") recorded = false;
 
-  const logs = await listCallLogs({
+  const rawLogs = await listCallLogs({
     limit,
     days: Number.isFinite(days) && days > 0 ? days : 7,
     result,
@@ -34,6 +33,10 @@ export async function GET(req: Request) {
     missedOnly,
     unrecordedOnly,
   });
+  const people = scope.agentEmails
+    ? (await listUsers()).filter((user) => canViewCallAgent(scope, user.email))
+    : null;
+  const logs = filterCallLogsForPeople(rawLogs, people);
   const stats = summarizeCallLogs(logs);
   return NextResponse.json({ logs, stats });
 }

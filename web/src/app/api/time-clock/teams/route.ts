@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { apiRequireAdmin } from "@/lib/requireAccess";
+import {
+  apiRequireAdmin,
+  apiRequireTeamManager,
+} from "@/lib/requireAccess";
 import { listUsers } from "@/lib/database";
 import {
   createTimeClockTeam,
@@ -7,18 +10,49 @@ import {
 } from "@/lib/timeClockTeamsDb";
 
 export async function GET() {
-  const { error } = await apiRequireAdmin();
+  const { error, access } = await apiRequireTeamManager();
   if (error) return error;
+  if (!access) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   try {
-    const [teams, users] = await Promise.all([
-      listTimeClockTeamsWithMembers({ activeOnly: false, teamIds: null }),
+    const [teams, users, allTeams] = await Promise.all([
+      listTimeClockTeamsWithMembers({
+        activeOnly: false,
+        teamIds: access.isAdmin ? null : access.teamIds,
+      }),
       listUsers(),
+      access.isAdmin
+        ? Promise.resolve([])
+        : listTimeClockTeamsWithMembers({ activeOnly: true, teamIds: null }),
     ]);
+    const assigned = new Set(
+      (access.isAdmin ? teams : allTeams).flatMap((team) =>
+        (team.members || []).map((member) => member.user_email.toLowerCase())
+      )
+    );
+    const allowed = new Set(
+      access.isAdmin
+        ? users.map((user) => user.email.toLowerCase())
+        : [
+            ...(access.visibleUserEmails || []),
+            ...users
+              .filter(
+                (user) =>
+                  user.active !== false &&
+                  !assigned.has(user.email.toLowerCase())
+              )
+              .map((user) => user.email.toLowerCase()),
+          ]
+    );
     return NextResponse.json({
       teams,
       users: users
-        .filter((user) => user.active !== false)
+        .filter(
+          (user) =>
+            user.active !== false && allowed.has(user.email.toLowerCase())
+        )
         .map((user) => ({
           email: user.email,
           name: user.name || user.email,

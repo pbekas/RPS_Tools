@@ -1,32 +1,36 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
 import { listCalls, listUsers } from "@/lib/database";
 import {
   buildQaSample,
   filterMappedQaCalls,
   isQaEligibleDuration,
 } from "@/lib/qa";
+import { apiRequireCallQaManager } from "@/lib/requireAccess";
+import { canViewCallAgent } from "@/lib/orgTeamAccess";
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  const { error, scope } = await apiRequireCallQaManager();
+  if (error) return error;
+  if (!scope) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));
   const days = Math.min(90, Math.max(1, Number(body.days) || 14));
   const perAgent = Math.min(20, Math.max(1, Number(body.per_agent) || 3));
-  const unknownCount = Math.min(30, Math.max(0, Number(body.unknown_count) || 5));
+  const unknownCount = scope.isAdmin
+    ? Math.min(30, Math.max(0, Number(body.unknown_count) || 5))
+    : 0;
   const unreviewedOnly = body.unreviewed_only !== false;
   const overweightFails = body.overweight_fails !== false;
-  const includeUnknown = body.include_unknown === true;
-  const agentEmails: string[] | null = Array.isArray(body.agent_emails)
+  const includeUnknown = scope.isAdmin && body.include_unknown === true;
+  const requested: string[] | null = Array.isArray(body.agent_emails)
     ? body.agent_emails.map((e: string) => String(e).toLowerCase())
     : null;
+  const agentEmails =
+    requested && requested.length
+      ? requested.filter((email) => canViewCallAgent(scope, email))
+      : scope.agentEmails;
 
   const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const [rawCalls, users] = await Promise.all([
@@ -34,6 +38,7 @@ export async function POST(req: Request) {
       status: "complete",
       limit: 500,
       sinceMs,
+      agentEmails,
     }),
     listUsers(),
   ]);

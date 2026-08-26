@@ -4,6 +4,7 @@ import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
 import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
+import { notifyTimeOffPending } from "@/lib/timeClockApprovalMail";
 import type {
   TeamTimeOffEntry,
   TimeOffBank,
@@ -599,6 +600,12 @@ export async function upsertTimeOffEntry(input: {
       bank_remaining: bankAfter?.remaining_hours,
     },
   });
+  if (
+    saved.status === "pending" &&
+    (!existing || existing.status !== "pending")
+  ) {
+    await notifyTimeOffPending(saved);
+  }
   return saved;
 }
 

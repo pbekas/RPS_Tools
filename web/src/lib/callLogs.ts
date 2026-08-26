@@ -118,6 +118,53 @@ export function partyFromLog(log: CallLogDoc): {
   return { key, name: displayName, user, extension };
 }
 
+export type LogPerson = {
+  email?: string | null;
+  name?: string | null;
+  extension?: string | null;
+};
+
+/** null people = unrestricted. Empty list = match nobody. */
+export function callLogMatchesPeople(
+  log: CallLogDoc,
+  people: LogPerson[] | null
+): boolean {
+  if (people == null) return true;
+  if (!people.length) return false;
+  const emails = new Set(
+    people.map((p) => (p.email || "").trim().toLowerCase()).filter(Boolean)
+  );
+  const names = new Set(
+    people.map((p) => (p.name || "").trim().toLowerCase()).filter(Boolean)
+  );
+  const exts = new Set(
+    people
+      .map((p) => String(p.extension || "").replace(/\D/g, ""))
+      .filter(Boolean)
+  );
+  const fields = [
+    log.source_user,
+    log.destination_user,
+    log.source_user_full_name,
+    log.destination_user_full_name,
+  ].map((value) => (value || "").trim().toLowerCase());
+  if (fields.some((field) => field && (emails.has(field) || names.has(field)))) {
+    return true;
+  }
+  const logExts = [log.source_extension, log.destination_extension]
+    .map((value) => String(value || "").replace(/\D/g, ""))
+    .filter(Boolean);
+  return logExts.some((ext) => exts.has(ext));
+}
+
+export function filterCallLogsForPeople(
+  logs: CallLogDoc[],
+  people: LogPerson[] | null
+): CallLogDoc[] {
+  if (people == null) return logs;
+  return logs.filter((log) => callLogMatchesPeople(log, people));
+}
+
 export function summarizeCallLogs(logs: CallLogDoc[]): CallLogStats {
   const total = logs.length;
   let missed = 0;

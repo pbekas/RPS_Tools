@@ -41,7 +41,8 @@ export default async function TimeClockApprovalsPage() {
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Approvals</h1>
       <p className="mt-1 text-ink-soft">
-        Approve weekly timesheets, time edits, and time-off requests.
+        Approve weekly timesheets, time edits, and time-off requests. New
+        time-off and punch-edit requests email the team supervisor.
       </p>
       <div className="mt-6">
         <ApprovalsHub

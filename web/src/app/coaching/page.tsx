@@ -70,7 +70,7 @@ export default async function CoachingPage({ searchParams }: Props) {
 
     return (
       <CoachingPanel
-        isAdmin={scope.isAdmin}
+        isAdmin={scope.isManager}
         canViewTeam={scope.canViewTeam}
         initialUser={user}
         initialMetrics={metrics}

@@ -12,6 +12,8 @@ import {
 } from "@/lib/database";
 import { normalizeModuleGrants } from "@/lib/permissions";
 import { accessGrantCaps, constrainModuleGrants } from "@/lib/contractAccess";
+import { apiRequireTeamManager } from "@/lib/requireAccess";
+import { canViewTimeClockUser } from "@/lib/timeClockAccess";
 
 function requireAdmin(session: { user?: { email?: string | null; role?: string } } | null) {
   if (!session?.user?.email) {
@@ -33,12 +35,16 @@ function allowedDomains(): string[] {
 }
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  const denied = requireAdmin(session);
-  if (denied) return denied;
+  const { session, error, access } = await apiRequireTeamManager();
+  if (error) return error;
+  if (!session || !access) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const users = await listUsers();
-  const caps = accessGrantCaps(session!.user);
+  const users = (await listUsers()).filter((user) =>
+    access.isAdmin ? true : canViewTimeClockUser(access, user.email)
+  );
+  const caps = accessGrantCaps(session.user);
   return NextResponse.json({
     users,
     unmapped: [],

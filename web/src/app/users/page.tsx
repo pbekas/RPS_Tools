@@ -1,8 +1,9 @@
-import { requireAdminSession } from "@/lib/requireAccess";
+import { requireTeamManager } from "@/lib/requireAccess";
 import { listUsers } from "@/lib/database";
 import { listContractGroups } from "@/lib/contractsDb";
 import { accessGrantCaps } from "@/lib/contractAccess";
 import { AgentSettings } from "@/components/AgentSettings";
+import { canViewTimeClockUser } from "@/lib/timeClockAccess";
 
 function isPostgres() {
   return (
@@ -12,12 +13,17 @@ function isPostgres() {
 }
 
 export default async function UsersAccessPage() {
-  const session = await requireAdminSession();
+  const { session, access } = await requireTeamManager();
   const postgres = isPostgres();
-  const [users, groups] = await Promise.all([
+  const [allUsers, groups] = await Promise.all([
     listUsers(),
-    postgres ? listContractGroups().catch(() => []) : Promise.resolve([]),
+    postgres && access.isAdmin
+      ? listContractGroups().catch(() => [])
+      : Promise.resolve([]),
   ]);
+  const users = access.isAdmin
+    ? allUsers
+    : allUsers.filter((user) => canViewTimeClockUser(access, user.email));
   const domain = process.env.ALLOWED_EMAIL_DOMAIN || "releviumpain.com";
 
   return (
@@ -27,6 +33,7 @@ export default async function UsersAccessPage() {
       contractGroups={groups}
       teamsEnabled={postgres}
       grantCaps={accessGrantCaps(session.user)}
+      canEditPeople={access.isAdmin}
     />
   );
 }

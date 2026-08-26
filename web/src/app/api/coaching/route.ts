@@ -10,6 +10,7 @@ import {
   listUsers,
 } from "@/lib/database";
 import { canViewCallAgent, resolveCallQaScope } from "@/lib/orgTeamAccess";
+import { apiRequireCallQaManager } from "@/lib/requireAccess";
 
 async function sampleForAgent(email: string): Promise<string[]> {
   const calls = await listCalls({
@@ -51,18 +52,19 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if ((session.user.role || "").toLowerCase() !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
+  const { session, error, scope } = await apiRequireCallQaManager();
+  if (error) return error;
+  if (!session || !scope) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await req.json().catch(() => ({}));
   const agent = String(body.agent || body.email || "").trim().toLowerCase();
   if (!agent) {
     return NextResponse.json({ error: "agent required" }, { status: 400 });
+  }
+  if (!canViewCallAgent(scope, agent)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {

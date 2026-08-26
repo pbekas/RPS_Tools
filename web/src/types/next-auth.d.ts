@@ -11,6 +11,7 @@ declare module "next-auth" {
       modules?: string[];
       timeClockManager?: boolean;
       timeClockAdmin?: boolean;
+      teamManager?: boolean;
     };
   }
 }
@@ -21,5 +22,6 @@ declare module "next-auth/jwt" {
     modules?: string[];
     timeClockManager?: boolean;
     timeClockAdmin?: boolean;
+    teamManager?: boolean;
   }
 }

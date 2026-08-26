@@ -175,7 +175,7 @@ export function CoachingPanel({
         </div>
         <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-ink">
           {user.rolling_ai_feedback?.trim() ||
-            "No coaching report yet. An admin can generate one from recent ops + QA signals."}
+            "No coaching report yet. Generate one from recent ops + QA signals."}
         </div>
       </div>
 

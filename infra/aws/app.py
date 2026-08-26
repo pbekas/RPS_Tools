@@ -270,6 +270,8 @@ class RpsCallQaStack(Stack):
                     "PGSSLMODE": "verify-full",
                     "PGSSLROOTCERT": "/etc/ssl/certs/aws-rds-global-bundle.pem",
                     "POLLER_INTERNAL_URL": "http://poller.rps-call-qa.local:8080",
+                    "TIME_CLOCK_EMAIL_ENABLED": "1",
+                    "SES_FROM_EMAIL": "Relevium Time Clock <no_reply@releviumpain.com>",
                 },
                 secrets={
                     "NEXTAUTH_SECRET": ecs.Secret.from_secrets_manager(
@@ -491,13 +493,12 @@ class RpsCallQaStack(Stack):
                     resources=["*"],
                 )
             )
-
-        poller_td.task_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["ses:SendEmail", "ses:SendRawEmail"],
-                resources=["*"],
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["ses:SendEmail", "ses:SendRawEmail"],
+                    resources=["*"],
+                )
             )
-        )
 
         CfnOutput(self, "LoadBalancerDNS", value=web.load_balancer.load_balancer_dns_name)
         CfnOutput(self, "AppURL", value=f"https://{domain}")

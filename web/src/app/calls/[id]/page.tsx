@@ -26,15 +26,19 @@ export default async function CallPage({
 
   const [recording_url, agents] = await Promise.all([
     resolveRecordingUrl(call),
-    scope.isAdmin
-      ? listUsers().then((rows) => rows.filter(isMappedAgentUser))
+    scope.isManager
+      ? listUsers().then((rows) =>
+          rows
+            .filter(isMappedAgentUser)
+            .filter((row) => canViewCallAgent(scope, row.email))
+        )
       : Promise.resolve([]),
   ]);
 
   return (
     <CallReview
       call={{ ...call, recording_url }}
-      isAdmin={scope.isAdmin}
+      isAdmin={scope.isManager}
       agents={agents}
     />
   );

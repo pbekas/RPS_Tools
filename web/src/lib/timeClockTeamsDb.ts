@@ -343,3 +343,42 @@ export async function getTeamIdForUser(userEmail: string): Promise<string | null
   );
   return rows[0] ? String(rows[0].team_id) : null;
 }
+
+export async function listSupervisorsForUser(
+  userEmail: string
+): Promise<Array<{ email: string; name: string }>> {
+  requirePostgres();
+  const rows = await query<{ email: string; name: string }>(
+    `SELECT DISTINCT lower(t.supervisor_email::text) AS email,
+            coalesce(nullif(sup.name, ''), t.supervisor_email::text) AS name
+     FROM time_clock_team_members m
+     JOIN time_clock_teams t ON t.id = m.team_id
+     LEFT JOIN users sup ON sup.email = t.supervisor_email
+     WHERE m.user_email = $1
+       AND t.active = true
+       AND t.supervisor_email IS NOT NULL`,
+    [userEmail.toLowerCase()]
+  );
+  return rows
+    .map((row) => ({
+      email: String(row.email || "").toLowerCase(),
+      name: String(row.name || row.email),
+    }))
+    .filter((row) => row.email.includes("@"));
+}
+
+export async function listActiveAdmins(): Promise<
+  Array<{ email: string; name: string }>
+> {
+  requirePostgres();
+  const rows = await query<{ email: string; name: string }>(
+    `SELECT email, coalesce(nullif(name, ''), email::text) AS name
+     FROM users
+     WHERE active = true AND role = 'Admin'
+     ORDER BY name ASC, email ASC`
+  );
+  return rows.map((row) => ({
+    email: String(row.email).toLowerCase(),
+    name: String(row.name || row.email),
+  }));
+}
