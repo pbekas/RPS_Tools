@@ -239,3 +239,18 @@ export type TimeClockAuditEntry = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+export type ApprovalHistoryType = "timesheet" | "edit" | "timeoff";
+
+export type ApprovalHistoryItem = {
+  id: string;
+  type: ApprovalHistoryType;
+  person_email: string;
+  person_name: string;
+  status: "approved" | "denied";
+  item_date: string;
+  reviewed_at: string | null;
+  reviewer_name?: string;
+  summary: string;
+  review_notes: string;
+};

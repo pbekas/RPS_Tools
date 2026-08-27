@@ -128,6 +128,49 @@ export async function listPendingTimeOffRequests(
   return rows.map(entryFromRow);
 }
 
+export async function listReviewedTimeOff(opts: {
+  from: string;
+  to: string;
+  userEmails?: string[] | null;
+  userEmail?: string | null;
+  statuses?: TimeOffStatus[];
+  limit?: number;
+}): Promise<TimeOffEntry[]> {
+  requirePostgres();
+  const scope = allowlist(opts.userEmails);
+  if (scope === "none") return [];
+  const statuses = opts.statuses?.length
+    ? opts.statuses
+    : (["approved", "denied"] as TimeOffStatus[]);
+  const params: unknown[] = [opts.from, opts.to, statuses];
+  let idx = 4;
+  const extra: string[] = [];
+  if (scope !== "all") {
+    extra.push(`AND e.user_email = ANY($${idx++}::citext[])`);
+    params.push(scope.map((email) => String(email).toLowerCase()));
+  }
+  if (opts.userEmail) {
+    extra.push(`AND e.user_email = $${idx++}`);
+    params.push(opts.userEmail.toLowerCase());
+  }
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  params.push(limit);
+  const rows = await query(
+    `SELECT ${ENTRY_SELECT}
+     FROM time_off_entries e
+     LEFT JOIN users u ON u.email = e.user_email
+     LEFT JOIN users rev ON rev.email = e.reviewed_by
+     WHERE e.entry_date >= $1::date
+       AND e.entry_date <= $2::date
+       AND e.status = ANY($3::text[])
+       ${extra.join("\n       ")}
+     ORDER BY COALESCE(e.reviewed_at, e.updated_at) DESC
+     LIMIT $${idx}`,
+    params
+  );
+  return rows.map(entryFromRow);
+}
+
 export async function listTeamTimeOff(opts: {
   from: string;
   to: string;

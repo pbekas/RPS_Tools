@@ -11,6 +11,7 @@ import type {
 import { EditApprovals } from "@/components/EditApprovals";
 import { TimesheetApprovals } from "@/components/TimesheetApprovals";
 import { TimeOffApprovals } from "@/components/TimeOffApprovals";
+import { ApprovalsHistory } from "@/components/ApprovalsHistory";
 
 type Props = {
   initialEditRequests: TimeEntryEditRequest[];
@@ -18,6 +19,7 @@ type Props = {
   initialTimeOffRequests: TimeOffEntry[];
   overlapEntries: TeamTimeOffEntry[];
   settings: TimeClockSettings;
+  people: Array<{ email: string; name: string }>;
 };
 
 export function ApprovalsHub({
@@ -26,6 +28,7 @@ export function ApprovalsHub({
   initialTimeOffRequests,
   overlapEntries,
   settings,
+  people,
 }: Props) {
   const [tab, setTab] = useState<"timesheets" | "edits" | "timeoff">(
     initialTimeOffRequests.length
@@ -80,6 +83,8 @@ export function ApprovalsHub({
           overlapEntries={overlapEntries}
         />
       )}
+
+      <ApprovalsHistory people={people} timezone={settings.timezone} />
     </div>
   );
 }

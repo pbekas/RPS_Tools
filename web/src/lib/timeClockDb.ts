@@ -637,8 +637,11 @@ export async function createEditRequest(input: {
 
 export async function listEditRequests(opts: {
   status?: string;
+  statuses?: string[];
   userEmail?: string | null;
   userEmails?: string[] | null;
+  from?: string;
+  to?: string;
   limit?: number;
 }): Promise<TimeEntryEditRequest[]> {
   requirePostgres();
@@ -646,7 +649,10 @@ export async function listEditRequests(opts: {
   const params: unknown[] = [];
   let idx = 1;
 
-  if (opts.status) {
+  if (opts.statuses?.length) {
+    clauses.push(`r.status = ANY($${idx++}::text[])`);
+    params.push(opts.statuses);
+  } else if (opts.status) {
     clauses.push(`r.status = $${idx++}`);
     params.push(opts.status);
   }
@@ -658,8 +664,25 @@ export async function listEditRequests(opts: {
   pushEmailAllowlist(opts.userEmails, clauses, params, emailIdx, "r.requested_by");
   idx = emailIdx.n;
 
+  if (opts.from || opts.to) {
+    const settings = await getTimeClockSettings();
+    const tz = settings.timezone || "America/Los_Angeles";
+    if (opts.from) {
+      clauses.push(
+        `(r.original_clock_in AT TIME ZONE $${idx++})::date >= $${idx++}::date`
+      );
+      params.push(tz, opts.from);
+    }
+    if (opts.to) {
+      clauses.push(
+        `(r.original_clock_in AT TIME ZONE $${idx++})::date <= $${idx++}::date`
+      );
+      params.push(tz, opts.to);
+    }
+  }
+
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
 
   const rows = await query(
     `SELECT r.*,
@@ -679,7 +702,7 @@ export async function listEditRequests(opts: {
      JOIN time_entries e ON e.id = r.entry_id
      JOIN users eu ON eu.email = e.user_email
      ${where}
-     ORDER BY r.created_at DESC
+     ORDER BY COALESCE(r.reviewed_at, r.created_at) DESC
      LIMIT $${idx}`,
     [...params, limit]
   );
@@ -835,7 +858,7 @@ function weekStartInTimezone(iso: string, timezone: string): Date {
   return local;
 }
 
-async function listReportRoster(
+export async function listTimeClockRoster(
   emails: string[] | null | undefined
 ): Promise<Array<{ email: string; name: string }>> {
   requirePostgres();
@@ -874,7 +897,7 @@ export async function buildTimeClockReport(opts: {
   const timezone = settings.timezone;
 
   if (opts.team) {
-    const roster = await listReportRoster(opts.userEmails);
+    const roster = await listTimeClockRoster(opts.userEmails);
     const { entries } = await listTimeEntries({
       from: opts.from,
       to: opts.to,
@@ -1325,11 +1348,8 @@ export async function listSubmittedTimesheets(
   const settings = await getTimeClockSettings();
   const clauses = ["t.status = 'submitted'"];
   const params: unknown[] = [];
-  let idx = 1;
-  if (userEmails?.length) {
-    clauses.push(`t.user_email = ANY($${idx++}::citext[])`);
-    params.push(userEmails.map((e) => e.toLowerCase()));
-  }
+  const idx = { n: 1 };
+  pushEmailAllowlist(userEmails, clauses, params, idx, "t.user_email");
   params.push(Math.min(limit, 200));
   const rows = await query(
     `SELECT t.*, u.name AS user_name, rev.name AS reviewer_name
@@ -1338,7 +1358,52 @@ export async function listSubmittedTimesheets(
      LEFT JOIN users rev ON rev.email = t.reviewed_by
      WHERE ${clauses.join(" AND ")}
      ORDER BY t.submitted_at ASC
-     LIMIT $${idx}`,
+     LIMIT $${idx.n}`,
+    params
+  );
+  return rows.map((row) => timesheetFromRow(row, settings.timezone));
+}
+
+export async function listReviewedTimesheets(opts: {
+  userEmails?: string[] | null;
+  userEmail?: string | null;
+  statuses?: TimesheetStatus[];
+  from?: string;
+  to?: string;
+  limit?: number;
+}): Promise<WeeklyTimesheet[]> {
+  requirePostgres();
+  if (allowlist(opts.userEmails) === "none") return [];
+  const settings = await getTimeClockSettings();
+  const statuses = opts.statuses?.length
+    ? opts.statuses
+    : (["approved", "rejected"] as TimesheetStatus[]);
+  const clauses = ["t.status = ANY($1::text[])"];
+  const params: unknown[] = [statuses];
+  const idx = { n: 2 };
+  if (opts.userEmail) {
+    clauses.push(`t.user_email = $${idx.n++}`);
+    params.push(opts.userEmail.toLowerCase());
+  }
+  pushEmailAllowlist(opts.userEmails, clauses, params, idx, "t.user_email");
+  if (opts.from) {
+    clauses.push(`(t.week_start + interval '6 days') >= $${idx.n++}::date`);
+    params.push(opts.from);
+  }
+  if (opts.to) {
+    clauses.push(`t.week_start <= $${idx.n++}::date`);
+    params.push(opts.to);
+  }
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  params.push(limit);
+  const rows = await query(
+    `SELECT t.*, u.name AS user_name, rev.name AS reviewer_name
+     FROM time_timesheets t
+     JOIN users u ON u.email = t.user_email
+     LEFT JOIN users rev ON rev.email = t.reviewed_by
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY COALESCE(t.reviewed_at, t.submitted_at, t.updated_at) DESC
+     LIMIT $${idx.n}`,
     params
   );
   return rows.map((row) => timesheetFromRow(row, settings.timezone));

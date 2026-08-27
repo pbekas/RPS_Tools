@@ -4,6 +4,7 @@ import {
   getWeeklyTimesheetDetail,
   listEditRequests,
   listSubmittedTimesheets,
+  listTimeClockRoster,
 } from "@/lib/timeClockDb";
 import { listPendingTimeOffRequests, listTeamTimeOff } from "@/lib/timeOffDb";
 import { ApprovalsHub } from "@/components/ApprovalsHub";
@@ -11,16 +12,18 @@ import { ApprovalsHub } from "@/components/ApprovalsHub";
 export default async function TimeClockApprovalsPage() {
   const { access } = await requireTimeClockManager();
 
-  const [settings, requests, submitted, timeOffRequests] = await Promise.all([
-    getTimeClockSettings(),
-    listEditRequests({
-      status: "pending",
-      userEmails: access.visibleUserEmails,
-      limit: 100,
-    }),
-    listSubmittedTimesheets(100, access.visibleUserEmails),
-    listPendingTimeOffRequests(access.visibleUserEmails),
-  ]);
+  const [settings, requests, submitted, timeOffRequests, people] =
+    await Promise.all([
+      getTimeClockSettings(),
+      listEditRequests({
+        status: "pending",
+        userEmails: access.visibleUserEmails,
+        limit: 100,
+      }),
+      listSubmittedTimesheets(100, access.visibleUserEmails),
+      listPendingTimeOffRequests(access.visibleUserEmails),
+      listTimeClockRoster(access.visibleUserEmails),
+    ]);
 
   const timesheets = await Promise.all(
     submitted.map((sheet) =>
@@ -38,7 +41,7 @@ export default async function TimeClockApprovalsPage() {
     : [];
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Approvals</h1>
       <p className="mt-1 text-ink-soft">
         Approve weekly timesheets, time edits, and time-off requests. New
@@ -51,6 +54,7 @@ export default async function TimeClockApprovalsPage() {
           initialTimeOffRequests={timeOffRequests}
           overlapEntries={overlapEntries}
           settings={settings}
+          people={people}
         />
       </div>
     </main>
