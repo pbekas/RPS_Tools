@@ -19,7 +19,14 @@ export type TimeClockAccess = {
   teamIds: string[] | null;
   visibleUserEmails: string[] | null;
   supervisedTeams: TimeClockTeam[];
+  userEmail: string | null;
 };
+
+function withSelf(emails: string[], email: string): string[] {
+  const set = new Set(emails.map((value) => value.toLowerCase()).filter(Boolean));
+  set.add(email.toLowerCase());
+  return [...set];
+}
 
 export async function resolveTimeClockAccess(
   user: SessionUserLike | null | undefined
@@ -34,6 +41,7 @@ export async function resolveTimeClockAccess(
     teamIds: [],
     visibleUserEmails: [],
     supervisedTeams: [],
+    userEmail: null,
   };
   if (!user?.email) return empty;
 
@@ -46,6 +54,7 @@ export async function resolveTimeClockAccess(
 
   if (admin) {
     const teams = await listTimeClockTeams({ activeOnly: false });
+    const visible = await listVisibleTimeClockUserEmails(null);
     return {
       isAdmin: true,
       isSupervisorRole: supervisorRole,
@@ -54,18 +63,17 @@ export async function resolveTimeClockAccess(
       canManageTeams: true,
       canViewAudit: true,
       teamIds: null,
-      visibleUserEmails: await listVisibleTimeClockUserEmails(null),
+      visibleUserEmails: visible ? withSelf(visible, email) : null,
       supervisedTeams: teams,
+      userEmail: email,
     };
   }
 
   if (isManager) {
     const teamIds = supervisedTeams.map((t) => t.id);
-    // Empty list means "nobody", not unscoped. A Supervisor with no teams
-    // must not see the whole org.
-    const visibleUserEmails = teamIds.length
-      ? await listTeamMemberEmails(teamIds)
-      : [];
+    // Empty list means "nobody else", not unscoped. A Supervisor with no teams
+    // must not see the whole org — but they can still punch and request PTO.
+    const members = teamIds.length ? await listTeamMemberEmails(teamIds) : [];
     return {
       isAdmin: false,
       isSupervisorRole: supervisorRole,
@@ -74,14 +82,16 @@ export async function resolveTimeClockAccess(
       canManageTeams: false,
       canViewAudit: false,
       teamIds,
-      visibleUserEmails,
+      visibleUserEmails: withSelf(members, email),
       supervisedTeams,
+      userEmail: email,
     };
   }
 
   return {
     ...empty,
     visibleUserEmails: [email],
+    userEmail: email,
   };
 }
 
@@ -89,8 +99,10 @@ export function canViewTimeClockUser(
   access: TimeClockAccess,
   targetEmail: string
 ): boolean {
+  const target = targetEmail.toLowerCase();
+  if (access.userEmail && target === access.userEmail) return true;
   if (access.visibleUserEmails === null) return true;
-  return access.visibleUserEmails.includes(targetEmail.toLowerCase());
+  return access.visibleUserEmails.includes(target);
 }
 
 export function filterByVisibleUsers<T extends { user_email: string }>(
