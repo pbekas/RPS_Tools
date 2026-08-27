@@ -2,10 +2,7 @@ import "server-only";
 
 import { htmlEmail, sendEmail, timeClockEmailEnabled } from "@/lib/mailer";
 import { formatDateTime, formatHours } from "@/lib/timeClockFormat";
-import {
-  listActiveAdmins,
-  listSupervisorsForUser,
-} from "@/lib/timeClockTeamsDb";
+import { listSupervisorsForUser } from "@/lib/timeClockTeamsDb";
 import {
   TIME_OFF_KIND_LABELS,
   type TimeOffEntry,
@@ -24,11 +21,9 @@ async function recipientsForEmployee(
   employeeEmail: string
 ): Promise<Array<{ email: string; name: string }>> {
   const employee = employeeEmail.toLowerCase();
-  const supervisors = (await listSupervisorsForUser(employee)).filter(
+  return (await listSupervisorsForUser(employee)).filter(
     (person) => person.email !== employee
   );
-  if (supervisors.length) return supervisors;
-  return (await listActiveAdmins()).filter((person) => person.email !== employee);
 }
 
 async function sendToRecipients(input: {
@@ -43,7 +38,7 @@ async function sendToRecipients(input: {
   const recipients = await recipientsForEmployee(input.employeeEmail);
   if (!recipients.length) {
     console.warn(
-      "No supervisor or admin to email for time clock approval",
+      "No supervisor to email for time clock approval",
       input.employeeEmail
     );
     return;

@@ -366,19 +366,3 @@ export async function listSupervisorsForUser(
     }))
     .filter((row) => row.email.includes("@"));
 }
-
-export async function listActiveAdmins(): Promise<
-  Array<{ email: string; name: string }>
-> {
-  requirePostgres();
-  const rows = await query<{ email: string; name: string }>(
-    `SELECT email, coalesce(nullif(name, ''), email::text) AS name
-     FROM users
-     WHERE active = true AND role = 'Admin'
-     ORDER BY name ASC, email ASC`
-  );
-  return rows.map((row) => ({
-    email: String(row.email).toLowerCase(),
-    name: String(row.name || row.email),
-  }));
-}

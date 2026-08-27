@@ -271,7 +271,7 @@ class RpsCallQaStack(Stack):
                     "PGSSLROOTCERT": "/etc/ssl/certs/aws-rds-global-bundle.pem",
                     "POLLER_INTERNAL_URL": "http://poller.rps-call-qa.local:8080",
                     "TIME_CLOCK_EMAIL_ENABLED": "1",
-                    "SES_FROM_EMAIL": "Relevium Time Clock <no_reply@releviumpain.com>",
+                    "SES_FROM_EMAIL": "Relevium Tools - Time Clock <no_reply@releviumpain.com>",
                 },
                 secrets={
                     "NEXTAUTH_SECRET": ecs.Secret.from_secrets_manager(
@@ -347,7 +347,7 @@ class RpsCallQaStack(Stack):
                 "TWILIO_MISSED_SMS_COOLDOWN_MINUTES": "90",
                 "TWILIO_MISSED_SMS_MAX_AGE_MINUTES": "120",
                 "TIME_CLOCK_EMAIL_ENABLED": "1",
-                "SES_FROM_EMAIL": "Relevium Time Clock <no_reply@releviumpain.com>",
+                "SES_FROM_EMAIL": "Relevium Tools - Time Clock <no_reply@releviumpain.com>",
                 # Defaults keep Firestore primary until shadow validation.
                 "DB_BACKEND": db_backend,
                 "DB_DUAL_WRITE": "1" if db_dual_write else "0",

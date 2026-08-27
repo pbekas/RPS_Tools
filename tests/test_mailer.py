@@ -26,7 +26,7 @@ class SendEmailTest(unittest.TestCase):
     @patch("src.mailer.get_settings")
     def test_posts_to_ses(self, mock_settings, mock_client):
         settings = MagicMock()
-        settings.ses_from_email = "Relevium Time Clock <no_reply@releviumpain.com>"
+        settings.ses_from_email = "Relevium Tools - Time Clock <no_reply@releviumpain.com>"
         settings.aws_region = "us-east-1"
         mock_settings.return_value = settings
         client = MagicMock()
@@ -43,7 +43,7 @@ class SendEmailTest(unittest.TestCase):
         client.send_email.assert_called_once()
         kwargs = client.send_email.call_args.kwargs
         self.assertEqual(
-            kwargs["Source"], "Relevium Time Clock <no_reply@releviumpain.com>"
+            kwargs["Source"], "Relevium Tools - Time Clock <no_reply@releviumpain.com>"
         )
         self.assertEqual(kwargs["Destination"]["ToAddresses"], ["agent@example.com"])
         self.assertEqual(kwargs["Message"]["Subject"]["Data"], "Clock in")

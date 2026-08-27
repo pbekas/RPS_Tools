@@ -37,7 +37,7 @@ export function htmlEmail(input: {
     `<p>${body}</p>` +
     `<p><a href="${url}">${label}</a></p>` +
     `<p style="color:#666;font-size:12px">` +
-    `This is an automated message from Relevium Time Clock.` +
+    `This is an automated message from Relevium Tools - Time Clock.` +
     `</p></body></html>`
   );
 }

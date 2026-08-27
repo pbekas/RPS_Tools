@@ -333,7 +333,7 @@ def _html_email(*, heading: str, body: str, cta_label: str, cta_url: str) -> str
         f"<p>{safe_body}</p>"
         f"<p><a href=\"{safe_url}\">{safe_label}</a></p>"
         "<p style=\"color:#666;font-size:12px\">"
-        "This is an automated reminder from Relevium Time Clock."
+        "This is an automated reminder from Relevium Tools - Time Clock."
         "</p></body></html>"
     )
 
