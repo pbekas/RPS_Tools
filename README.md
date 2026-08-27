@@ -19,11 +19,14 @@ Vonage **VBC company call recordings are pull-based** (no “recording ready” 
 the Call Recording API). To process calls as they finish:
 
 ```bash
-# Continuous poller (every 5 minutes, last 30 minutes)
+# Continuous poller (every 5 minutes, last 30 minutes + 6-hour safety pass)
 python scripts/poll_vonage_recordings.py
 
 # Or webhook service with poller enabled
 VBC_POLLER_ENABLED=1 uvicorn webhook:app --host 0.0.0.0 --port 8080
+
+# Daily insurance (also runs automatically every 24h on the poller)
+python scripts/sync_vonage_recordings.py --days 2 --max 200 --completeness --background
 ```
 
 Optional env:
@@ -32,9 +35,13 @@ Optional env:
 |-----|---------|---------|
 | `VBC_POLLER_ENABLED` | off | Autostart poller inside `webhook.py` |
 | `VBC_POLLER_INTERVAL_SECONDS` | `300` | Poll cadence (5 minutes) |
-| `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Sync window |
-| `VBC_POLLER_MAX_PER_CYCLE` | `25` | Cap recordings per cycle |
-| `VBC_POLLER_MAX_CALL_LOGS` | `200` | Cap CDRs (Reports call-logs) per cycle |
+| `VBC_POLLER_LOOKBACK_MINUTES` | `30` | Near-real-time sync window |
+| `VBC_POLLER_SAFETY_LOOKBACK_HOURS` | `6` | Extra pass so late media still lands |
+| `VBC_POLLER_MAX_PER_CYCLE` | `50` | Cap **new** recordings per cycle (already-ingested do not count) |
+| `VBC_POLLER_MAX_CALL_LOGS` | `400` | Cap CDRs (Reports call-logs) per cycle |
+| `VBC_POLLER_BACKFILL_DAYS` | `2` | Daily insurance lookback |
+| `VBC_POLLER_BACKFILL_INTERVAL_HOURS` | `24` | How often the 2-day backfill runs |
+| `VBC_POLLER_BACKFILL_MAX` | `200` | Cap new recordings on the daily backfill |
 | `GCHAT_WEBHOOK_URL` | empty | Google Chat webhook for **critical / medical** Call Alerts only |
 | `GCHAT_MISSED_CALLS_WEBHOOK_URL` | empty | Separate Chat webhook for each missed/abandoned/**voicemail** inbound CDR |
 | `GCHAT_CONTRACTS_WEBHOOK_URL` | empty | Optional separate Chat webhook for contract expiry (never uses the call webhook) |
@@ -49,7 +56,10 @@ Optional env:
 | `SES_FROM_EMAIL` | empty locally | From address for Time Clock reminders (verified SES identity) |
 
 Each poller cycle also upserts VBC **Reports** call-logs into Firestore (`call_logs`)
-so admins can see missed / unrecorded traffic on **/ops**. Subscribe the VBC app to
+so admins can see missed / unrecorded traffic on **/ops**. After CDRs land, answered
+rows with `recorded=true` and no matching QA call are looked up on the recording API
+and ingested (the completeness loop). **/ops** shows a capture metric: recorded
+answered CDRs vs QA calls, by day and extension. Subscribe the VBC app to
 the **Reports API** suite in [apimanager.uc.vonage.com](https://apimanager.uc.vonage.com)
 (same OAuth credentials as Call Recording).
 

@@ -1,6 +1,6 @@
 "use client";
 
-import type { OpsTower, TrendPoint } from "@/lib/opsTower";
+import type { CaptureRow, OpsTower, TrendPoint } from "@/lib/opsTower";
 import { formatDuration } from "@/lib/format";
 
 type Props = {
@@ -8,8 +8,10 @@ type Props = {
   days: number;
   onSelectDirection?: (direction: string) => void;
   onSelectOutcome?: (label: string) => void;
+  onSelectMissingCapture?: () => void;
   selectedDirection?: string;
   selectedOutcome?: string;
+  missingCaptureSelected?: boolean;
 };
 
 function pct(rate: number): string {
@@ -135,8 +137,10 @@ export function OpsControlTower({
   days,
   onSelectDirection,
   onSelectOutcome,
+  onSelectMissingCapture,
   selectedDirection,
   selectedOutcome,
+  missingCaptureSelected,
 }: Props) {
   const businessHours = tower.byHour.filter((h) => {
     const hour = Number(h.key);
@@ -318,6 +322,13 @@ export function OpsControlTower({
         </div>
       </div>
 
+      <QaCapturePanel
+        capture={tower.capture}
+        days={days}
+        missingSelected={missingCaptureSelected}
+        onSelectMissing={onSelectMissingCapture}
+      />
+
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-line bg-white/80 p-4">
           <h3 className="font-display text-lg text-ink">Volume by hour</h3>
@@ -420,6 +431,139 @@ export function OpsControlTower({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function QaCapturePanel({
+  capture,
+  days,
+  missingSelected,
+  onSelectMissing,
+}: {
+  capture: OpsTower["capture"];
+  days: number;
+  missingSelected?: boolean;
+  onSelectMissing?: () => void;
+}) {
+  const tone =
+    capture.captureRate >= 0.95 ? "pass" : capture.captureRate >= 0.8 ? "warn" : "fail";
+  return (
+    <div className="rounded-xl border border-line bg-white/80 p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="font-display text-lg text-ink">QA capture</h3>
+          <p className="mt-0.5 max-w-3xl text-xs text-ink-soft">
+            Recorded answered CDRs (over 30s) vs matched QA calls · last {days}{" "}
+            days. Gaps here are late media or ingest misses — not unrecorded
+            traffic.
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Kpi
+          label="Capture rate"
+          value={pct(capture.captureRate)}
+          hint={`${capture.withQa}/${capture.recordedAnswered} recorded answered in QA`}
+          tone={tone}
+        />
+        <Kpi
+          label="Recorded answered"
+          value={String(capture.recordedAnswered)}
+          hint="Vonage recorded=true · QA-eligible length"
+        />
+        <Kpi
+          label="In QA"
+          value={String(capture.withQa)}
+          hint="Matched to a Call QA recording"
+          tone="pass"
+        />
+        <button
+          type="button"
+          disabled={!onSelectMissing}
+          onClick={onSelectMissing}
+          className={`rounded-xl border px-4 py-3 text-left ${
+            onSelectMissing ? "hover:bg-wash/60" : ""
+          } ${missingSelected ? "border-accent bg-wash" : "border-line bg-white/80"}`}
+        >
+          <div className="text-xs font-semibold uppercase tracking-wide text-ink-soft">
+            Missing QA
+          </div>
+          <div
+            className={`mt-1 font-display text-2xl ${
+              capture.missing ? "text-[color:var(--fail)]" : "text-ink"
+            }`}
+          >
+            {capture.missing}
+          </div>
+          <div className="mt-1 text-[11px] text-ink-soft">
+            Recorded answered with no QA call
+            {onSelectMissing ? " · click to filter" : ""}
+          </div>
+        </button>
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <CaptureTable
+          title="By day"
+          empty="No recorded answered CDRs in this window."
+          rows={capture.byDay}
+        />
+        <CaptureTable
+          title="By extension"
+          empty="No extension-level capture data."
+          rows={capture.byExtension.slice(0, 12)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CaptureTable({
+  title,
+  empty,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  rows: CaptureRow[];
+}) {
+  return (
+    <div>
+      <h4 className="mb-2 text-sm font-semibold text-ink">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="text-sm text-ink-soft">{empty}</p>
+      ) : (
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-ink-soft">
+              <th className="pb-1 font-semibold">Group</th>
+              <th className="pb-1 text-right font-semibold">Recorded</th>
+              <th className="pb-1 text-right font-semibold">QA</th>
+              <th className="pb-1 text-right font-semibold">Missing</th>
+              <th className="pb-1 text-right font-semibold">Capture</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key} className="border-t border-line/70">
+                <td className="py-1.5 font-medium text-ink">{row.label}</td>
+                <td className="py-1.5 text-right tabular-nums">{row.recordedAnswered}</td>
+                <td className="py-1.5 text-right tabular-nums">{row.withQa}</td>
+                <td
+                  className={`py-1.5 text-right tabular-nums ${
+                    row.missing ? "text-[color:var(--fail)]" : "text-ink-soft"
+                  }`}
+                >
+                  {row.missing}
+                </td>
+                <td className="py-1.5 text-right tabular-nums">
+                  {pct(row.captureRate)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

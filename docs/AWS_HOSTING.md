@@ -87,7 +87,10 @@ python scripts/sync_vonage_call_logs.py --minutes 60
 python scripts/sync_vonage_call_logs.py --days 7 --max 500
 ```
 
-Optional env: `VBC_POLLER_MAX_CALL_LOGS` (default `200`) caps CDRs per poller cycle.
+Optional env: `VBC_POLLER_MAX_CALL_LOGS` (default `400`) caps CDRs per poller cycle.
+The poller also runs a 6-hour recording safety pass every cycle and a 2-day
+backfill about once a day. Already-ingested recordings do not count toward
+`VBC_POLLER_MAX_PER_CYCLE`.
 
 ## Security (PHI)
 

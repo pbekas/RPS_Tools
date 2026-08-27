@@ -5,7 +5,7 @@ VBC does not push “recording ready” events for company recordings.
 This process polls for new recordings and queues them into Transcribe + Bedrock QA.
 
 Usage:
-  # Continuous (default: every 60s, last 30 minutes)
+  # Continuous (default: every 5 min, last 30 minutes + 6-hour safety pass)
   python scripts/poll_vonage_recordings.py
 
   # One-shot
@@ -41,11 +41,16 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Run a single sync cycle and exit")
     parser.add_argument("--interval", type=int, default=300, help="Seconds between polls (default 5 min)")
     parser.add_argument("--minutes", type=int, default=30, help="Lookback window in minutes")
-    parser.add_argument("--max", type=int, default=25, help="Max recordings per cycle")
+    parser.add_argument("--max", type=int, default=50, help="Max new recordings per cycle")
     parser.add_argument(
         "--inline",
         action="store_true",
         help="Process QA inline (slower). Default queues background worker.",
+    )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Also run the 2-day recording backfill (default on the continuous poller)",
     )
     args = parser.parse_args()
 
@@ -54,6 +59,7 @@ def main() -> None:
             lookback_minutes=args.minutes,
             max_per_cycle=args.max,
             process_now=args.inline,
+            run_backfill=args.backfill,
         )
         print(json.dumps(summary, indent=2, default=str))
         return

@@ -2,7 +2,7 @@
 """Sync Vonage VBC company call recordings into the QA queue.
 
 Usage:
-  python scripts/sync_vonage_recordings.py --days 7 --max 50
+  python scripts/sync_vonage_recordings.py --days 2 --max 200
   python scripts/sync_vonage_recordings.py --test
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.vonage_sync import sync_company_recordings, test_connection
+from src.vonage_sync import ingest_missing_recorded_cdrs, sync_company_recordings, test_connection
 
 
 def main() -> None:
@@ -30,12 +30,17 @@ def main() -> None:
         default=None,
         help="How many minutes back to sync (near-real-time window)",
     )
-    parser.add_argument("--max", type=int, default=100, help="Max recordings to ingest")
+    parser.add_argument("--max", type=int, default=100, help="Max new recordings to ingest")
     parser.add_argument("--extension", type=str, default="", help="Filter by extension")
     parser.add_argument(
         "--background",
         action="store_true",
         help="Queue QA in background worker instead of processing inline",
+    )
+    parser.add_argument(
+        "--completeness",
+        action="store_true",
+        help="Also ingest recordings for recorded answered CDRs with no QA call",
     )
     args = parser.parse_args()
 
@@ -56,6 +61,21 @@ def main() -> None:
         kwargs["days_back"] = args.days if args.days is not None else 7
 
     summary = sync_company_recordings(**kwargs)
+    if args.completeness:
+        complete_kwargs: dict = {
+            "max_recordings": args.max,
+            "process_now": not args.background,
+        }
+        if args.minutes is not None:
+            complete_kwargs["hours_back"] = max(1, (args.minutes + 59) // 60)
+        elif args.hours is not None:
+            complete_kwargs["hours_back"] = args.hours
+        else:
+            complete_kwargs["days_back"] = args.days if args.days is not None else 7
+        summary = {
+            "recordings": summary,
+            "completeness": ingest_missing_recorded_cdrs(**complete_kwargs),
+        }
     print(json.dumps(summary, indent=2, default=str))
 
 

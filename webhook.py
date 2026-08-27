@@ -119,6 +119,7 @@ async def poller_sync_now(request: Request) -> JSONResponse:
             lookback_minutes=body.get("lookback_minutes"),
             max_per_cycle=body.get("max_per_cycle"),
             process_now=bool(body.get("inline", False)),
+            run_backfill=body.get("backfill"),
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc

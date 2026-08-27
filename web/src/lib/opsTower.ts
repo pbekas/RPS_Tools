@@ -1,10 +1,13 @@
 /** Ops control tower rollups from CDR logs (client-safe). */
 
 import type { CallLogDoc } from "@/lib/callLogs";
-import { isEffectiveMiss, isMissedResult, normalizeResult } from "@/lib/callLogs";
+import { isEffectiveMiss, isMissedResult, normalizeResult, partyFromLog } from "@/lib/callLogs";
 import { toMillis } from "@/lib/format";
 
 export const OPS_TIMEZONE = "America/Los_Angeles";
+
+/** Match Python MIN_CALL_DURATION_SECONDS: QA skips 30s and under. */
+export const QA_MIN_DURATION_SECONDS = 30;
 
 /** Default service-level threshold (seconds) once telephony wait exists. */
 export const DEFAULT_SERVICE_LEVEL_SECONDS = 20;
@@ -34,6 +37,24 @@ export type DirectionRow = {
   missed: number;
   answerRate: number;
   talkSeconds: number;
+};
+
+export type CaptureRow = {
+  key: string;
+  label: string;
+  recordedAnswered: number;
+  withQa: number;
+  missing: number;
+  captureRate: number;
+};
+
+export type QaCapture = {
+  recordedAnswered: number;
+  withQa: number;
+  missing: number;
+  captureRate: number;
+  byDay: CaptureRow[];
+  byExtension: CaptureRow[];
 };
 
 export type OutcomeRow = {
@@ -90,6 +111,7 @@ export type OpsTower = {
   qaCoverageOfAnswered: number;
   unrecorded: number;
   unrecordedRate: number;
+  capture: QaCapture;
   sla: SlaProxies;
   byHour: TrendPoint[];
   byDow: TrendPoint[];
@@ -209,6 +231,43 @@ function bumpTrend(point: TrendPoint, log: CallLogDoc, answered: boolean) {
   point.talkSeconds += Math.max(0, Number(log.length_seconds || 0));
 }
 
+function emptyCapture(key: string, label: string): CaptureRow {
+  return {
+    key,
+    label,
+    recordedAnswered: 0,
+    withQa: 0,
+    missing: 0,
+    captureRate: 0,
+  };
+}
+
+function finalizeCapture(row: CaptureRow): CaptureRow {
+  return {
+    ...row,
+    missing: Math.max(0, row.recordedAnswered - row.withQa),
+    captureRate: row.recordedAnswered ? row.withQa / row.recordedAnswered : 0,
+  };
+}
+
+function bumpCapture(row: CaptureRow, withQa: boolean) {
+  row.recordedAnswered += 1;
+  if (withQa) row.withQa += 1;
+}
+
+/** Answered CDR that Vonage marked recorded and is long enough for QA. */
+export function isQaCaptureCandidate(log: CallLogDoc): boolean {
+  if (classifyOutcome(log) !== "answered") return false;
+  if (log.recorded !== true) return false;
+  if (log.is_unrecorded) return false;
+  const length = Number(log.length_seconds || 0);
+  return Number.isFinite(length) && length > QA_MIN_DURATION_SECONDS;
+}
+
+export function isMissingQaCapture(log: CallLogDoc): boolean {
+  return isQaCaptureCandidate(log) && !log.matched_call_id;
+}
+
 export type BuildOpsTowerOpts = {
   timeZone?: string;
   /** QA call_id → AI-estimated time_to_answer_seconds (matched CDRs only). */
@@ -270,6 +329,11 @@ export function buildOpsTower(
   let qaSpeedN = 0;
   let qaWithin20 = 0;
   let qaWithin30 = 0;
+
+  let recordedAnswered = 0;
+  let recordedAnsweredWithQa = 0;
+  const captureByDay = new Map<string, CaptureRow>();
+  const captureByExt = new Map<string, CaptureRow>();
 
   for (const log of logs) {
     total += 1;
@@ -355,6 +419,25 @@ export function buildOpsTower(
       bumpTrend(dayPoint, log, isAnswered);
       byDay.set(z.dayKey, dayPoint);
     }
+
+    if (isQaCaptureCandidate(log)) {
+      const captured = Boolean(log.matched_call_id);
+      recordedAnswered += 1;
+      if (captured) recordedAnsweredWithQa += 1;
+      const msCap = toMillis(log.start);
+      const zCap = msCap ? zonedParts(msCap, timeZone) : null;
+      if (zCap) {
+        const dayCap =
+          captureByDay.get(zCap.dayKey) ||
+          emptyCapture(zCap.dayKey, zCap.dayLabel);
+        bumpCapture(dayCap, captured);
+        captureByDay.set(zCap.dayKey, dayCap);
+      }
+      const ext = (partyFromLog(log).extension || "").trim() || "Unknown";
+      const extCap = captureByExt.get(ext) || emptyCapture(ext, `Ext ${ext}`);
+      bumpCapture(extCap, captured);
+      captureByExt.set(ext, extCap);
+    }
   }
 
   const byOutcome: OutcomeRow[] = (
@@ -398,6 +481,23 @@ export function buildOpsTower(
     qaCoverageOfAnswered: answered ? withQa / answered : 0,
     unrecorded,
     unrecordedRate: total ? unrecorded / total : 0,
+    capture: {
+      recordedAnswered,
+      withQa: recordedAnsweredWithQa,
+      missing: Math.max(0, recordedAnswered - recordedAnsweredWithQa),
+      captureRate: recordedAnswered
+        ? recordedAnsweredWithQa / recordedAnswered
+        : 0,
+      byDay: [...captureByDay.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([, row]) => finalizeCapture(row)),
+      byExtension: [...captureByExt.values()]
+        .map(finalizeCapture)
+        .sort(
+          (a, b) =>
+            b.missing - a.missing || b.recordedAnswered - a.recordedAnswered
+        ),
+    },
     sla: {
       trueAsaAvailable,
       telephonyWaitSampleSize: telephonyWaitN,

@@ -14,7 +14,7 @@ import {
 import type { CoachingQueueEntry } from "@/lib/coachingQueue";
 import type { AgentScorecardRow, AuditedCallSummary } from "@/lib/scorecard";
 import { auditedCallsForAgent } from "@/lib/scorecard";
-import { buildOpsTower, classifyOutcome, type OutcomeBucket } from "@/lib/opsTower";
+import { buildOpsTower, classifyOutcome, isMissingQaCapture, type OutcomeBucket } from "@/lib/opsTower";
 import { formatCallDate, formatDuration } from "@/lib/format";
 import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
 import { AgentScorecard } from "@/components/AgentScorecard";
@@ -57,6 +57,7 @@ export function CallOps({
   const [q, setQ] = useState("");
   const [missedOnly, setMissedOnly] = useState(false);
   const [unrecordedOnly, setUnrecordedOnly] = useState(false);
+  const [missingCaptureOnly, setMissingCaptureOnly] = useState(false);
   const [direction, setDirection] = useState("");
   const [resultFilter, setResultFilter] = useState("");
   const [personFilter, setPersonFilter] = useState("");
@@ -102,6 +103,9 @@ export function CallOps({
       if (unrecordedOnly && !(log.recorded === false || log.is_unrecorded)) {
         return false;
       }
+      if (missingCaptureOnly && !isMissingQaCapture(log)) {
+        return false;
+      }
       if (direction) {
         if ((log.direction || "").toLowerCase() !== direction.toLowerCase()) {
           return false;
@@ -142,6 +146,7 @@ export function CallOps({
     q,
     missedOnly,
     unrecordedOnly,
+    missingCaptureOnly,
     direction,
     resultFilter,
     personFilter,
@@ -203,6 +208,8 @@ export function CallOps({
     setOutcomeBucket("");
     setDirection("");
     setMissedOnly(false);
+    setUnrecordedOnly(false);
+    setMissingCaptureOnly(false);
   }
 
   function selectScorecard(key: string) {
@@ -248,7 +255,7 @@ export function CallOps({
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">
-          {[1, 3, 7, 14, 30].map((d) => (
+          {[1, 2, 3, 7, 14, 30].map((d) => (
             <Link
               key={d}
               href={`/ops?days=${d}`}
@@ -298,8 +305,14 @@ export function CallOps({
               )?.[0]
             : ""
         }
+        missingCaptureSelected={missingCaptureOnly}
         onSelectDirection={selectDirection}
         onSelectOutcome={selectOutcomeLabel}
+        onSelectMissingCapture={() => {
+          setMissingCaptureOnly((on) => !on);
+          setUnrecordedOnly(false);
+          setMissedOnly(false);
+        }}
       />
 
       <AgentScorecard
@@ -432,9 +445,23 @@ export function CallOps({
           <input
             type="checkbox"
             checked={unrecordedOnly}
-            onChange={(e) => setUnrecordedOnly(e.target.checked)}
+            onChange={(e) => {
+              setUnrecordedOnly(e.target.checked);
+              if (e.target.checked) setMissingCaptureOnly(false);
+            }}
           />
           Unrecorded
+        </label>
+        <label className="flex items-center gap-2 text-sm font-semibold text-ink-soft">
+          <input
+            type="checkbox"
+            checked={missingCaptureOnly}
+            onChange={(e) => {
+              setMissingCaptureOnly(e.target.checked);
+              if (e.target.checked) setUnrecordedOnly(false);
+            }}
+          />
+          Missing QA
         </label>
         <select
           value={direction}
@@ -450,6 +477,8 @@ export function CallOps({
         personFilter ||
         scorecardKey ||
         missedOnly ||
+        unrecordedOnly ||
+        missingCaptureOnly ||
         outcomeBucket ||
         direction ? (
           <button
