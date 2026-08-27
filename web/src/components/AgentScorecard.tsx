@@ -10,6 +10,7 @@ type Props = {
   team: AgentScorecardRow;
   selectedKey: string;
   onSelect: (key: string) => void;
+  onOpenAudited?: (key: string) => void;
   days: number;
 };
 
@@ -57,11 +58,13 @@ function ScoreRow({
   row,
   selected,
   onSelect,
+  onOpenAudited,
   emphasize,
 }: {
   row: AgentScorecardRow;
   selected: boolean;
   onSelect: () => void;
+  onOpenAudited?: () => void;
   emphasize?: boolean;
 }) {
   return (
@@ -73,9 +76,22 @@ function ScoreRow({
     >
       <td className="px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={emphasize ? "text-ink" : "font-semibold text-ink"}>
-            {row.name}
-          </span>
+          {emphasize || !onOpenAudited ? (
+            <span className={emphasize ? "text-ink" : "font-semibold text-ink"}>
+              {row.name}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenAudited();
+              }}
+              className="font-semibold text-accent hover:underline"
+            >
+              {row.name}
+            </button>
+          )}
           <TierPill tier={row.tier} />
         </div>
         {row.email ? (
@@ -128,6 +144,7 @@ export function AgentScorecard({
   team,
   selectedKey,
   onSelect,
+  onOpenAudited,
   days,
 }: Props) {
   const mappedRows = mappedScorecardRows(rows);
@@ -141,7 +158,8 @@ export function AgentScorecard({
           <h2 className="font-display text-xl text-ink">Agent scorecard</h2>
           <p className="text-xs text-ink-soft">
             Mapped Workspace agents only · CDR access + QA quality · last {days}{" "}
-            days. Click a row to filter the CDR log.
+            days. Click a name to see audited calls; click the row to filter the
+            CDR log.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs font-semibold">
@@ -190,6 +208,9 @@ export function AgentScorecard({
                   selected={selectedKey === row.key}
                   onSelect={() =>
                     onSelect(selectedKey === row.key ? "" : row.key)
+                  }
+                  onOpenAudited={
+                    onOpenAudited ? () => onOpenAudited(row.key) : undefined
                   }
                 />
               ))

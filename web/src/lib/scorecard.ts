@@ -7,7 +7,12 @@ import {
   partyFromLog,
 } from "@/lib/callLogs";
 import type { CallDoc, UserDoc } from "@/lib/firestore";
-import { toMillis } from "@/lib/format";
+import {
+  criticalFlagLabels,
+  failedRuleLabels,
+  resolvePatientName,
+  toMillis,
+} from "@/lib/format";
 import { isMappedAgentUser } from "@/lib/qa";
 
 export type ScorecardTier =
@@ -418,4 +423,75 @@ export function filterLogsForScorecardRow(
 /** Convenience: keep calls inside the ops day window. */
 export function filterCallsSince(calls: CallDoc[], sinceMs: number): CallDoc[] {
   return calls.filter((c) => toMillis(c.call_date) >= sinceMs);
+}
+
+/** Compact QA call for ops drill-down (no transcript / summary payload). */
+export type AuditedCallSummary = {
+  id: string;
+  agentEmail: string;
+  agentName: string;
+  callDate: string | null;
+  durationSeconds: number;
+  patientName: string;
+  topic: string;
+  quality: number | null;
+  empathy: number | null;
+  fcr: boolean | null;
+  autoFailed: boolean;
+  criticalLabels: string[];
+  failedLabels: string[];
+};
+
+export function summarizeAuditedCalls(
+  calls: CallDoc[],
+  users?: UserDoc[]
+): AuditedCallSummary[] {
+  const index = users?.length ? buildUserIndex(users) : null;
+  return calls
+    .map((call) => {
+      const rawEmail = (call.agent_email || "").trim().toLowerCase();
+      const name = (call.agent_name || "").trim() || rawEmail || "Unknown";
+      let email = rawEmail;
+      if (index) {
+        if (rawEmail && index.byEmail.has(rawEmail)) {
+          email = rawEmail;
+        } else {
+          const match = index.candidates.find(
+            (c) => namesMatch(name, c.name) || namesMatch(name, c.local)
+          );
+          if (match) email = match.email;
+        }
+      }
+      return {
+        id: call.id,
+        agentEmail: email,
+        agentName: name,
+        callDate: call.call_date || null,
+        durationSeconds: Math.max(0, Number(call.duration_seconds || 0)),
+        patientName: resolvePatientName(call),
+        topic: (call.topic || "").trim() || "General",
+        quality:
+          typeof call.quality_score === "number" ? call.quality_score : null,
+        empathy:
+          typeof call.ai_empathy_score === "number"
+            ? call.ai_empathy_score
+            : null,
+        fcr: typeof call.fcr === "boolean" ? call.fcr : null,
+        autoFailed: !!call.auto_failed,
+        criticalLabels: criticalFlagLabels(call),
+        failedLabels: failedRuleLabels(call),
+      } satisfies AuditedCallSummary;
+    })
+    .sort(
+      (a, b) => toMillis(b.callDate) - toMillis(a.callDate) || a.id.localeCompare(b.id)
+    );
+}
+
+export function auditedCallsForAgent(
+  calls: AuditedCallSummary[],
+  email: string | null | undefined
+): AuditedCallSummary[] {
+  if (!email) return [];
+  const needle = email.trim().toLowerCase();
+  return calls.filter((call) => call.agentEmail === needle);
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { CallLogDoc } from "@/lib/callLogs";
 import {
   isEffectiveMiss,
@@ -12,7 +12,8 @@ import {
   talkTimeByPerson,
 } from "@/lib/callLogs";
 import type { CoachingQueueEntry } from "@/lib/coachingQueue";
-import type { AgentScorecardRow } from "@/lib/scorecard";
+import type { AgentScorecardRow, AuditedCallSummary } from "@/lib/scorecard";
+import { auditedCallsForAgent } from "@/lib/scorecard";
 import { buildOpsTower, classifyOutcome, type OutcomeBucket } from "@/lib/opsTower";
 import { formatCallDate, formatDuration } from "@/lib/format";
 import { QUEUE_STORAGE_KEY, type StoredQueue } from "@/lib/qa";
@@ -28,6 +29,7 @@ type Props = {
     needsHelp: CoachingQueueEntry[];
     rockStars: CoachingQueueEntry[];
   };
+  auditedCalls?: AuditedCallSummary[];
   /** QA call_id → AI-estimated time_to_answer_seconds for SLA proxy. */
   qaAnswerSecondsByCallId?: Record<string, number | null>;
 };
@@ -49,6 +51,7 @@ export function CallOps({
   scorecardRows,
   scorecardTeam,
   coachingQueue,
+  auditedCalls = [],
   qaAnswerSecondsByCallId,
 }: Props) {
   const [q, setQ] = useState("");
@@ -59,11 +62,22 @@ export function CallOps({
   const [personFilter, setPersonFilter] = useState("");
   const [scorecardKey, setScorecardKey] = useState("");
   const [outcomeBucket, setOutcomeBucket] = useState<OutcomeBucket | "">("");
+  const [auditedFocus, setAuditedFocus] = useState(0);
+  const auditedRef = useRef<HTMLElement>(null);
 
   const selectedScorecard = useMemo(
     () => scorecardRows.find((r) => r.key === scorecardKey) || null,
     [scorecardRows, scorecardKey]
   );
+  const selectedAuditedCalls = useMemo(
+    () => auditedCallsForAgent(auditedCalls, selectedScorecard?.email),
+    [auditedCalls, selectedScorecard]
+  );
+
+  useEffect(() => {
+    if (!scorecardKey || !auditedFocus) return;
+    auditedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [scorecardKey, auditedFocus]);
 
   const OUTCOME_LABEL_TO_BUCKET: Record<string, OutcomeBucket> = {
     Answered: "answered",
@@ -194,6 +208,13 @@ export function CallOps({
   function selectScorecard(key: string) {
     setScorecardKey(key);
     setPersonFilter("");
+    if (key) setAuditedFocus((n) => n + 1);
+  }
+
+  function openAuditedCalls(key: string) {
+    setScorecardKey(key);
+    setPersonFilter("");
+    setAuditedFocus((n) => n + 1);
   }
 
   function selectDirection(value: string) {
@@ -286,8 +307,21 @@ export function CallOps({
         team={scorecardTeam}
         selectedKey={scorecardKey}
         onSelect={selectScorecard}
+        onOpenAudited={openAuditedCalls}
         days={days}
       />
+
+      {selectedScorecard ? (
+        <AuditedCallsPanel
+          refEl={auditedRef}
+          agent={selectedScorecard}
+          days={days}
+          calls={selectedAuditedCalls}
+          onReviewAll={() =>
+            openReviewSample(selectedAuditedCalls.map((call) => call.id))
+          }
+        />
+      ) : null}
 
       <CoachingQueuePanel
         needsHelp={coachingQueue.needsHelp}
@@ -577,6 +611,146 @@ function Badge({
     <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
       {children}
     </span>
+  );
+}
+
+function AuditedCallsPanel({
+  refEl,
+  agent,
+  days,
+  calls,
+  onReviewAll,
+}: {
+  refEl: RefObject<HTMLElement | null>;
+  agent: AgentScorecardRow;
+  days: number;
+  calls: AuditedCallSummary[];
+  onReviewAll: () => void;
+}) {
+  return (
+    <section
+      ref={refEl}
+      className="mb-8 scroll-mt-4 rounded-xl border border-line bg-white/80"
+    >
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line px-4 py-3">
+        <div>
+          <h2 className="font-display text-xl text-ink">
+            Audited calls · {agent.name}
+          </h2>
+          <p className="text-xs text-ink-soft">
+            QA reviews in the last {days} day{days === 1 ? "" : "s"}
+            {agent.email ? ` · ${agent.email}` : ""}.
+          </p>
+        </div>
+        {calls.length ? (
+          <button
+            type="button"
+            onClick={onReviewAll}
+            className="text-sm font-semibold text-accent hover:underline"
+          >
+            Review all {calls.length}
+          </button>
+        ) : null}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="border-b border-line bg-wash/60 text-[11px] uppercase tracking-wide text-ink-soft">
+            <tr>
+              <th className="px-3 py-2 font-semibold">When</th>
+              <th className="px-3 py-2 font-semibold">Patient</th>
+              <th className="px-3 py-2 font-semibold">Topic</th>
+              <th className="px-3 py-2 text-right font-semibold">Quality</th>
+              <th className="px-3 py-2 text-right font-semibold">Empathy</th>
+              <th className="px-3 py-2 text-right font-semibold">FCR</th>
+              <th className="px-3 py-2 font-semibold">Flags</th>
+              <th className="px-3 py-2 text-right font-semibold"> </th>
+            </tr>
+          </thead>
+          <tbody>
+            {calls.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-3 py-8 text-center text-ink-soft">
+                  No audited calls for this agent in this window.
+                </td>
+              </tr>
+            ) : (
+              calls.map((call) => (
+                <tr
+                  key={call.id}
+                  className="border-b border-line/70 last:border-0"
+                >
+                  <td className="whitespace-nowrap px-3 py-2.5 text-ink-soft">
+                    <div>{formatCallDate(call.callDate)}</div>
+                    <div className="text-xs">
+                      {formatDuration(call.durationSeconds)}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 font-semibold text-ink">
+                    {call.patientName}
+                  </td>
+                  <td className="px-3 py-2.5 text-ink-soft">{call.topic}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {call.quality == null ? "—" : call.quality.toFixed(1)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {call.empathy == null ? "—" : call.empathy.toFixed(1)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {call.fcr == null ? "—" : call.fcr ? "yes" : "no"}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {call.autoFailed ||
+                    call.criticalLabels.length ||
+                    call.failedLabels.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {call.criticalLabels.map((label) => (
+                          <span
+                            key={`${call.id}-c-${label}`}
+                            className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-fail"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                        {call.autoFailed ? (
+                          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-fail">
+                            AUTO-FAIL
+                          </span>
+                        ) : null}
+                        {call.failedLabels.slice(0, 2).map((label) => (
+                          <span
+                            key={`${call.id}-f-${label}`}
+                            className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-warn"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                        {call.failedLabels.length > 2 ? (
+                          <span className="text-[11px] text-ink-soft">
+                            +{call.failedLabels.length - 2}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-xs font-semibold text-pass">
+                        Clean
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <Link
+                      href={`/calls/${call.id}`}
+                      className="text-xs font-semibold text-accent hover:underline"
+                    >
+                      Review
+                    </Link>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
