@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { apiRequireTimeClockAdmin } from "@/lib/requireAccess";
+import { apiRequireTimeClockManager } from "@/lib/requireAccess";
 import { listTimeClockAuditLog } from "@/lib/timeClockAudit";
 
 export async function GET(req: Request) {
-  const { error, access } = await apiRequireTimeClockAdmin();
+  const { error, access } = await apiRequireTimeClockManager();
   if (error) return error;
 
   const { searchParams } = new URL(req.url);
@@ -12,8 +12,20 @@ export async function GET(req: Request) {
   const subjectEmail = searchParams.get("subjectEmail");
   const teamId = searchParams.get("teamId");
   const action = searchParams.get("action") || undefined;
+  const actionsRaw = searchParams.get("actions");
+  const actions = actionsRaw
+    ? actionsRaw.split(",").map((value) => value.trim()).filter(Boolean)
+    : undefined;
+  const entityId = searchParams.get("entityId") || undefined;
   const from = searchParams.get("from") || undefined;
   const to = searchParams.get("to") || undefined;
+
+  if (subjectEmail && access!.visibleUserEmails) {
+    const allowed = access!.visibleUserEmails.map((email) => email.toLowerCase());
+    if (!allowed.includes(subjectEmail.toLowerCase())) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   try {
     const result = await listTimeClockAuditLog({
@@ -24,6 +36,8 @@ export async function GET(req: Request) {
       teamIds: access!.teamIds,
       allowedSubjectEmails: access!.visibleUserEmails,
       action,
+      actions,
+      entityId,
       from,
       to,
     });

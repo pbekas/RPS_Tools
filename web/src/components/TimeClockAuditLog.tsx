@@ -1,18 +1,54 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { TimeClockAuditEntry } from "@/lib/timeClockTypes";
-import { formatDateTime } from "@/lib/timeClockFormat";
+import { PUNCH_EDIT_AUDIT_ACTIONS, type TimeClockAuditEntry } from "@/lib/timeClockTypes";
+import { formatDateTime, timeClockAuditActionLabel } from "@/lib/timeClockFormat";
 
 type Props = {
   initialEntries: TimeClockAuditEntry[];
   initialTotal: number;
 };
 
+type FilterKind = "all" | "punches";
+
+function formatAuditDetails(entry: TimeClockAuditEntry): string {
+  const reason =
+    typeof entry.metadata.reason === "string" ? entry.metadata.reason : "";
+  const beforeIn = entry.before_data.clock_in;
+  const afterIn = entry.after_data.clock_in || entry.after_data.proposed_clock_in;
+  const beforeOut = entry.before_data.clock_out;
+  const afterOut = entry.after_data.clock_out || entry.after_data.proposed_clock_out;
+  if (beforeIn || afterIn) {
+    const parts = [
+      `In ${stringifyValue(beforeIn)} → ${stringifyValue(afterIn)}`,
+      `Out ${stringifyValue(beforeOut)} → ${stringifyValue(afterOut)}`,
+    ];
+    if (reason) parts.push(`Reason: ${reason}`);
+    return parts.join(" · ");
+  }
+  if (reason) return `Reason: ${reason}`;
+  if (Object.keys(entry.after_data).length) return JSON.stringify(entry.after_data);
+  if (Object.keys(entry.before_data).length) return JSON.stringify(entry.before_data);
+  return "—";
+}
+
+function stringifyValue(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (typeof value === "string") {
+    const asDate = new Date(value);
+    if (!Number.isNaN(asDate.getTime()) && value.includes("T")) {
+      return formatDateTime(value);
+    }
+    return value;
+  }
+  return String(value);
+}
+
 export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
   const [entries, setEntries] = useState(initialEntries);
   const [total, setTotal] = useState(initialTotal);
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<FilterKind>("all");
   const [busy, setBusy] = useState(false);
 
   const filtered = useMemo(() => {
@@ -21,25 +57,33 @@ export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
     return entries.filter((e) => {
       return (
         e.action.toLowerCase().includes(needle) ||
+        timeClockAuditActionLabel(e.action).toLowerCase().includes(needle) ||
         (e.actor_email || "").toLowerCase().includes(needle) ||
+        (e.actor_name || "").toLowerCase().includes(needle) ||
         (e.subject_email || "").toLowerCase().includes(needle) ||
+        (e.subject_name || "").toLowerCase().includes(needle) ||
         (e.team_name || "").toLowerCase().includes(needle)
       );
     });
   }, [entries, q]);
 
-  async function loadMore() {
+  async function load(nextFilter: FilterKind, offset: number, append: boolean) {
     setBusy(true);
     try {
       const params = new URLSearchParams({
         limit: "100",
-        offset: String(entries.length),
+        offset: String(offset),
       });
+      if (nextFilter === "punches") {
+        params.set("actions", PUNCH_EDIT_AUDIT_ACTIONS.join(","));
+      }
       const res = await fetch(`/api/time-clock/audit?${params}`);
       const data = await res.json();
       if (res.ok) {
-        setEntries((prev) => [...prev, ...(data.entries || [])]);
-        setTotal(data.total || total);
+        setEntries((prev) =>
+          append ? [...prev, ...(data.entries || [])] : data.entries || []
+        );
+        setTotal(data.total || 0);
       }
     } finally {
       setBusy(false);
@@ -56,6 +100,18 @@ export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
           placeholder="Search audit log"
           className="min-w-[14rem] flex-1 rounded-lg border border-line px-3 py-2 text-sm"
         />
+        <select
+          value={filter}
+          onChange={(e) => {
+            const next = e.target.value as FilterKind;
+            setFilter(next);
+            void load(next, 0, false);
+          }}
+          className="rounded-lg border border-line px-3 py-2 text-sm"
+        >
+          <option value="all">All events</option>
+          <option value="punches">Punch edits</option>
+        </select>
         <p className="text-sm text-ink-soft">{total} event(s)</p>
       </div>
 
@@ -77,7 +133,9 @@ export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
                 <td className="px-4 py-2 whitespace-nowrap">
                   {formatDateTime(entry.created_at)}
                 </td>
-                <td className="px-4 py-2 font-semibold text-ink">{entry.action}</td>
+                <td className="px-4 py-2 font-semibold text-ink">
+                  {timeClockAuditActionLabel(entry.action)}
+                </td>
                 <td className="px-4 py-2">
                   <div>{entry.actor_name || entry.actor_email || "—"}</div>
                   <div className="text-xs text-ink-soft">{entry.actor_email}</div>
@@ -88,11 +146,7 @@ export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
                 </td>
                 <td className="px-4 py-2">{entry.team_name || "—"}</td>
                 <td className="max-w-md px-4 py-2 text-xs text-ink-soft">
-                  {Object.keys(entry.after_data).length
-                    ? JSON.stringify(entry.after_data)
-                    : Object.keys(entry.before_data).length
-                      ? JSON.stringify(entry.before_data)
-                      : "—"}
+                  {formatAuditDetails(entry)}
                 </td>
               </tr>
             ))}
@@ -103,7 +157,7 @@ export function TimeClockAuditLog({ initialEntries, initialTotal }: Props) {
       {entries.length < total ? (
         <button
           type="button"
-          onClick={loadMore}
+          onClick={() => load(filter, entries.length, true)}
           disabled={busy}
           className="rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-soft hover:bg-wash"
         >

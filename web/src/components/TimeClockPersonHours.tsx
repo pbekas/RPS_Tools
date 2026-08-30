@@ -1,7 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
-import { WeeklyBreakdownTable } from "@/components/TimeClockEntries";
+import { useMemo, useState } from "react";
+import {
+  PunchEditDialog,
+  PunchEditedBadge,
+  WeeklyBreakdownTable,
+} from "@/components/TimeClockEntries";
 import type { TimeClockReport, TimeEntry } from "@/lib/timeClockTypes";
 import {
   formatHours,
@@ -57,12 +61,16 @@ export function TimeClockPersonHours({
   open,
   onToggle,
   showWeekly = false,
+  canEditPunches = false,
+  onPunchUpdated,
 }: {
   user: ReportUser;
   timezone: string;
   open: boolean;
   onToggle: () => void;
   showWeekly?: boolean;
+  canEditPunches?: boolean;
+  onPunchUpdated?: () => void;
 }) {
   const clockedIn = user.entries.some((entry) => !entry.clock_out);
   return (
@@ -111,6 +119,8 @@ export function TimeClockPersonHours({
           user={user}
           timezone={timezone}
           showWeekly={showWeekly}
+          canEditPunches={canEditPunches}
+          onPunchUpdated={onPunchUpdated}
         />
       ) : null}
     </div>
@@ -121,10 +131,14 @@ function PersonHoursDetail({
   user,
   timezone,
   showWeekly,
+  canEditPunches,
+  onPunchUpdated,
 }: {
   user: ReportUser;
   timezone: string;
   showWeekly: boolean;
+  canEditPunches: boolean;
+  onPunchUpdated?: () => void;
 }) {
   const weeks = user.weekly_breakdown.filter((row) => row.entry_count > 0);
   return (
@@ -137,7 +151,12 @@ function PersonHoursDetail({
           <WeeklyBreakdownTable rows={weeks} />
         </div>
       ) : null}
-      <TimeClockDailyPunches entries={user.entries} timezone={timezone} />
+      <TimeClockDailyPunches
+        entries={user.entries}
+        timezone={timezone}
+        canEditPunches={canEditPunches}
+        onPunchUpdated={onPunchUpdated}
+      />
     </div>
   );
 }
@@ -145,14 +164,20 @@ function PersonHoursDetail({
 export function TimeClockDailyPunches({
   entries,
   timezone,
+  canEditPunches = false,
+  onPunchUpdated,
 }: {
   entries: TimeEntry[];
   timezone: string;
+  canEditPunches?: boolean;
+  onPunchUpdated?: () => void;
 }) {
   const days = useMemo(
     () => groupEntriesByDay(entries, timezone),
     [entries, timezone]
   );
+  const [editEntry, setEditEntry] = useState<TimeEntry | null>(null);
+  const settings = { timezone };
 
   if (!days.length) {
     return (
@@ -172,17 +197,32 @@ export function TimeClockDailyPunches({
             {day.entries.map((entry) => (
               <li
                 key={entry.id}
-                className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[minmax(0,14rem)_auto]"
+                className="grid grid-cols-[1fr_auto] items-start gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[minmax(0,14rem)_auto]"
               >
-                <p className="text-ink">
-                  {formatTime(entry.clock_in, timezone)}
-                  <span className="text-ink-soft"> – </span>
-                  {entry.clock_out
-                    ? formatTime(entry.clock_out, timezone)
-                    : "Open"}
+                <p className="flex flex-wrap items-center gap-2 text-ink">
+                  <span>
+                    {formatTime(entry.clock_in, timezone)}
+                    <span className="text-ink-soft"> – </span>
+                    {entry.clock_out
+                      ? formatTime(entry.clock_out, timezone)
+                      : "Open"}
+                  </span>
+                  <PunchEditedBadge entry={entry} timezone={timezone} />
                 </p>
-                <p className="text-right font-medium text-ink">
+                <p className="flex items-center justify-end gap-2 text-right font-medium text-ink">
                   {formatHours(punchHours(entry))}
+                  {canEditPunches ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setEditEntry(entry);
+                      }}
+                      className="rounded-md border border-line px-2 py-0.5 text-xs font-semibold text-ink-soft hover:bg-white"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                 </p>
                 {entry.notes ? (
                   <p className="col-span-2 text-xs text-ink-soft">{entry.notes}</p>
@@ -192,6 +232,18 @@ export function TimeClockDailyPunches({
           </ul>
         </div>
       ))}
+      {editEntry ? (
+        <PunchEditDialog
+          entry={editEntry}
+          settings={settings}
+          mode="manager"
+          onClose={() => setEditEntry(null)}
+          onSaved={() => {
+            setEditEntry(null);
+            onPunchUpdated?.();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

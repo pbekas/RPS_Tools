@@ -18,6 +18,19 @@ export function formatHours(hours: number): string {
   return `${m}m`;
 }
 
+export function timeClockAuditActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    "entry.manager_edited": "Punch edited",
+    "entry.edit_requested": "Edit requested",
+    "entry.edit_approved": "Edit approved",
+    "entry.edit_rejected": "Edit rejected",
+    "entry.notes_updated": "Notes updated",
+    "punch.clock_in": "Clock in",
+    "punch.clock_out": "Clock out",
+  };
+  return labels[action] || action;
+}
+
 export function formatTime(iso: string | null, timezone?: string): string {
   if (!iso) return "—";
   return new Intl.DateTimeFormat("en-US", {

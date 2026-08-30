@@ -21,8 +21,8 @@ export default async function TimeClockReportsPage() {
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <h1 className="font-display text-3xl text-ink">Time reports</h1>
       <p className="mt-1 text-ink-soft">
-        Hours worked by pay period. Expand a person to see daily punches and
-        times.
+        Hours worked by pay period. Expand a person to see daily punches, and
+        edit a punch when it needs a correction. Edited punches stay marked.
       </p>
       <div className="mt-6">
         <TimeClockReportPanel

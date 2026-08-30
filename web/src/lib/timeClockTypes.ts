@@ -7,6 +7,11 @@ export type TimeEntry = {
   notes: string;
   created_at: string;
   updated_at: string;
+  last_edited_at?: string | null;
+  last_edited_by?: string | null;
+  last_edited_by_name?: string | null;
+  last_edit_reason?: string;
+  edit_count?: number;
 };
 
 export type TimeEntryEditRequest = {
@@ -158,6 +163,8 @@ export type TimeClockReport = {
     weekly_breakdown: WeeklyHoursRow[];
     entries: TimeEntry[];
     approval?: TimeClockReportApproval;
+    team_id?: string | null;
+    team_name?: string | null;
   }>;
 };
 
@@ -222,6 +229,13 @@ export type TimeClockTeam = {
   updated_at: string;
   members?: Array<{ user_email: string; user_name: string; role: string }>;
 };
+
+export const PUNCH_EDIT_AUDIT_ACTIONS = [
+  "entry.manager_edited",
+  "entry.edit_requested",
+  "entry.edit_approved",
+  "entry.edit_rejected",
+] as const;
 
 export type TimeClockAuditEntry = {
   id: string;

@@ -79,6 +79,25 @@ export function TimesheetApprovals({ initialTimesheets, settings }: Props) {
                 entries={sheet.entries || []}
                 settings={settings}
                 canRequestEdits={false}
+                canManagePunches
+                onUpdated={async () => {
+                  const params = new URLSearchParams({
+                    week_start: sheet.week_start,
+                    userEmail: sheet.user_email,
+                  });
+                  const res = await fetch(`/api/time-clock/timesheets?${params}`);
+                  const data = await res.json();
+                  if (res.ok && data.timesheet) {
+                    setTimesheets((prev) =>
+                      prev.map((row) =>
+                        row.user_email === sheet.user_email &&
+                        row.week_start === sheet.week_start
+                          ? data.timesheet
+                          : row
+                      )
+                    );
+                  }
+                }}
               />
             </div>
 

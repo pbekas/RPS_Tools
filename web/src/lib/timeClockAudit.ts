@@ -71,6 +71,8 @@ export type ListAuditLogOpts = {
   teamIds?: string[] | null;
   allowedSubjectEmails?: string[] | null;
   action?: string;
+  actions?: string[];
+  entityId?: string | null;
   from?: string;
   to?: string;
 };
@@ -105,9 +107,16 @@ export async function listTimeClockAuditLog(
     clauses.push(`a.subject_email = ANY($${idx++}::citext[])`);
     params.push(emailScope.map((e) => String(e).toLowerCase()));
   }
-  if (opts.action) {
+  if (opts.actions?.length) {
+    clauses.push(`a.action = ANY($${idx++}::text[])`);
+    params.push(opts.actions);
+  } else if (opts.action) {
     clauses.push(`a.action = $${idx++}`);
     params.push(opts.action);
+  }
+  if (opts.entityId) {
+    clauses.push(`a.entity_id = $${idx++}`);
+    params.push(opts.entityId);
   }
   if (opts.from) {
     clauses.push(`a.created_at >= $${idx++}::timestamptz`);
@@ -144,4 +153,60 @@ export async function listTimeClockAuditLog(
   );
 
   return { entries: rows.map(rowToAudit), total };
+}
+
+/** Punch clock-in/out, manager edits, and employee edit-request history for one entry. */
+export async function listTimeClockAuditForEntry(
+  entryId: string,
+  opts: {
+    allowedSubjectEmails?: string[] | null;
+    teamIds?: string[] | null;
+  } = {}
+): Promise<TimeClockAuditEntry[]> {
+  requirePostgres();
+  const clauses = [
+    `(
+       (a.entity_type = 'time_entry' AND a.entity_id = $1)
+       OR (a.metadata->>'entry_id' = $1)
+       OR (
+         a.entity_type = 'edit_request'
+         AND a.entity_id IN (
+           SELECT r.id::text FROM time_entry_edit_requests r WHERE r.entry_id = $1::uuid
+         )
+       )
+     )`,
+  ];
+  const params: unknown[] = [entryId];
+  let idx = 2;
+
+  const teamScope = allowlist(opts.teamIds);
+  if (teamScope === "none") {
+    clauses.push("FALSE");
+  } else if (teamScope !== "all") {
+    clauses.push(`a.team_id = ANY($${idx++}::uuid[])`);
+    params.push(teamScope);
+  }
+  const emailScope = allowlist(opts.allowedSubjectEmails);
+  if (emailScope === "none") {
+    clauses.push("FALSE");
+  } else if (emailScope !== "all") {
+    clauses.push(`a.subject_email = ANY($${idx++}::citext[])`);
+    params.push(emailScope.map((e) => String(e).toLowerCase()));
+  }
+
+  const rows = await query(
+    `SELECT a.*,
+            actor.name AS actor_name,
+            subject.name AS subject_name,
+            t.name AS team_name
+     FROM time_clock_audit_log a
+     LEFT JOIN users actor ON actor.email = a.actor_email
+     LEFT JOIN users subject ON subject.email = a.subject_email
+     LEFT JOIN time_clock_teams t ON t.id = a.team_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY a.created_at DESC
+     LIMIT 50`,
+    params
+  );
+  return rows.map(rowToAudit);
 }

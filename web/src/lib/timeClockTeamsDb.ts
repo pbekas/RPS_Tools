@@ -335,6 +335,39 @@ export async function removeTeamMember(input: {
   });
 }
 
+export async function mapTeamsForUsers(
+  emails?: string[] | null
+): Promise<Map<string, { team_id: string; team_name: string }>> {
+  requirePostgres();
+  const scope = allowlist(emails);
+  if (scope === "none") return new Map();
+  const params: unknown[] = [];
+  const where =
+    scope === "all" ? "" : "WHERE m.user_email = ANY($1::citext[])";
+  if (scope !== "all") {
+    params.push(scope.map((email) => String(email).toLowerCase()));
+  }
+  const rows = await query<{
+    user_email: string;
+    team_id: string;
+    team_name: string;
+  }>(
+    `SELECT m.user_email, t.id AS team_id, t.name AS team_name
+     FROM time_clock_team_members m
+     JOIN time_clock_teams t ON t.id = m.team_id
+     ${where}`,
+    params
+  );
+  const map = new Map<string, { team_id: string; team_name: string }>();
+  for (const row of rows) {
+    map.set(String(row.user_email).toLowerCase(), {
+      team_id: String(row.team_id),
+      team_name: String(row.team_name),
+    });
+  }
+  return map;
+}
+
 export async function getTeamIdForUser(userEmail: string): Promise<string | null> {
   requirePostgres();
   const rows = await query<{ team_id: string }>(

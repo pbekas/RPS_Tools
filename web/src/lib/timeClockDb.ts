@@ -4,7 +4,7 @@ import type { QueryResultRow } from "pg";
 import { query } from "@/lib/postgres";
 import { logTimeClockAudit } from "@/lib/timeClockAudit";
 import { notifyPunchEditPending } from "@/lib/timeClockApprovalMail";
-import { getTeamIdForUser } from "@/lib/timeClockTeamsDb";
+import { getTeamIdForUser, mapTeamsForUsers } from "@/lib/timeClockTeamsDb";
 import type {
   PunchStatus,
   TeamLiveStatusRow,
@@ -86,8 +86,23 @@ function serializeRow<T>(row: QueryResultRow): T {
   return out as T;
 }
 
+const TIME_ENTRY_SELECT = `e.id, e.user_email, u.name AS user_name, e.clock_in, e.clock_out, e.notes,
+            e.created_at, e.updated_at,
+            e.last_edited_at, e.last_edited_by, editor.name AS last_edited_by_name,
+            e.last_edit_reason, e.edit_count`;
+
+const TIME_ENTRY_FROM = `time_entries e
+     JOIN users u ON u.email = e.user_email
+     LEFT JOIN users editor ON editor.email = e.last_edited_by`;
+
 function entryFromRow(row: QueryResultRow): TimeEntry {
-  return serializeRow<TimeEntry>(row);
+  const entry = serializeRow<TimeEntry>(row);
+  entry.edit_count = Number(row.edit_count || 0);
+  entry.last_edit_reason = String(row.last_edit_reason || "");
+  entry.last_edited_by_name = row.last_edited_by_name
+    ? String(row.last_edited_by_name)
+    : undefined;
+  return entry;
 }
 
 function editRequestFromRow(row: QueryResultRow): TimeEntryEditRequest {
@@ -349,10 +364,8 @@ export async function updateTimeClockSettings(
 export async function getOpenEntry(userEmail: string): Promise<TimeEntry | null> {
   requirePostgres();
   const rows = await query(
-    `SELECT e.id, e.user_email, u.name AS user_name, e.clock_in, e.clock_out, e.notes,
-            e.created_at, e.updated_at
-     FROM time_entries e
-     JOIN users u ON u.email = e.user_email
+    `SELECT ${TIME_ENTRY_SELECT}
+     FROM ${TIME_ENTRY_FROM}
      WHERE e.user_email = $1 AND e.clock_out IS NULL
      ORDER BY e.clock_in DESC
      LIMIT 1`,
@@ -447,10 +460,8 @@ export async function clockOut(userEmail: string, notes?: string): Promise<TimeE
 export async function getTimeEntry(id: string): Promise<TimeEntry | null> {
   requirePostgres();
   const rows = await query(
-    `SELECT e.id, e.user_email, u.name AS user_name, e.clock_in, e.clock_out, e.notes,
-            e.created_at, e.updated_at
-     FROM time_entries e
-     JOIN users u ON u.email = e.user_email
+    `SELECT ${TIME_ENTRY_SELECT}
+     FROM ${TIME_ENTRY_FROM}
      WHERE e.id = $1`,
     [id]
   );
@@ -501,10 +512,8 @@ export async function listTimeEntries(
   const total = Number(countRes[0]?.total || 0);
 
   const rows = await query(
-    `SELECT e.id, e.user_email, u.name AS user_name, e.clock_in, e.clock_out, e.notes,
-            e.created_at, e.updated_at
-     FROM time_entries e
-     JOIN users u ON u.email = e.user_email
+    `SELECT ${TIME_ENTRY_SELECT}
+     FROM ${TIME_ENTRY_FROM}
      ${where}
      ORDER BY e.clock_in DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
@@ -517,19 +526,19 @@ export async function updateEntryNotes(
   entryId: string,
   userEmail: string,
   notes: string,
-  isAdmin: boolean
+  asManager: boolean
 ): Promise<TimeEntry> {
   requirePostgres();
   const entry = await getTimeEntry(entryId);
   if (!entry) throw new Error("Entry not found");
-  if (!isAdmin && entry.user_email.toLowerCase() !== userEmail.toLowerCase()) {
+  if (!asManager && entry.user_email.toLowerCase() !== userEmail.toLowerCase()) {
     throw new Error("Forbidden");
   }
-  if (!isAdmin && (await isEntryWeekApproved(entry))) {
+  if (!asManager && (await isEntryWeekApproved(entry))) {
     throw new Error("This week has been approved and cannot be edited");
   }
   const sheet = await getTimesheet(entry.user_email, weekStartDate(new Date(entry.clock_in), (await getTimeClockSettings()).timezone));
-  if (!isAdmin && sheet?.status === "submitted") {
+  if (!asManager && sheet?.status === "submitted") {
     throw new Error("This week is submitted for approval and cannot be edited");
   }
   const rows = await query(
@@ -549,6 +558,172 @@ export async function updateEntryNotes(
     entityId: saved.id,
     before: { notes: entry.notes },
     after: { notes: saved.notes },
+    metadata: { entry_id: saved.id },
+  });
+  return saved;
+}
+
+function parsePunchInstant(value: string, label: string): Date {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return parsed;
+}
+
+function atMinute(value: Date | string | null): number | null {
+  if (!value) return null;
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (Number.isNaN(time)) return null;
+  return Math.floor(time / 60_000);
+}
+
+async function assertNoPunchOverlap(input: {
+  userEmail: string;
+  entryId: string;
+  clockIn: Date;
+  clockOut: Date | null;
+}): Promise<void> {
+  const overlaps = await query<{ id: string }>(
+    `SELECT id FROM time_entries
+     WHERE user_email = $1
+       AND id <> $2::uuid
+       AND tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)')
+        && tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'::timestamptz), '[)')
+     LIMIT 1`,
+    [
+      input.userEmail.toLowerCase(),
+      input.entryId,
+      input.clockIn.toISOString(),
+      input.clockOut ? input.clockOut.toISOString() : null,
+    ]
+  );
+  if (overlaps[0]) {
+    throw new Error("That time overlaps another punch for this person");
+  }
+}
+
+export async function managerEditTimeEntry(input: {
+  entryId: string;
+  actorEmail: string;
+  clockIn: string;
+  clockOut: string | null;
+  notes: string;
+  reason: string;
+}): Promise<TimeEntry> {
+  requirePostgres();
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("A reason is required so the edit can be tracked");
+  }
+  const entry = await getTimeEntry(input.entryId);
+  if (!entry) throw new Error("Entry not found");
+
+  const clockIn = parsePunchInstant(input.clockIn, "clock in");
+  const clockOut = input.clockOut
+    ? parsePunchInstant(input.clockOut, "clock out")
+    : null;
+  if (clockOut && clockOut.getTime() <= clockIn.getTime()) {
+    throw new Error("Clock out must be after clock in");
+  }
+  if (!clockOut && entry.clock_out) {
+    throw new Error("Closed punches need a clock-out time");
+  }
+
+  await assertNoPunchOverlap({
+    userEmail: entry.user_email,
+    entryId: entry.id,
+    clockIn,
+    clockOut,
+  });
+
+  const timesChanged =
+    atMinute(entry.clock_in) !== atMinute(clockIn) ||
+    atMinute(entry.clock_out) !== atMinute(clockOut);
+  const nextClockIn = timesChanged ? clockIn.toISOString() : entry.clock_in;
+  const nextClockOut = timesChanged
+    ? clockOut
+      ? clockOut.toISOString()
+      : null
+    : entry.clock_out;
+
+  const settings = await getTimeClockSettings();
+  const weekStart = weekStartDate(new Date(entry.clock_in), settings.timezone);
+  const sheet = await getTimesheet(entry.user_email, weekStart);
+
+  try {
+    await query(
+      `UPDATE time_entries
+       SET clock_in = $2::timestamptz,
+           clock_out = $3::timestamptz,
+           notes = $4,
+           last_edited_at = CASE WHEN $6::boolean THEN now() ELSE last_edited_at END,
+           last_edited_by = CASE WHEN $6::boolean THEN $5 ELSE last_edited_by END,
+           last_edit_reason = CASE WHEN $6::boolean THEN $7 ELSE last_edit_reason END,
+           edit_count = CASE WHEN $6::boolean THEN COALESCE(edit_count, 0) + 1 ELSE edit_count END,
+           updated_at = now()
+       WHERE id = $1`,
+      [
+        entry.id,
+        nextClockIn,
+        nextClockOut,
+        input.notes.trim(),
+        input.actorEmail.toLowerCase(),
+        timesChanged,
+        reason,
+      ]
+    );
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new Error("This person already has an open punch");
+    }
+    throw err;
+  }
+
+  const pending = timesChanged
+    ? await query<{ id: string }>(
+        `SELECT id FROM time_entry_edit_requests
+         WHERE entry_id = $1 AND status = 'pending'`,
+        [entry.id]
+      )
+    : [];
+  if (pending.length) {
+    await query(
+      `UPDATE time_entry_edit_requests
+       SET status = 'rejected',
+           reviewed_by = $2,
+           reviewed_at = now(),
+           review_notes = 'Superseded by manager punch edit',
+           updated_at = now()
+       WHERE entry_id = $1 AND status = 'pending'`,
+      [entry.id, input.actorEmail.toLowerCase()]
+    );
+  }
+
+  const saved = await getTimeEntry(entry.id);
+  if (!saved) throw new Error("Updated punch could not be loaded");
+
+  await auditSubject(entry.user_email, {
+    actorEmail: input.actorEmail,
+    action: timesChanged ? "entry.manager_edited" : "entry.notes_updated",
+    entityType: "time_entry",
+    entityId: saved.id,
+    before: {
+      clock_in: entry.clock_in,
+      clock_out: entry.clock_out,
+      notes: entry.notes,
+    },
+    after: {
+      clock_in: saved.clock_in,
+      clock_out: saved.clock_out,
+      notes: saved.notes,
+    },
+    metadata: {
+      entry_id: saved.id,
+      reason,
+      timesheet_status: sheet?.status || "none",
+      pending_requests_superseded: pending.length,
+    },
   });
   return saved;
 }
@@ -618,6 +793,10 @@ export async function createEditRequest(input: {
       proposed_clock_in: input.proposedClockIn,
       proposed_clock_out: input.proposedClockOut,
       proposed_notes: input.proposedNotes,
+      reason: input.reason,
+    },
+    metadata: {
+      entry_id: entry.id,
       reason: input.reason,
     },
   });
@@ -695,12 +874,18 @@ export async function listEditRequests(opts: {
             e.clock_out AS entry_clock_out,
             e.notes AS entry_notes,
             e.created_at AS entry_created_at,
-            e.updated_at AS entry_updated_at
+            e.updated_at AS entry_updated_at,
+            e.last_edited_at AS entry_last_edited_at,
+            e.last_edited_by AS entry_last_edited_by,
+            editor.name AS entry_last_edited_by_name,
+            e.last_edit_reason AS entry_last_edit_reason,
+            e.edit_count AS entry_edit_count
      FROM time_entry_edit_requests r
      JOIN users req ON req.email = r.requested_by
      LEFT JOIN users rev ON rev.email = r.reviewed_by
      JOIN time_entries e ON e.id = r.entry_id
      JOIN users eu ON eu.email = e.user_email
+     LEFT JOIN users editor ON editor.email = e.last_edited_by
      ${where}
      ORDER BY COALESCE(r.reviewed_at, r.created_at) DESC
      LIMIT $${idx}`,
@@ -722,6 +907,17 @@ export async function listEditRequests(opts: {
       notes: String(row.entry_notes || ""),
       created_at: new Date(row.entry_created_at as Date).toISOString(),
       updated_at: new Date(row.entry_updated_at as Date).toISOString(),
+      last_edited_at: row.entry_last_edited_at
+        ? new Date(row.entry_last_edited_at as Date).toISOString()
+        : null,
+      last_edited_by: row.entry_last_edited_by
+        ? String(row.entry_last_edited_by)
+        : null,
+      last_edited_by_name: row.entry_last_edited_by_name
+        ? String(row.entry_last_edited_by_name)
+        : undefined,
+      last_edit_reason: String(row.entry_last_edit_reason || ""),
+      edit_count: Number(row.entry_edit_count || 0),
     };
     return request;
   });
@@ -750,6 +946,10 @@ export async function reviewEditRequest(input: {
        SET clock_in = $2,
            clock_out = $3,
            notes = $4,
+           last_edited_at = now(),
+           last_edited_by = $5,
+           last_edit_reason = $6,
+           edit_count = COALESCE(edit_count, 0) + 1,
            updated_at = now()
        WHERE id = $1`,
       [
@@ -757,6 +957,8 @@ export async function reviewEditRequest(input: {
         row.proposed_clock_in,
         row.proposed_clock_out,
         row.proposed_notes,
+        input.reviewerEmail.toLowerCase(),
+        String(row.reason || ""),
       ]
     );
   }
@@ -796,7 +998,11 @@ export async function reviewEditRequest(input: {
             clock_out: row.proposed_clock_out,
             notes: row.proposed_notes,
           }
-        : { review_notes: input.reviewNotes || "" },
+          : { review_notes: input.reviewNotes || "" },
+      metadata: {
+        entry_id: String(row.entry_id),
+        reason: String(row.reason || ""),
+      },
     });
     return found;
   }
@@ -898,12 +1104,15 @@ export async function buildTimeClockReport(opts: {
 
   if (opts.team) {
     const roster = await listTimeClockRoster(opts.userEmails);
-    const { entries } = await listTimeEntries({
-      from: opts.from,
-      to: opts.to,
-      userEmails: opts.userEmails,
-      limit: 5000,
-    });
+    const [{ entries }, teamByEmail] = await Promise.all([
+      listTimeEntries({
+        from: opts.from,
+        to: opts.to,
+        userEmails: opts.userEmails,
+        limit: 5000,
+      }),
+      mapTeamsForUsers(opts.userEmails),
+    ]);
     const byUser = new Map<string, TimeEntry[]>();
     const nameByEmail = new Map<string, string>();
     for (const person of roster) {
@@ -920,6 +1129,7 @@ export async function buildTimeClockReport(opts: {
 
     const users = Array.from(byUser.entries()).map(([email, userEntries]) => {
       const totalHours = userEntries.reduce((sum, e) => sum + entryHours(e), 0);
+      const team = teamByEmail.get(email);
       return {
         user_email: email,
         user_name: nameByEmail.get(email) || userEntries[0]?.user_name || email,
@@ -931,6 +1141,8 @@ export async function buildTimeClockReport(opts: {
           new Date(opts.to)
         ),
         entries: userEntries,
+        team_id: team?.team_id || null,
+        team_name: team?.team_name || null,
       };
     });
 

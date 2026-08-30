@@ -80,7 +80,7 @@ export async function resolveTimeClockAccess(
       isTeamSupervisor,
       isManager: true,
       canManageTeams: false,
-      canViewAudit: false,
+      canViewAudit: true,
       teamIds,
       visibleUserEmails: withSelf(members, email),
       supervisedTeams,

@@ -172,7 +172,7 @@ export function AppNav() {
                   >
                     PTO banks
                   </Link>
-                  {admin || Boolean(data.user.timeClockAdmin) ? (
+                  {timeClockManager ? (
                     <Link
                       href="/time-clock/audit"
                       className={navClass(pathname.startsWith("/time-clock/audit"))}

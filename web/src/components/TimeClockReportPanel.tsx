@@ -88,7 +88,7 @@ export function TimeClockReportPanel({
     [people]
   );
 
-  async function loadReport() {
+  async function loadReport(keepExpanded = false) {
     setBusy(true);
     setMsg("");
     try {
@@ -106,8 +106,10 @@ export function TimeClockReportPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load report");
       setReport(data.report);
-      setExpanded({});
-      setNoPunchesOpen(false);
+      if (!keepExpanded) {
+        setExpanded({});
+        setNoPunchesOpen(false);
+      }
       if (data.report?.pay_period) {
         setFrom(data.report.pay_period.period_start);
         setTo(data.report.pay_period.period_end);
@@ -185,7 +187,7 @@ export function TimeClockReportPanel({
         </label>
         <button
           type="button"
-          onClick={loadReport}
+          onClick={() => void loadReport()}
           disabled={busy}
           className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
@@ -269,6 +271,8 @@ export function TimeClockReportPanel({
                           open={Boolean(expanded[user.user_email])}
                           onToggle={() => togglePerson(user.user_email)}
                           showWeekly
+                          canEditPunches={teamMode}
+                          onPunchUpdated={() => loadReport(true)}
                         />
                       ))}
                     </div>
@@ -310,6 +314,8 @@ export function TimeClockReportPanel({
                             timezone={report.timezone}
                             open={Boolean(expanded[user.user_email])}
                             onToggle={() => togglePerson(user.user_email)}
+                            canEditPunches={teamMode}
+                            onPunchUpdated={() => loadReport(true)}
                           />
                         ))}
                       </div>
