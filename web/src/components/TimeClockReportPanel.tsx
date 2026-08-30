@@ -2,20 +2,14 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { WeeklyBreakdownTable } from "@/components/TimeClockEntries";
-import type { TimeClockReport, TimeEntry } from "@/lib/timeClockTypes";
-import {
-  formatHours,
-  formatTime,
-  formatYmd,
-  localYmd,
-} from "@/lib/timeClockFormat";
+import { TimeClockPersonHours } from "@/components/TimeClockPersonHours";
+import type { TimeClockReport } from "@/lib/timeClockTypes";
+import { formatHours } from "@/lib/timeClockFormat";
 import {
   formatPayPeriodLabel,
   resolvePayPeriod,
   type PayPeriodBounds,
 } from "@/lib/timeClockPayPeriod";
-
-type ReportUser = NonNullable<TimeClockReport["by_user"]>[number];
 
 type PayPeriodConfig = {
   timezone: string;
@@ -30,151 +24,6 @@ type Props = {
   initialPreset?: "current" | "previous" | "custom";
   scopeLabel?: string;
 };
-
-const APPROVAL_STYLES: Record<string, string> = {
-  approved: "text-pass",
-  submitted: "text-accent",
-  open: "text-warn",
-  rejected: "text-fail",
-  none: "text-ink-soft",
-};
-
-function punchHours(entry: TimeEntry): number {
-  const end = entry.clock_out ? new Date(entry.clock_out).getTime() : Date.now();
-  return Math.max(0, (end - new Date(entry.clock_in).getTime()) / 3_600_000);
-}
-
-type DayGroup = {
-  date: string;
-  hours: number;
-  entries: TimeEntry[];
-};
-
-function groupEntriesByDay(entries: TimeEntry[], timezone: string): DayGroup[] {
-  const groups = new Map<string, DayGroup>();
-  const sorted = [...entries].sort((a, b) => a.clock_in.localeCompare(b.clock_in));
-  for (const entry of sorted) {
-    const date = localYmd(entry.clock_in, timezone);
-    const existing = groups.get(date);
-    const hours = punchHours(entry);
-    if (existing) {
-      existing.hours += hours;
-      existing.entries.push(entry);
-    } else {
-      groups.set(date, { date, hours, entries: [entry] });
-    }
-  }
-  return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function PersonRow({
-  user,
-  timezone,
-  open,
-  onToggle,
-}: {
-  user: ReportUser;
-  timezone: string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="border-b border-line/70 last:border-0">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-wash/70"
-      >
-        <span
-          className={`text-ink-soft transition-transform ${open ? "rotate-90" : ""}`}
-          aria-hidden
-        >
-          ▸
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block font-semibold text-ink">{user.user_name}</span>
-          <span className="block truncate text-sm text-ink-soft">
-            {user.user_email}
-          </span>
-        </span>
-        <span className="shrink-0 text-right">
-          <span className="block text-lg font-semibold text-accent">
-            {formatHours(user.total_hours)}
-          </span>
-          {user.approval ? (
-            <span
-              className={`block text-xs font-semibold uppercase tracking-wide ${
-                APPROVAL_STYLES[user.approval.status] || APPROVAL_STYLES.none
-              }`}
-            >
-              {user.approval.status === "approved"
-                ? `Approved by ${user.approval.reviewed_by_name || "manager"}`
-                : user.approval.status}
-            </span>
-          ) : null}
-        </span>
-      </button>
-      {open ? <DailyPunches entries={user.entries} timezone={timezone} /> : null}
-    </div>
-  );
-}
-
-function DailyPunches({
-  entries,
-  timezone,
-}: {
-  entries: TimeEntry[];
-  timezone: string;
-}) {
-  const days = useMemo(
-    () => groupEntriesByDay(entries, timezone),
-    [entries, timezone]
-  );
-
-  if (!days.length) {
-    return (
-      <p className="px-4 py-3 text-sm text-ink-soft">No punches in this period.</p>
-    );
-  }
-
-  return (
-    <div className="divide-y divide-line/70 border-t border-line">
-      {days.map((day) => (
-        <div key={day.date} className="px-4 py-3">
-          <div className="mb-2 flex items-baseline justify-between gap-3">
-            <p className="text-sm font-semibold text-ink">
-              {formatYmd(day.date)}
-            </p>
-            <p className="text-sm font-semibold text-ink">{formatHours(day.hours)}</p>
-          </div>
-          <ul className="space-y-1.5">
-            {day.entries.map((entry) => (
-              <li
-                key={entry.id}
-                className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[minmax(0,14rem)_auto]"
-              >
-                <p className="text-ink">
-                  {formatTime(entry.clock_in, timezone)}
-                  <span className="text-ink-soft"> – </span>
-                  {entry.clock_out
-                    ? formatTime(entry.clock_out, timezone)
-                    : "Open"}
-                </p>
-                <p className="text-right font-medium text-ink">
-                  {formatHours(punchHours(entry))}
-                </p>
-                {entry.notes ? (
-                  <p className="col-span-2 text-xs text-ink-soft">{entry.notes}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export function TimeClockReportPanel({
   initialFrom,
@@ -413,12 +262,13 @@ export function TimeClockReportPanel({
                   {withHours.length ? (
                     <div className="overflow-hidden rounded-xl border border-line bg-white/90">
                       {withHours.map((user) => (
-                        <PersonRow
+                        <TimeClockPersonHours
                           key={user.user_email}
                           user={user}
                           timezone={report.timezone}
                           open={Boolean(expanded[user.user_email])}
                           onToggle={() => togglePerson(user.user_email)}
+                          showWeekly
                         />
                       ))}
                     </div>
@@ -454,7 +304,7 @@ export function TimeClockReportPanel({
                       </summary>
                       <div className="border-t border-line">
                         {noPunches.map((user) => (
-                          <PersonRow
+                          <TimeClockPersonHours
                             key={user.user_email}
                             user={user}
                             timezone={report.timezone}

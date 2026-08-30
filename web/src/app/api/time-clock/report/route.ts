@@ -11,7 +11,13 @@ import {
   listTeamDaySummary,
 } from "@/lib/timeClockDb";
 import { buildTimeClockReportPdf } from "@/lib/timeClockPdf";
-import { resolvePayPeriod } from "@/lib/timeClockPayPeriod";
+import {
+  parseNamedRangeKind,
+  parseRangeOffset,
+  resolveNamedRange,
+  resolvePayPeriod,
+  type NamedRange,
+} from "@/lib/timeClockPayPeriod";
 
 export async function GET(req: Request) {
   const { session, error } = await apiRequireModule("time_clock");
@@ -43,9 +49,19 @@ export async function GET(req: Request) {
 
     const teamMode = access.isManager && searchParams.get("team") === "1";
     const settings = await getTimeClockSettings();
+    const rangeKindRaw = searchParams.get("range");
     const payPeriodPreset = searchParams.get("pay_period");
     let payPeriodBounds;
-    if (payPeriodPreset === "current") {
+    let namedRange: NamedRange | undefined;
+    if (rangeKindRaw) {
+      namedRange = resolveNamedRange(
+        parseNamedRangeKind(rangeKindRaw),
+        settings.timezone,
+        new Date(),
+        parseRangeOffset(searchParams.get("offset"))
+      );
+      payPeriodBounds = namedRange.payPeriod;
+    } else if (payPeriodPreset === "current") {
       payPeriodBounds = resolvePayPeriod(settings.timezone, new Date(), 0);
     } else if (payPeriodPreset === "previous") {
       payPeriodBounds = resolvePayPeriod(settings.timezone, new Date(), -1);
@@ -53,8 +69,8 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "from and to are required" }, { status: 400 });
     }
 
-    const reportFrom = payPeriodBounds?.from || from!;
-    const reportTo = payPeriodBounds?.to || to!;
+    const reportFrom = namedRange?.from || payPeriodBounds?.from || from!;
+    const reportTo = namedRange?.to || payPeriodBounds?.to || to!;
     const includeApproval = format === "pdf" || searchParams.get("approval") === "1";
 
     let reportUserEmail: string | null = null;

@@ -1,4 +1,10 @@
-import { fromDatetimeLocalValue } from "@/lib/timeClockFormat";
+import {
+  formatYmd,
+  fromDatetimeLocalValue,
+  shiftWeekStart,
+  weekRangeFromStart,
+  weekStartDate,
+} from "@/lib/timeClockFormat";
 
 export type PayPeriodBounds = {
   period_start: string;
@@ -145,4 +151,103 @@ export function matchesPayPeriod(
   bounds: PayPeriodBounds
 ): boolean {
   return fromIso === bounds.from && toIso === bounds.to;
+}
+
+export type NamedRangeKind = "week" | "pay_period" | "month";
+
+export type NamedRange = {
+  kind: NamedRangeKind;
+  offset: number;
+  from: string;
+  to: string;
+  start: string;
+  end: string;
+  label: string;
+  payPeriod?: PayPeriodBounds;
+};
+
+export function parseNamedRangeKind(
+  value: string | null | undefined
+): NamedRangeKind {
+  if (value === "pay_period" || value === "month") return value;
+  return "week";
+}
+
+export function parseRangeOffset(value: string | null | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.trunc(n);
+}
+
+export function resolveWeekRange(
+  timezone: string,
+  reference: Date = new Date(),
+  offset = 0
+): NamedRange {
+  const start = shiftWeekStart(weekStartDate(reference, timezone), offset);
+  const { from, to, week_end } = weekRangeFromStart(start, timezone);
+  return {
+    kind: "week",
+    offset,
+    from,
+    to,
+    start,
+    end: week_end,
+    label: `Week of ${formatYmd(start)} – ${formatYmd(week_end)}`,
+  };
+}
+
+export function resolveMonthRange(
+  timezone: string,
+  reference: Date = new Date(),
+  offset = 0
+): NamedRange {
+  const refYmd = dateToYmd(reference, timezone);
+  const [year, month] = refYmd.split("-").map(Number);
+  const index = year * 12 + (month - 1) + offset;
+  const y = Math.floor(index / 12);
+  const m = index - y * 12 + 1;
+  const start = ymd(y, m, 1);
+  const end = ymd(y, m, lastDayOfMonth(y, m));
+  const from = fromDatetimeLocalValue(`${start}T00:00`, timezone);
+  const to = fromDatetimeLocalValue(`${addDaysYmd(end, 1)}T00:00`, timezone);
+  const label = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, 1)));
+  return {
+    kind: "month",
+    offset,
+    from,
+    to,
+    start,
+    end,
+    label,
+  };
+}
+
+export function resolveNamedRange(
+  kind: NamedRangeKind,
+  timezone: string,
+  reference: Date = new Date(),
+  offset = 0
+): NamedRange {
+  if (kind === "pay_period") {
+    const payPeriod = resolvePayPeriod(timezone, reference, offset);
+    return {
+      kind,
+      offset,
+      from: payPeriod.from,
+      to: payPeriod.to,
+      start: payPeriod.period_start,
+      end: payPeriod.period_end,
+      label: formatPayPeriodLabel(payPeriod),
+      payPeriod,
+    };
+  }
+  if (kind === "month") {
+    return resolveMonthRange(timezone, reference, offset);
+  }
+  return resolveWeekRange(timezone, reference, offset);
 }
