@@ -85,8 +85,14 @@ def sync_company_recordings(
             continue
         summary["listed"] += 1
 
-        if skip_existing and find_existing_by_vonage_recording_id(rec.recording_id):
+        existing = (
+            find_existing_by_vonage_recording_id(rec.recording_id)
+            if skip_existing
+            else None
+        )
+        if skip_existing and existing:
             summary["skipped_existing"] += 1
+            _attach_extension_to_existing(existing, rec)
             continue
 
         if not is_qa_eligible_duration(rec.duration_seconds):
@@ -145,9 +151,11 @@ def match_recording_for_cdr(
 
     log_from = _digits(log.get("from_number"))
     log_to = _digits(log.get("to_number"))
-    log_ext = _digits(
-        log.get("destination_extension") or log.get("source_extension")
-    )
+    log_exts = {
+        _digits(log.get("destination_extension")),
+        _digits(log.get("source_extension")),
+    }
+    log_exts.discard("")
     best: VBCRecording | None = None
     best_delta = _CDR_MATCH_WINDOW_SECONDS + 1
 
@@ -161,11 +169,13 @@ def match_recording_for_cdr(
         if delta > _CDR_MATCH_WINDOW_SECONDS:
             continue
 
-        rec_ext = _digits(rec.extension)
+        rec_exts = {_digits(x) for x in (rec.extensions or []) if _digits(x)}
+        if rec.extension:
+            rec_exts.add(_digits(rec.extension))
         caller = _digits(rec.caller_id)
         dnis = _digits(rec.dnis)
         numbers_ok = False
-        if log_ext and rec_ext and log_ext == rec_ext:
+        if log_exts and rec_exts and log_exts & rec_exts:
             numbers_ok = True
         elif log_from and caller and _phones_match(log_from, caller):
             numbers_ok = True
@@ -175,7 +185,7 @@ def match_recording_for_cdr(
             numbers_ok = True
         elif log_to and caller and _phones_match(log_to, caller):
             numbers_ok = True
-        elif not log_from and not log_to and not log_ext:
+        elif not log_from and not log_to and not log_exts:
             numbers_ok = delta <= 30
 
         if not numbers_ok:
@@ -258,8 +268,12 @@ def ingest_missing_recorded_cdrs(
         if rec is None:
             summary["skipped_no_recording"] += 1
             continue
-        if find_existing_by_vonage_recording_id(rec.recording_id):
+        existing = find_existing_by_vonage_recording_id(rec.recording_id)
+        if existing:
             summary["skipped_existing"] += 1
+            _attach_extension_to_existing(
+                existing, rec, preferred_extension=_preferred_extension_for_cdr(log, rec)
+            )
             _stamp_matched_call(log, rec.recording_id)
             continue
         if not is_qa_eligible_duration(rec.duration_seconds):
@@ -270,7 +284,12 @@ def ingest_missing_recorded_cdrs(
             break
         ingest_attempts += 1
         try:
-            call_id = ingest_recording(client, rec, process_now=process_now)
+            call_id = ingest_recording(
+                client,
+                rec,
+                process_now=process_now,
+                preferred_extension=_preferred_extension_for_cdr(log, rec),
+            )
             summary["queued"] += 1
             summary["call_ids"].append(call_id)
             log_id = str(log.get("id") or "").strip()
@@ -291,6 +310,42 @@ def ingest_missing_recorded_cdrs(
             )
 
     return summary
+
+
+def _preferred_extension_for_cdr(
+    log: Mapping[str, Any], rec: VBCRecording
+) -> str | None:
+    rec_exts = {_digits(x) for x in (rec.extensions or []) if _digits(x)}
+    if rec.extension:
+        rec_exts.add(_digits(rec.extension))
+    dest = _digits(log.get("destination_extension"))
+    src = _digits(log.get("source_extension"))
+    if dest and (not rec_exts or dest in rec_exts):
+        return dest
+    if src and (not rec_exts or src in rec_exts):
+        return src
+    return rec.extension
+
+
+def _attach_extension_to_existing(
+    existing: Mapping[str, Any],
+    rec: VBCRecording,
+    *,
+    preferred_extension: str | None = None,
+) -> None:
+    ext = preferred_extension or rec.extension
+    if not ext:
+        return
+    try:
+        from src.agent_identity import stamp_and_remap_call_extension
+
+        stamp_and_remap_call_extension(dict(existing), ext)
+    except Exception:
+        logger.exception(
+            "Failed attaching extension %s to call %s",
+            ext,
+            existing.get("id"),
+        )
 
 
 def _stamp_matched_call(log: Mapping[str, Any], recording_id: str) -> None:
@@ -341,6 +396,7 @@ def ingest_recording(
     rec: VBCRecording,
     *,
     process_now: bool = True,
+    preferred_extension: str | None = None,
 ) -> str:
     if not is_qa_eligible_duration(rec.duration_seconds):
         raise VonageVBCError(
@@ -369,20 +425,28 @@ def ingest_recording(
     settings = get_settings()
     audio_path = _UPLOAD_ROOT / f"{call_id}_{filename}"
     if settings.database_configured and not str(call_id).startswith("local_"):
-        db.update_call(
-            call_id,
-            {
-                "vonage_recording_id": rec.recording_id,
-                "vonage_call_id": rec.call_id,
-                "vonage_extension": rec.extension,
-                "vonage_caller_id": rec.caller_id,
-                "vonage_cnam": rec.cnam,
-                "vonage_dnis": rec.dnis,
-                "vonage_direction": rec.call_direction,
-                "duration_seconds": rec.duration_seconds or 0,
-                "call_date": rec.start or datetime.now(timezone.utc),
-            },
-        )
+        ext = preferred_extension or rec.extension
+        fields: dict[str, Any] = {
+            "vonage_recording_id": rec.recording_id,
+            "vonage_call_id": rec.call_id,
+            "vonage_extension": ext,
+            "vonage_caller_id": rec.caller_id,
+            "vonage_cnam": rec.cnam,
+            "vonage_dnis": rec.dnis,
+            "vonage_direction": rec.call_direction,
+            "duration_seconds": rec.duration_seconds or 0,
+            "call_date": rec.start or datetime.now(timezone.utc),
+        }
+        try:
+            from src.agent_identity import resolve_or_create_agent
+
+            email, name = resolve_or_create_agent("Unknown", vonage_extension=ext)
+            if email:
+                fields["agent_email"] = email
+                fields["agent_name"] = name
+        except Exception:
+            logger.exception("Failed mapping extension %s on ingest %s", ext, call_id)
+        db.update_call(call_id, fields)
 
     if process_now and settings.database_configured and not str(call_id).startswith("local_"):
         process_call_sync(call_id, audio_path)

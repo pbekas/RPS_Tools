@@ -12,7 +12,9 @@ from src.vonage_sync import (
     match_recording_for_cdr,
     sync_company_recordings,
 )
-from src.vonage_vbc import VBCRecording
+from src.vonage_vbc import VBCRecording, _parse_recording
+from src.vonage_reports import VBCCallLog
+from src.cdr_sync import _match_call
 
 
 def _rec(
@@ -119,6 +121,27 @@ class MatchRecordingForCdrTest(unittest.TestCase):
         self.assertIsNotNone(matched)
         self.assertEqual(matched.recording_id, "r-time")
 
+    def test_falls_back_to_time_and_extension_array(self) -> None:
+        rec = _rec(
+            "r-time",
+            call_id=None,
+            start=self.t0 + timedelta(seconds=8),
+            extension=None,
+        )
+        rec.extensions = ["3101"]
+        rec.extension = None
+        matched = match_recording_for_cdr(
+            {
+                "id": "cdr-1",
+                "start": self.t0,
+                "destination_extension": "3101",
+                "from_number": "5551112222",
+            },
+            [rec],
+        )
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.recording_id, "r-time")
+
     def test_ignores_recordings_outside_window(self) -> None:
         recs = [
             _rec(
@@ -158,6 +181,7 @@ class IngestCapTest(unittest.TestCase):
                 "src.vonage_sync.find_existing_by_vonage_recording_id",
                 side_effect=_existing,
             ),
+            patch("src.vonage_sync._attach_extension_to_existing"),
             patch("src.vonage_sync.ingest_recording", side_effect=["c1", "c2"]) as ingest,
         ):
             summary = sync_company_recordings(
@@ -245,6 +269,79 @@ class CompletenessIngestTest(unittest.TestCase):
         mock_db.upsert_call_log.assert_called_once_with(
             {"id": "cdr-9", "matched_call_id": "qa-9"}
         )
+
+
+class ParseRecordingExtensionsTest(unittest.TestCase):
+    def test_reads_extensions_array_not_singular_field(self) -> None:
+        rec = _parse_recording(
+            {
+                "id": "rec-1",
+                "call_id": "uuid-1",
+                "caller_id": "7752304697",
+                "dnis": "17755550100",
+                "extensions": [3101],
+                "duration": 90_000,
+                "start": "2026-08-27T18:00:00Z",
+            }
+        )
+        self.assertEqual(rec.extension, "3101")
+        self.assertEqual(rec.extensions, ["3101"])
+
+    def test_reads_singular_extension_fallback(self) -> None:
+        rec = _parse_recording(
+            {
+                "id": "rec-2",
+                "extension": "9004",
+                "duration": 60_000,
+            }
+        )
+        self.assertEqual(rec.extension, "9004")
+        self.assertEqual(rec.extensions, ["9004"])
+
+
+class MatchCallByExtensionTest(unittest.TestCase):
+    def test_matches_qa_call_on_vonage_extension(self) -> None:
+        start = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+        log = VBCCallLog(
+            log_id="cdr-1",
+            direction="Inbound",
+            from_number="5550001111",
+            to_number="17755550100",
+            result="Answered",
+            recorded=True,
+            length_seconds=90,
+            start=start,
+            end=None,
+            source_user=None,
+            source_user_full_name=None,
+            source_extension=None,
+            destination_user=None,
+            destination_user_full_name=None,
+            destination_extension="3101",
+            custom_tag=None,
+            in_network=None,
+            international=None,
+            ring_seconds=None,
+            wait_seconds=None,
+            queue_seconds=None,
+            answered_at=None,
+            raw={},
+        )
+        hit = {
+            "id": "qa-1",
+            "call_date": start + timedelta(seconds=4),
+            "vonage_extension": "3101",
+            "vonage_caller_id": "9999999999",
+            "vonage_dnis": "18885550100",
+        }
+        other = {
+            "id": "qa-2",
+            "call_date": start + timedelta(seconds=4),
+            "vonage_extension": "9004",
+            "vonage_caller_id": "9999999999",
+            "vonage_dnis": "18885550100",
+        }
+        self.assertEqual(_match_call(log, [other, hit]), "qa-1")
 
 
 if __name__ == "__main__":

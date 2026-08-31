@@ -139,10 +139,16 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
             return {"call_id": call_id, **updates}
 
         agent_name = analysis["agent_name"]
-        agent_email, agent_name = resolve_or_create_agent(
+        agent_email, resolved_name = resolve_or_create_agent(
             agent_name,
             vonage_extension=existing.get("vonage_extension"),
         )
+        if agent_email:
+            agent_name = resolved_name
+        else:
+            # Keep ingest-time extension mapping if AI name did not match.
+            agent_email = existing.get("agent_email")
+            agent_name = existing.get("agent_name") or resolved_name
         analysis["agent_name"] = agent_name
 
         updates = {

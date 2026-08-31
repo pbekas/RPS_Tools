@@ -77,6 +77,13 @@ def names_match_confident(detected: str, known: str) -> bool:
 
 def is_mapped_agent_user(user: dict[str, Any] | None) -> bool:
     """True for an active, non-provisional Agent user in the directory."""
+    if not is_directory_identity_user(user) or not user:
+        return False
+    return str(user.get("role") or "Agent").strip().lower() == "agent"
+
+
+def is_directory_identity_user(user: dict[str, Any] | None) -> bool:
+    """Active, non-provisional directory person who can own an extension."""
     if not user:
         return False
     if user.get("active") is False:
@@ -84,19 +91,19 @@ def is_mapped_agent_user(user: dict[str, Any] | None) -> bool:
     email = str(user.get("email") or "").strip().lower()
     if not email or email.startswith("unmapped.") or user.get("provisional"):
         return False
-    return str(user.get("role") or "Agent").strip().lower() == "agent"
+    return True
 
 
 def match_mapped_agent_by_extension(
     extension: str | None,
     users: list[dict[str, Any]] | None = None,
 ) -> tuple[str | None, str | None]:
-    """Match a recording/CDR extension to a directory Agent. Prefer this over names."""
+    """Match a recording/CDR extension to a directory user. Prefer this over names."""
     key = normalize_extension(extension)
     if not key:
         return None, None
     for u in users or []:
-        if not is_mapped_agent_user(u):
+        if not is_directory_identity_user(u):
             continue
         if normalize_extension(u.get("extension")) != key:
             continue
@@ -168,6 +175,38 @@ def resolve_or_create_agent(
         return email, name or cleaned
 
     return match_mapped_agent(cleaned, users)
+
+
+def stamp_and_remap_call_extension(
+    call: dict[str, Any],
+    extension: str | None,
+) -> bool:
+    """Fill empty ``vonage_extension`` and attach unmapped calls to that user."""
+    key = normalize_extension(extension)
+    call_id = call.get("id")
+    if not key or not call_id:
+        return False
+
+    from datetime import datetime, timezone
+
+    from src import database as db
+
+    updates: dict[str, Any] = {}
+    if not normalize_extension(call.get("vonage_extension")):
+        updates["vonage_extension"] = key
+
+    email, name = resolve_or_create_agent("Unknown", vonage_extension=key)
+    cur = str(call.get("agent_email") or "").strip().lower()
+    unmapped = (not cur) or cur.startswith("unmapped.")
+    if email and unmapped:
+        updates["agent_email"] = email
+        updates["agent_name"] = name or email
+
+    if not updates:
+        return False
+    updates["updated_at"] = datetime.now(timezone.utc)
+    db.update_call(call_id, updates)
+    return True
 
 
 def remap_calls_for_extension(

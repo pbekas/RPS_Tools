@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -42,6 +43,14 @@ class VBCRecording:
     end: datetime | None
     download_url: str
     raw: dict[str, Any]
+    extensions: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.extensions and not self.extension:
+            self.extension = primary_recording_extension(self.extensions)
+        elif self.extension and not self.extensions:
+            digits = re.sub(r"\D", "", str(self.extension))
+            self.extensions = [digits] if digits else [str(self.extension)]
 
     @property
     def duration_seconds(self) -> int:
@@ -393,6 +402,7 @@ def _parse_recording(item: dict[str, Any]) -> VBCRecording:
     download = item.get("download_url") or (
         f"{RECORDING_API}/api/audio/recording/{recording_id}" if recording_id else ""
     )
+    extensions = recording_extensions_from_payload(item)
     return VBCRecording(
         recording_id=recording_id,
         call_id=item.get("call_id"),
@@ -400,13 +410,44 @@ def _parse_recording(item: dict[str, Any]) -> VBCRecording:
         caller_id=item.get("caller_id"),
         cnam=item.get("cnam"),
         dnis=item.get("dnis"),
-        extension=item.get("extension"),
+        extension=primary_recording_extension(extensions),
         duration_ms=int(item.get("duration") or 0),
         start=_parse_dt(item.get("start")),
         end=_parse_dt(item.get("end")),
         download_url=download,
         raw=item,
+        extensions=extensions,
     )
+
+
+def recording_extensions_from_payload(item: dict[str, Any]) -> list[str]:
+    """Vonage returns `extensions: [3101]`, not a singular `extension` string."""
+    raw = item.get("extensions")
+    if raw is None:
+        raw = item.get("extension")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raw = [raw]
+    out: list[str] = []
+    for value in raw:
+        if isinstance(value, dict):
+            value = (
+                value.get("extension")
+                or value.get("extension_number")
+                or value.get("number")
+            )
+        digits = re.sub(r"\D", "", str(value or ""))
+        if digits and digits not in out:
+            out.append(digits)
+    return out
+
+
+def primary_recording_extension(extensions: list[str]) -> str | None:
+    if not extensions:
+        return None
+    short = [ext for ext in extensions if 3 <= len(ext) <= 6]
+    return short[0] if short else extensions[0]
 
 
 def _id_from_href(item: dict[str, Any]) -> str | None:

@@ -124,6 +124,7 @@ def sync_call_logs(
             matched_call_id = _match_call(log, candidates)
             if matched_call_id:
                 summary["matched"] += 1
+                _stamp_call_extension_from_cdr(matched_call_id, log)
 
         try:
             db.upsert_call_log(
@@ -389,6 +390,8 @@ def _match_call(
 
     log_from = _digits(log.from_number)
     log_to = _digits(log.to_number)
+    log_exts = {_digits(log.destination_extension), _digits(log.source_extension)}
+    log_exts.discard("")
     best_id: str | None = None
     best_delta = _MATCH_WINDOW_SECONDS + 1
 
@@ -402,8 +405,11 @@ def _match_call(
 
         caller = _digits(call.get("vonage_caller_id"))
         dnis = _digits(call.get("vonage_dnis"))
+        call_ext = _digits(call.get("vonage_extension"))
         numbers_ok = False
-        if log_from and caller and _phones_match(log_from, caller):
+        if call_ext and call_ext in log_exts:
+            numbers_ok = True
+        elif log_from and caller and _phones_match(log_from, caller):
             numbers_ok = True
         elif log_to and dnis and _phones_match(log_to, dnis):
             numbers_ok = True
@@ -425,6 +431,22 @@ def _match_call(
             best_id = str(call["id"])
 
     return best_id
+
+
+def _stamp_call_extension_from_cdr(call_id: str, log: VBCCallLog) -> None:
+    """If the QA call is missing an extension, copy it from the matched CDR."""
+    ext = _digits(log.destination_extension) or _digits(log.source_extension)
+    if not ext:
+        return
+    try:
+        call = db.get_call(call_id)
+        if not call:
+            return
+        from src.agent_identity import stamp_and_remap_call_extension
+
+        stamp_and_remap_call_extension(call, ext)
+    except Exception:
+        logger.exception("Failed stamping extension %s on call %s", ext, call_id)
 
 
 def _digits(value: Any) -> str:

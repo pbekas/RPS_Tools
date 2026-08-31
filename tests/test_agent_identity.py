@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+from unittest.mock import patch
+
 from src.agent_identity import (
     is_mapped_agent_user,
     match_mapped_agent,
     match_mapped_agent_by_extension,
     names_match_confident,
     normalize_extension,
+    stamp_and_remap_call_extension,
 )
 
 
@@ -116,6 +119,37 @@ class AgentIdentityTest(unittest.TestCase):
 
         email, name = match_mapped_agent_by_extension("9999", users)
         self.assertIsNone(email)
+
+    def test_extension_match_includes_supervisors(self) -> None:
+        users = [
+            {
+                "email": "maria.s@releviumpain.com",
+                "name": "Maria Supervisor",
+                "role": "Supervisor",
+                "provisional": False,
+                "active": True,
+                "extension": "3200",
+            }
+        ]
+        email, name = match_mapped_agent_by_extension("3200", users)
+        self.assertEqual(email, "maria.s@releviumpain.com")
+        self.assertEqual(name, "Maria Supervisor")
+        self.assertFalse(is_mapped_agent_user(users[0]))
+
+    def test_stamp_fills_missing_extension_and_maps_agent(self) -> None:
+        call = {"id": "c1", "vonage_extension": None, "agent_email": None}
+        with (
+            patch(
+                "src.agent_identity.resolve_or_create_agent",
+                return_value=("fabiola.magana@releviumpain.com", "Fabiola Magana"),
+            ),
+            patch("src.database.update_call") as update,
+        ):
+            ok = stamp_and_remap_call_extension(call, "3101")
+        self.assertTrue(ok)
+        payload = update.call_args[0][1]
+        self.assertEqual(payload["vonage_extension"], "3101")
+        self.assertEqual(payload["agent_email"], "fabiola.magana@releviumpain.com")
 
 
 if __name__ == "__main__":
