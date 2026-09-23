@@ -223,7 +223,16 @@ def resolve_evidence_anchor(
         best_i = None
         best_score = 0
         for i, turn in enumerate(transcript):
-            text = _normalize_text(str(turn.get("text") or ""))
+            text = _normalize_text(
+                " ".join(
+                    part
+                    for part in (
+                        str(turn.get("text") or ""),
+                        str(turn.get("text_en") or ""),
+                    )
+                    if part
+                )
+            )
             if not text:
                 continue
             if quote in text or text in quote:

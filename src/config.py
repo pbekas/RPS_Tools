@@ -35,6 +35,7 @@ class Settings:
     aws_region: str
     bedrock_model_id: str
     transcribe_language_code: str
+    transcribe_language_options: list[str]
     vonage_api_key: str
     vonage_api_secret: str
     vonage_signature_secret: str
@@ -108,6 +109,19 @@ class Settings:
         self.transcribe_language_code = os.getenv(
             "TRANSCRIBE_LANGUAGE_CODE", "en-US"
         ).strip()
+        # Clinic calls are often English, Spanish, or both in one recording.
+        # Default is multi-language identification. Set a single code
+        # (TRANSCRIBE_LANGUAGE_OPTIONS=en-US) to force one language.
+        # TRANSCRIBE_LANGUAGE_CODE alone does not disable Spanish.
+        raw_opts = os.getenv("TRANSCRIBE_LANGUAGE_OPTIONS")
+        if raw_opts is None:
+            self.transcribe_language_options = ["en-US", "es-US"]
+        else:
+            self.transcribe_language_options = [
+                part.strip() for part in raw_opts.split(",") if part.strip()
+            ]
+            if not self.transcribe_language_options and self.transcribe_language_code:
+                self.transcribe_language_options = [self.transcribe_language_code]
         # Legacy Voice API (optional)
         self.vonage_api_key = os.getenv("VONAGE_API_KEY", "").strip()
         self.vonage_api_secret = os.getenv("VONAGE_API_SECRET", "").strip()

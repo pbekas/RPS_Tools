@@ -383,10 +383,19 @@ def _render_sms_transcript(transcript: list[dict], *, highlight_turn: int | None
         ts = turn.get("timestamp") or ""
         meta = f"{speaker}" + (f" · {ts}" if ts else "")
         text = (turn.get("text") or "").replace("<", "&lt;").replace(">", "&gt;")
+        reading = (turn.get("text_en") or "").strip()
+        spoken = (turn.get("text") or "").strip()
+        reading_html = ""
+        if reading and reading != spoken:
+            safe = reading.replace("<", "&lt;").replace(">", "&gt;")
+            reading_html = (
+                f'<div class="meta" style="margin-top:6px;font-weight:500">'
+                f"English · {safe}</div>"
+            )
         html_parts.append(
             f'<div class="bubble-row {css}" id="turn-{i}">'
             f'<div class="bubble {css}">'
-            f'<div class="meta">{meta}</div>{text}</div></div>'
+            f'<div class="meta">{meta}</div>{text}{reading_html}</div></div>'
         )
     html_parts.append("</div>")
     st.markdown("\n".join(html_parts), unsafe_allow_html=True)

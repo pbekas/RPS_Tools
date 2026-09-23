@@ -320,10 +320,20 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                         <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink-soft">
                           {speaker}
                           {turn.timestamp ? ` · ${turn.timestamp}` : ""}
+                          {turn.language?.toLowerCase().startsWith("es")
+                            ? " · Spanish"
+                            : ""}
                         </div>
                         <div className="text-[15px] leading-relaxed text-ink">
                           {turn.text}
                         </div>
+                        {turn.text_en &&
+                        turn.text_en.trim() !== (turn.text || "").trim() ? (
+                          <div className="mt-2 border-t border-black/10 pt-1.5 text-[13px] leading-relaxed text-ink-soft">
+                            <span className="font-semibold">English · </span>
+                            {turn.text_en}
+                          </div>
+                        ) : null}
                       </div>
                     </button>
                   );

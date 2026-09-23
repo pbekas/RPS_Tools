@@ -425,7 +425,13 @@ export type CallDoc = {
   ai_empathy_score?: number;
   ai_name_stated?: boolean;
   ai_summary?: string;
-  transcript?: Array<{ speaker?: string; text?: string; timestamp?: string }>;
+  transcript?: Array<{
+    speaker?: string;
+    text?: string;
+    text_en?: string;
+    language?: string;
+    timestamp?: string;
+  }>;
   transfer_count?: number;
   fcr?: boolean;
   quality_score?: number;

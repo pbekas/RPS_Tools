@@ -36,12 +36,20 @@ from src.call_flags import (
     normalize_critical_flags,
     normalize_sentiment,
 )
+from src.transcript_i18n import attach_english_readings
 
 BASE_SYSTEM = """You are a Call Quality Analyst for Relevium Pain Specialists, a medical office.
 You review phone call transcripts between front-desk/phone agents and patients or callers.
 
 The TRANSCRIPT is already produced by speech-to-text. Do NOT regenerate or rewrite it.
 Use the numbered turns as given. evidence_turn_index must refer to those turn numbers.
+
+Turns may be English, Spanish, or both in one call. A tag such as [es-US] or [en-US]
+is the language spoken on that turn. Score the agent from those spoken words.
+Write ai_summary, sentiment notes, rule notes, and evidence in English.
+A greeting, answer, courtesy, or refusal counts when the agent said it in Spanish.
+Do not invent an English line that was not spoken, and do not treat a missing
+English phrase as a miss when the same thing was said in Spanish.
 
 Return ONLY valid JSON (no markdown fences) matching this schema:
 {
@@ -66,7 +74,7 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
     {
       "flag_id": "string — must match a CRITICAL FLAG CATALOG id",
       "triggered": true,
-      "evidence": "short quote from the transcript",
+      "evidence": "short English paraphrase of the spoken turn",
       "evidence_timestamp": "mm:ss",
       "evidence_turn_index": "integer 0-based index into the PROVIDED transcript",
       "notes": "brief rationale"
@@ -77,7 +85,7 @@ Return ONLY valid JSON (no markdown fences) matching this schema:
       "rule_id": "string — must match a rule id from the ruleset",
       "passed": true/false,
       "score_1_to_10": integer or null — required for empathy; optional otherwise,
-      "evidence": "short quote copied from the transcript when possible",
+      "evidence": "short English paraphrase of the spoken turn",
       "evidence_timestamp": "mm:ss — timestamp of the most relevant transcript turn",
       "evidence_turn_index": "integer 0-based index into the PROVIDED transcript",
       "notes": "brief rationale"
@@ -171,15 +179,18 @@ def analyze_transcript(
     topicset = get_active_topicset()
     flagset = get_active_flagset()
     if isinstance(transcript, str):
-        transcript_text = transcript
-        seed_turns: list[dict[str, Any]] = []
+        seed_turns = (
+            [{"speaker": "spk_0", "text": transcript, "timestamp": "00:00"}]
+            if transcript.strip()
+            else []
+        )
     else:
         seed_turns = list(transcript)
-        transcript_text = _format_turns_for_prompt(seed_turns)
+    transcript_text = _format_turns_for_prompt(seed_turns)
 
     user_prompt = (
-        "Score this medical office phone call. Use the PROVIDED transcript as-is — "
-        "do not rewrite it.\n"
+        "Score this medical office phone call from the spoken turns below. "
+        "They may be English, Spanish, or mixed. Use them as-is — do not rewrite them.\n"
         f"Original filename (may contain hints): {original_filename or 'n/a'}\n"
         f"Known/estimated duration_seconds: {duration_seconds if duration_seconds is not None else 'unknown'}\n"
     )
@@ -202,7 +213,7 @@ def analyze_transcript(
     )
     data = _extract_json(raw)
 
-    # Always keep speech-to-text turns; only apply optional speaker role map from the model.
+    # Keep the spoken turns. The English reading is added below and is not in the prompt.
     normalized_transcript = _normalize_transcript(
         seed_turns,
         speaker_roles=data.get("speaker_roles") if isinstance(data.get("speaker_roles"), dict) else None,
@@ -212,6 +223,14 @@ def analyze_transcript(
         if data.get("transfer_count") is not None
         else (transfer_count_hint or 0)
     )
+
+    # Spoken turns are what get scored. Attach the English reading first so
+    # evidence links can fall back to it, without putting it in the prompt.
+    try:
+        normalized_transcript = attach_english_readings(normalized_transcript)
+    except Exception:
+        # A bad reading must not change or block the score.
+        pass
 
     topic_fields = normalize_topic(data.get("topic"), topicset)
     rule_results = normalize_rule_results(
@@ -337,12 +356,17 @@ def transcribe_audio(s3_uri: str) -> tuple[list[dict[str, str]], int]:
         "TranscriptionJobName": job_name,
         "Media": {"MediaFileUri": s3_uri},
         "MediaFormat": media_format,
-        "LanguageCode": settings.transcribe_language_code,
         "Settings": {
             "ShowSpeakerLabels": True,
             "MaxSpeakerLabels": 4,
         },
     }
+    kwargs.update(
+        transcribe_language_parameters(
+            settings.transcribe_language_options,
+            settings.transcribe_language_code,
+        )
+    )
     client.start_transcription_job(**kwargs)
 
     while True:
@@ -419,57 +443,145 @@ def _media_format_from_uri(uri: str) -> str:
     return "mp3"
 
 
+def transcribe_language_parameters(
+    options: list[str] | None,
+    fallback_code: str = "en-US",
+) -> dict[str, Any]:
+    """Language settings for StartTranscriptionJob.
+
+    Two or more codes identify the language per segment, so an English agent
+    and a Spanish caller in the same recording are each transcribed in the
+    language they spoke. One code forces that language for the whole file.
+    """
+    codes = [c.strip() for c in (options or []) if c and c.strip()]
+    if len(codes) >= 2:
+        return {
+            "IdentifyMultipleLanguages": True,
+            "LanguageOptions": codes,
+        }
+    return {"LanguageCode": codes[0] if codes else (fallback_code or "en-US")}
+
+
+_OPENING_PUNCT = set("¿¡([{")
+
+
 def _turns_from_transcribe_json(payload: dict[str, Any]) -> list[dict[str, str]]:
     results = payload.get("results") or {}
     speaker_labels = (results.get("speaker_labels") or {}).get("segments") or []
+    audio_segments = results.get("audio_segments") or []
     items = results.get("items") or []
 
-    words: list[dict[str, Any]] = []
-    for item in items:
-        if item.get("type") != "pronunciation":
-            continue
-        words.append(
-            {
-                "content": item.get("alternatives", [{}])[0].get("content", ""),
-                "start": float(item.get("start_time") or 0),
-                "end": float(item.get("end_time") or 0),
-            }
-        )
+    if not items:
+        full = (results.get("transcripts") or [{}])[0].get("transcript") or ""
+        if full:
+            return [{"speaker": "spk_0", "text": full, "timestamp": "00:00"}]
+        return []
 
     turns: list[dict[str, str]] = []
-    if speaker_labels:
-        for seg in speaker_labels:
-            speaker = seg.get("speaker_label") or "spk_0"
-            start = float(seg.get("start_time") or 0)
-            end = float(seg.get("end_time") or 0)
-            text_parts = [
-                w["content"]
-                for w in words
-                if w["start"] >= start - 0.01 and w["end"] <= end + 0.01
-            ]
-            text = " ".join(text_parts).strip()
-            if not text:
-                continue
-            turns.append(
-                {
-                    "speaker": speaker,
-                    "text": text,
-                    "timestamp": _seconds_to_mmss(start),
-                }
-            )
-        return turns
+    current: dict[str, Any] | None = None
+    pending_prefix = ""
 
-    full = (results.get("transcripts") or [{}])[0].get("transcript") or ""
-    if full:
-        turns.append({"speaker": "spk_0", "text": full, "timestamp": "00:00"})
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        text = str(current.get("text") or "").strip()
+        if text:
+            turn: dict[str, str] = {
+                "speaker": str(current.get("speaker") or "spk_0"),
+                "text": text,
+                "timestamp": _seconds_to_mmss(float(current.get("start") or 0)),
+            }
+            language = _majority_language(list(current.get("languages") or []))
+            if language:
+                turn["language"] = language
+            turns.append(turn)
+        current = None
+
+    for item in items:
+        content = str((item.get("alternatives") or [{}])[0].get("content") or "")
+        if not content:
+            continue
+        kind = item.get("type")
+        if kind == "punctuation" and content in _OPENING_PUNCT:
+            pending_prefix += content
+            continue
+        if kind == "punctuation":
+            if current is not None:
+                current["text"] = f"{current.get('text') or ''}{content}"
+            else:
+                pending_prefix += content
+            continue
+
+        start = float(item.get("start_time") or 0)
+        speaker = _speaker_at(speaker_labels, start)
+        language = str(item.get("language_code") or "") or _language_at(
+            audio_segments, start
+        )
+        if current is None or speaker != current.get("speaker"):
+            flush()
+            current = {
+                "speaker": speaker,
+                "text": "",
+                "start": start,
+                "languages": [],
+            }
+        piece = f"{pending_prefix}{content}"
+        pending_prefix = ""
+        if current["text"]:
+            current["text"] = f"{current['text']} {piece}"
+        else:
+            current["text"] = piece
+        if language:
+            current["languages"].append(language)
+
+    if pending_prefix and current is not None:
+        current["text"] = f"{current.get('text') or ''}{pending_prefix}"
+    flush()
     return turns
 
 
+def _speaker_at(segments: list[dict[str, Any]], timestamp: float) -> str:
+    for seg in segments:
+        start = float(seg.get("start_time") or 0)
+        end = float(seg.get("end_time") or 0)
+        if start - 0.15 <= timestamp <= end + 0.15:
+            return str(seg.get("speaker_label") or "spk_0")
+    if segments:
+        return str(segments[-1].get("speaker_label") or "spk_0")
+    return "spk_0"
+
+
+def _language_at(segments: list[dict[str, Any]], timestamp: float) -> str:
+    for seg in segments:
+        start = float(seg.get("start_time") or 0)
+        end = float(seg.get("end_time") or 0)
+        code = str(seg.get("language_code") or "")
+        if code and start - 0.15 <= timestamp <= end + 0.15:
+            return code
+    return ""
+
+
+def _majority_language(codes: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for code in codes:
+        key = code.strip()
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return ""
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
 def _format_turns_for_prompt(turns: list[dict[str, str]]) -> str:
+    """Spoken text only. text_en is a reviewer aid and must not be scored."""
     lines = []
     for i, t in enumerate(turns):
+        language = str(t.get("language") or "").strip()
+        lang_bit = f" [{language}]" if language else ""
         lines.append(
-            f"[{i}] [{t.get('timestamp', '')}] {t.get('speaker')}: {t.get('text')}"
+            f"[{i}] [{t.get('timestamp', '')}]{lang_bit} {t.get('speaker')}: {t.get('text')}"
         )
     return "\n".join(lines) if lines else "(empty transcript)"
 
@@ -509,13 +621,15 @@ def _normalize_transcript(
             mapped = "Patient" if low.endswith("0") else "Agent"
         else:
             mapped = "Agent"
-        normalized.append(
-            {
-                "speaker": mapped,
-                "text": str(turn.get("text", "")).strip(),
-                "timestamp": str(turn.get("timestamp", "")).strip(),
-            }
-        )
+        entry: dict[str, str] = {
+            "speaker": mapped,
+            "text": str(turn.get("text", "")).strip(),
+            "timestamp": str(turn.get("timestamp", "")).strip(),
+        }
+        language = str(turn.get("language") or "").strip()
+        if language:
+            entry["language"] = language
+        normalized.append(entry)
     return normalized
 
 
