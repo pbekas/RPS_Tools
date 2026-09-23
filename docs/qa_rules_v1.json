@@ -43,7 +43,7 @@
       "description": "Agent protects PHI and avoids discussing care with unverified parties.",
       "category": "Compliance",
       "weight": 2.0,
-      "auto_fail": true,
+      "auto_fail": false,
       "pass_criteria": "Agent does not leave detailed clinical messages on unsecured voicemail, discuss care with unverified third parties, or overshare PHI. Pass if no PHI risk moments occur.",
       "active": true
     },

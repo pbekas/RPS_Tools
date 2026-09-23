@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { CallTopic, QaRule, QaRuleset } from "@/lib/database";
 
 type Props = {
@@ -8,7 +8,7 @@ type Props = {
   topics?: CallTopic[];
 };
 
-const CATEGORIES = ["Greeting", "Empathy", "Process", "Resolution"];
+const CATEGORIES = ["Greeting", "Empathy", "Process", "Resolution", "Compliance"];
 
 const emptyForm = {
   id: "",
@@ -36,6 +36,11 @@ export function RuleSettings({ initialRuleset, topics = [] }: Props) {
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+  const categories = useMemo(() => {
+    const extra = form.category && !CATEGORIES.includes(form.category) ? [form.category] : [];
+    return [...CATEGORIES, ...extra];
+  }, [form.category]);
 
   const rules = ruleset.rules || [];
   const topicLabel = useMemo(() => {
@@ -92,6 +97,9 @@ export function RuleSettings({ initialRuleset, topics = [] }: Props) {
       pass_criteria: r.pass_criteria || "",
       active: r.active !== false,
       topic_ids: [...(r.topic_ids || [])],
+    });
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 
@@ -396,8 +404,9 @@ export function RuleSettings({ initialRuleset, topics = [] }: Props) {
       </div>
 
       <form
+        ref={formRef}
         onSubmit={saveRule}
-        className="rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
+        className="scroll-mt-6 rounded-2xl border border-line bg-white/85 p-5 shadow-soft"
       >
         <h3 className="font-display text-xl text-ink">Add / update rule</h3>
         <p className="mt-1 text-sm text-ink-soft">
@@ -438,7 +447,7 @@ export function RuleSettings({ initialRuleset, topics = [] }: Props) {
               onChange={(e) => setForm({ ...form, category: e.target.value })}
               className="w-full rounded-lg border border-line px-3 py-2"
             >
-              {CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
