@@ -196,7 +196,8 @@
             "auto_fail": "boolean",
             "pass_criteria": "string",
             "active": "boolean",
-            "topic_ids": ["string — empty/omitted = all topics; otherwise only these call_topics ids"]
+            "topic_ids": ["string — empty/omitted = all topics; otherwise only these call_topics ids"],
+            "user_emails": ["string — empty/omitted = every user; otherwise only these directory emails"]
           }
         ],
         "updated_at": "timestamp"

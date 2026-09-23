@@ -177,6 +177,30 @@ def resolve_or_create_agent(
     return match_mapped_agent(cleaned, users)
 
 
+def known_mapped_agent_email(
+    *,
+    agent_email: str | None = None,
+    agent_name: str | None = None,
+    vonage_extension: str | None = None,
+) -> str | None:
+    """Directory email to use when choosing per-user QA rules.
+
+    Prefers an email already stored on the call, then extension / name match.
+    Unmapped placeholder addresses are ignored.
+    """
+    email = str(agent_email or "").strip().lower()
+    if email and not email.startswith("unmapped."):
+        return email
+    matched, _name = resolve_or_create_agent(
+        agent_name or "",
+        vonage_extension=vonage_extension,
+    )
+    matched = str(matched or "").strip().lower()
+    if matched and not matched.startswith("unmapped."):
+        return matched
+    return None
+
+
 def stamp_and_remap_call_extension(
     call: dict[str, Any],
     extension: str | None,

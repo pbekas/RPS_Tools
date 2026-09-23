@@ -76,6 +76,8 @@ export type QaRule = {
   active?: boolean;
   /** Empty / omitted = scored on every call. Otherwise only those topic ids. */
   topic_ids?: string[];
+  /** Empty / omitted = every user. Otherwise only these directory emails. */
+  user_emails?: string[];
 };
 
 export type QaRuleset = {
@@ -100,6 +102,23 @@ export function normalizeTopicIds(raw: unknown): string[] {
     if (!id || !/^[a-z0-9_]+$/.test(id) || seen.has(id)) continue;
     seen.add(id);
     out.push(id);
+  }
+  return out;
+}
+
+export function normalizeUserEmails(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const email = String(item || "")
+      .trim()
+      .toLowerCase();
+    if (!email || !email.includes("@") || email.length > 254 || seen.has(email)) {
+      continue;
+    }
+    seen.add(email);
+    out.push(email);
   }
   return out;
 }
@@ -334,6 +353,7 @@ export async function upsertQaRule(input: {
   pass_criteria?: string;
   active?: boolean;
   topic_ids?: string[];
+  user_emails?: string[];
 }): Promise<QaRuleset> {
   const id = input.id.trim().toLowerCase();
   if (!/^[a-z0-9_]+$/.test(id)) {
@@ -358,6 +378,7 @@ export async function upsertQaRule(input: {
     pass_criteria: (input.pass_criteria || "").trim(),
     active: input.active !== false,
     topic_ids: normalizeTopicIds(input.topic_ids),
+    user_emails: normalizeUserEmails(input.user_emails),
   };
   if (idx >= 0) rules[idx] = { ...rules[idx], ...row };
   else rules.push(row);

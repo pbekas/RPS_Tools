@@ -35,9 +35,26 @@ def _normalize_topic_ids(raw: Any) -> list[str]:
     return out
 
 
+def _normalize_user_emails(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        email = str(item or "").strip().lower()
+        if not email or "@" not in email or len(email) > 254 or email in seen:
+            continue
+        seen.add(email)
+        out.append(email)
+    return out
+
+
 def _normalize_rule(rule: dict[str, Any]) -> dict[str, Any]:
     r = dict(rule)
     r["topic_ids"] = _normalize_topic_ids(r.get("topic_ids"))
+    r["user_emails"] = _normalize_user_emails(r.get("user_emails"))
     return r
 
 
@@ -68,6 +85,17 @@ def rule_applies_to_topic(rule: dict[str, Any], topic_id: str | None) -> bool:
     return key in ids
 
 
+def rule_applies_to_user(rule: dict[str, Any], agent_email: str | None) -> bool:
+    """Empty user_emails means the rule applies to every agent."""
+    emails = _normalize_user_emails(rule.get("user_emails"))
+    if not emails:
+        return True
+    key = str(agent_email or "").strip().lower()
+    if not key:
+        return False
+    return key in emails
+
+
 @lru_cache(maxsize=1)
 def default_ruleset() -> dict[str, Any]:
     return load_rules_from_file()
@@ -93,9 +121,14 @@ def active_rules(
     ruleset: dict[str, Any] | None = None,
     *,
     topic_id: str | None = None,
+    agent_email: str | None = None,
 ) -> list[dict[str, Any]]:
     rs = ruleset or get_active_ruleset()
-    rules = list(rs.get("rules") or [])
+    rules = [
+        r
+        for r in (rs.get("rules") or [])
+        if rule_applies_to_user(r, agent_email)
+    ]
     if topic_id is None:
         return rules
     return [r for r in rules if rule_applies_to_topic(r, topic_id)]
@@ -106,9 +139,28 @@ def _applies_to_label(rule: dict[str, Any]) -> str:
     return "all topics" if not ids else ", ".join(ids)
 
 
-def rules_for_prompt(ruleset: dict[str, Any] | None = None) -> str:
+def _agents_label(rule: dict[str, Any]) -> str:
+    emails = _normalize_user_emails(rule.get("user_emails"))
+    return "everyone" if not emails else ", ".join(emails)
+
+
+def rules_for_prompt(
+    ruleset: dict[str, Any] | None = None,
+    *,
+    agent_email: str | None = None,
+) -> str:
     """Format active rules as plain text for Bedrock."""
     rs = ruleset or get_active_ruleset()
+    agent = str(agent_email or "").strip().lower()
+    if agent:
+        who = (
+            f"This call's agent email: {agent}. "
+            "Score rules whose agents value is 'everyone' or lists that email."
+        )
+    else:
+        who = (
+            "Agent email is unknown. Score only rules whose agents value is 'everyone'."
+        )
     lines = [
         f"Ruleset version: {rs.get('version')}",
         f"Empathy pass threshold: {rs.get('empathy_pass_threshold')}/10",
@@ -116,18 +168,19 @@ def rules_for_prompt(ruleset: dict[str, Any] | None = None) -> str:
         f"auto-fail at transfers >= {rs.get('transfer_auto_fail_at')}",
         f"Auto-fail quality cap: {rs.get('auto_fail_quality_cap')}",
         "",
-        "First classify the call topic. Then score every active rule whose "
+        who,
+        "First classify the call topic. Then score every listed rule whose "
         "applies_to is 'all topics' OR lists that topic id.",
         "Return rule_results with one entry per applicable rule id. "
-        "Omit rules that do not apply to the classified topic. "
+        "Omit rules that do not apply to the classified topic or to this agent. "
         "Do not mark an inapplicable rule as passed.",
         "",
     ]
-    for r in active_rules(rs):
+    for r in active_rules(rs, agent_email=agent or None):
         lines.append(
             f"- id={r['id']} | {r['label']} | category={r.get('category')} | "
             f"weight={r.get('weight')} | auto_fail={r.get('auto_fail')} | "
-            f"applies_to={_applies_to_label(r)}\n"
+            f"applies_to={_applies_to_label(r)} | agents={_agents_label(r)}\n"
             f"  pass_criteria: {r.get('pass_criteria')}"
         )
     return "\n".join(lines)
@@ -139,11 +192,12 @@ def normalize_rule_results(
     *,
     transcript: list[dict[str, Any]] | None = None,
     topic_id: str | None = None,
+    agent_email: str | None = None,
 ) -> list[dict[str, Any]]:
     rs = ruleset or get_active_ruleset()
     by_id = {str(r.get("rule_id") or r.get("id") or ""): r for r in (raw_results or [])}
     out: list[dict[str, Any]] = []
-    for rule in active_rules(rs, topic_id=topic_id):
+    for rule in active_rules(rs, topic_id=topic_id, agent_email=agent_email):
         rid = rule["id"]
         item = by_id.get(rid) or {}
         score = item.get("score_1_to_10")

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from src import database as db
-from src.agent_identity import resolve_or_create_agent
+from src.agent_identity import known_mapped_agent_email, resolve_or_create_agent
 from src.call_filters import is_qa_eligible_duration
 from src.config import get_settings
 from src.bedrock_analyst import analyze_call_audio
@@ -113,6 +113,11 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
             audio_path,
             original_filename=audio_path.name,
             s3_uri=storage_uri if storage_uri.startswith("s3://") else None,
+            agent_email=known_mapped_agent_email(
+                agent_email=existing.get("agent_email"),
+                agent_name=existing.get("agent_name"),
+                vonage_extension=existing.get("vonage_extension"),
+            ),
         )
 
         # Prefer permanent recordings/ path over transcribe-inbox if analysis uploaded separately

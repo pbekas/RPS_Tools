@@ -357,6 +357,7 @@ export async function upsertQaRule(input: {
   pass_criteria?: string;
   active?: boolean;
   topic_ids?: string[];
+  user_emails?: string[];
 }): Promise<QaRuleset> {
   if (!usePostgres()) return firestore.upsertQaRule(input);
   const id = validateId(input.id, "Rule");
@@ -376,6 +377,7 @@ export async function upsertQaRule(input: {
       pass_criteria: (input.pass_criteria || "").trim(),
       active: input.active !== false,
       topic_ids: firestore.normalizeTopicIds(input.topic_ids),
+      user_emails: firestore.normalizeUserEmails(input.user_emails),
     };
     const rules = [...current.rules];
     const index = rules.findIndex((rule) => rule.id === id);

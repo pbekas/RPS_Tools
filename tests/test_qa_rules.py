@@ -9,6 +9,7 @@ from src.qa_rules import (
     load_rules_from_file,
     normalize_rule_results,
     rule_applies_to_topic,
+    rule_applies_to_user,
     rules_for_prompt,
 )
 
@@ -122,6 +123,55 @@ class QaRulesTopicScopeTest(unittest.TestCase):
             ["prescription_refill"],
         )
         self.assertEqual(by_id["empathy"]["topic_ids"], [])
+        self.assertEqual(by_id["empathy"]["user_emails"], [])
+
+    def test_user_scoped_rules_apply_only_to_assigned_agents(self) -> None:
+        rs = _normalize_ruleset(
+            {
+                "version": "test",
+                "rules": [
+                    {"id": "empathy", "label": "Empathy", "weight": 1, "active": True},
+                    {
+                        "id": "name_every_time",
+                        "label": "State name on every call",
+                        "weight": 1,
+                        "active": True,
+                        "user_emails": ["Ada@Example.com"],
+                    },
+                ],
+            }
+        )
+        self.assertTrue(rule_applies_to_user(rs["all_rules"][0], None))
+        self.assertFalse(rule_applies_to_user(rs["all_rules"][1], None))
+        self.assertTrue(
+            rule_applies_to_user(rs["all_rules"][1], "ada@example.com")
+        )
+        self.assertFalse(
+            rule_applies_to_user(rs["all_rules"][1], "other@example.com")
+        )
+
+        ada = {r["id"] for r in active_rules(rs, agent_email="ada@example.com")}
+        other = {r["id"] for r in active_rules(rs, agent_email="other@example.com")}
+        unknown = {r["id"] for r in active_rules(rs)}
+        self.assertEqual(ada, {"empathy", "name_every_time"})
+        self.assertEqual(other, {"empathy"})
+        self.assertEqual(unknown, {"empathy"})
+
+        results = normalize_rule_results(
+            [
+                {"rule_id": "empathy", "passed": True, "score_1_to_10": 8},
+                {"rule_id": "name_every_time", "passed": False},
+            ],
+            rs,
+            topic_id="billing",
+            agent_email="other@example.com",
+        )
+        self.assertEqual([r["rule_id"] for r in results], ["empathy"])
+
+        prompt = rules_for_prompt(rs, agent_email="ada@example.com")
+        self.assertIn("agents=everyone", prompt)
+        self.assertIn("agents=ada@example.com", prompt)
+        self.assertIn("ada@example.com", prompt)
 
 
 if __name__ == "__main__":

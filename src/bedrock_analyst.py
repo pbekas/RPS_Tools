@@ -123,6 +123,8 @@ def _system_with_rules(
     ruleset: dict[str, Any] | None = None,
     topicset: dict[str, Any] | None = None,
     flagset: dict[str, Any] | None = None,
+    *,
+    agent_email: str | None = None,
 ) -> str:
     return (
         BASE_SYSTEM
@@ -131,7 +133,7 @@ def _system_with_rules(
         + "\n\nCRITICAL FLAG CATALOG\n"
         + flags_for_prompt(flagset)
         + "\n\nACTIVE RULESET\n"
-        + rules_for_prompt(ruleset)
+        + rules_for_prompt(ruleset, agent_email=agent_email)
     )
 
 
@@ -140,6 +142,7 @@ def analyze_call_audio(
     original_filename: str | None = None,
     *,
     s3_uri: str | None = None,
+    agent_email: str | None = None,
 ) -> dict[str, Any]:
     """Transcribe a recording, then score/summarize with Bedrock against QA rules."""
     settings = get_settings()
@@ -162,6 +165,7 @@ def analyze_call_audio(
         transcript_turns,
         duration_seconds=duration_seconds,
         original_filename=original_filename or path.name,
+        agent_email=agent_email,
     )
     result["recording_storage_uri"] = media_uri
     return result
@@ -173,6 +177,7 @@ def analyze_transcript(
     duration_seconds: int | None = None,
     original_filename: str | None = None,
     transfer_count_hint: int | None = None,
+    agent_email: str | None = None,
 ) -> dict[str, Any]:
     """Score an existing transcript with Bedrock + active rules (no Transcribe)."""
     ruleset = get_active_ruleset()
@@ -206,7 +211,9 @@ def analyze_transcript(
     )
 
     raw = bedrock_text(
-        system=_system_with_rules(ruleset, topicset, flagset),
+        system=_system_with_rules(
+            ruleset, topicset, flagset, agent_email=agent_email
+        ),
         user=user_prompt,
         temperature=0.2,
         max_tokens=DEFAULT_AUDIT_MAX_TOKENS,
@@ -238,6 +245,7 @@ def analyze_transcript(
         ruleset,
         transcript=normalized_transcript,
         topic_id=topic_fields.get("topic_id"),
+        agent_email=agent_email,
     )
     scored = compute_scores(rule_results, ruleset, transfer_count=transfer_count)
     critical_flags = normalize_critical_flags(

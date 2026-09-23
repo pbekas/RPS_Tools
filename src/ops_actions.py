@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent_identity import is_mapped_agent_user, resolve_or_create_agent
+from src.agent_identity import (
+    is_mapped_agent_user,
+    known_mapped_agent_email,
+    resolve_or_create_agent,
+)
 from src.bedrock_analyst import analyze_transcript
 from src import database as db
 from src.pipeline import enqueue_bytes
@@ -25,6 +29,11 @@ def reanalyze_call(call_id: str, *, send_alerts: bool = True) -> dict[str, Any]:
         duration_seconds=call.get("duration_seconds"),
         original_filename=call.get("original_filename"),
         transfer_count_hint=call.get("transfer_count"),
+        agent_email=known_mapped_agent_email(
+            agent_email=call.get("agent_email"),
+            agent_name=call.get("agent_name"),
+            vonage_extension=call.get("vonage_extension"),
+        ),
     )
     if not scored.get("transcript"):
         scored["transcript"] = transcript

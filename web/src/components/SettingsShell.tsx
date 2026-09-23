@@ -88,6 +88,7 @@ export function SettingsShell({
             <RuleSettings
               initialRuleset={initialRuleset}
               topics={initialTopicset.topics || []}
+              users={initialUsers}
             />
           ) : (
             <FlagSettings initialFlagset={initialFlagset} />

@@ -51,6 +51,7 @@ export async function POST(req: Request) {
         pass_criteria: body.pass_criteria ? String(body.pass_criteria) : "",
         active: body.active !== false,
         topic_ids: Array.isArray(body.topic_ids) ? body.topic_ids : [],
+        user_emails: Array.isArray(body.user_emails) ? body.user_emails : [],
       });
       return NextResponse.json({ ok: true, ruleset });
     }
