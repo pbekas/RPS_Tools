@@ -9,6 +9,7 @@ from src.missed_call_group import (
     build_answered_elsewhere_index,
     effective_is_missed,
     find_answered_elsewhere_sibling,
+    missed_notification_ready,
     phone_key,
 )
 
@@ -123,6 +124,40 @@ class AnsweredElsewhereTest(unittest.TestCase):
             "miss", to="3101", result="Missed", direction="Outbound"
         )
         self.assertIsNone(find_answered_elsewhere_sibling(missed, [answered]))
+
+    def test_same_caller_answered_twenty_seconds_later(self) -> None:
+        """Callback that connects on the next leg is not a patient miss."""
+        missed = self._row(
+            "miss-5102",
+            to="5102",
+            result="Missed",
+            frm="17756911410",
+        )
+        answered = self._row(
+            "ans-main",
+            to="17029408007",
+            result="Answered",
+            frm="17756911410",
+            start=self.t0 + timedelta(seconds=20),
+        )
+        self.assertEqual(
+            find_answered_elsewhere_sibling(missed, [answered], window_seconds=60),
+            "ans-main",
+        )
+
+    def test_notification_waits_for_answered_elsewhere_window(self) -> None:
+        now = self.t0 + timedelta(seconds=30)
+        self.assertFalse(
+            missed_notification_ready(self.t0, window_seconds=60, now=now)
+        )
+        self.assertTrue(
+            missed_notification_ready(
+                self.t0,
+                window_seconds=60,
+                now=self.t0 + timedelta(seconds=60),
+            )
+        )
+        self.assertFalse(missed_notification_ready(None, now=now))
 
     def test_effective_is_missed(self) -> None:
         self.assertFalse(

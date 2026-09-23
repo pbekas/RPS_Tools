@@ -16,6 +16,7 @@ from src.missed_call_group import (
     find_answered_elsewhere_sibling,
     is_answered_result,
     is_inbound,
+    missed_notification_ready,
 )
 from src.vonage_reports import VBCCallLog, VonageReportsClient
 
@@ -154,16 +155,25 @@ def sync_call_logs(
                     "Group-ring miss backfill failed for answered %s", log.log_id
                 )
 
+        # Hold SMS and Chat until the answered-elsewhere window has closed.
+        # A same-number answer often arrives seconds later; paging on the
+        # first Missed CDR is a false positive.
+        notify_miss = is_missed and missed_notification_ready(
+            log.start, window_seconds=window_seconds
+        )
+
         # Best-effort patient SMS — never fails the CDR sync cycle.
         try:
             from src.twilio_sms import maybe_notify_missed_inbound_call
 
-            if maybe_notify_missed_inbound_call(log, is_missed_override=is_missed):
+            if notify_miss and maybe_notify_missed_inbound_call(
+                log, is_missed_override=is_missed
+            ):
                 summary["missed_sms_sent"] += 1
         except Exception:
             logger.exception("Missed-call SMS hook failed for %s", log.log_id)
 
-        # Best-effort Google Chat alert for every missed inbound CDR.
+        # Best-effort Google Chat alert for every confirmed missed inbound CDR.
         try:
             from src.notify import alert_missed_call
 
@@ -174,7 +184,7 @@ def sync_call_logs(
                 or log.source_user
             )
             extension = log.destination_extension or log.source_extension
-            if alert_missed_call(
+            if notify_miss and alert_missed_call(
                 log_id=log.log_id,
                 direction=log.direction,
                 result=log.result,

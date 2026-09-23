@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { CallLogDoc } from "@/lib/callLogs";
 import {
+  displayCallResult,
   isEffectiveMiss,
-  normalizeResult,
   partyFromLog,
   resultBreakdown,
   summarizeCallLogs,
@@ -112,7 +112,7 @@ export function CallOps({
         }
       }
       if (resultNeedle) {
-        if (normalizeResult(log.result).toLowerCase() !== resultNeedle) return false;
+        if (displayCallResult(log).toLowerCase() !== resultNeedle) return false;
       }
       if (outcomeBucket) {
         if (classifyOutcome(log) !== outcomeBucket) return false;
@@ -550,7 +550,7 @@ export function CallOps({
                         "—"
                       )}
                     </td>
-                    <td className="px-3 py-2">{log.result || "—"}</td>
+                    <td className="px-3 py-2">{displayCallResult(log)}</td>
                     <td className="px-3 py-2">
                       {formatDuration(log.length_seconds)}
                     </td>

@@ -159,6 +159,26 @@ def build_answered_elsewhere_index(
     return out
 
 
+def missed_notification_ready(
+    start: Any,
+    *,
+    window_seconds: int = DEFAULT_ANSWERED_ELSEWHERE_WINDOW_SECONDS,
+    now: datetime | None = None,
+) -> bool:
+    """Wait out the answered-elsewhere window before paging on a miss.
+
+    A sibling answer often lands a few seconds later. Alerting on the first
+    CDR would page Chat (and SMS) for a call that is about to be suppressed.
+    """
+    start_dt = _as_dt(start)
+    if start_dt is None:
+        return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return (current - start_dt).total_seconds() >= max(1, int(window_seconds))
+
+
 def effective_is_missed(
     *,
     result: Any,

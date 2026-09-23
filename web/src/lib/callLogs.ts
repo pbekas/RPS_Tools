@@ -72,6 +72,24 @@ export function isMissedResult(result?: string | null): boolean {
   return text !== "answered" && text !== "connected";
 }
 
+/**
+ * Label for the result column. Vonage keeps result=Missed on a leg that
+ * another extension answered; that is not a patient miss.
+ */
+export function displayCallResult(log: {
+  result?: string | null;
+  is_missed?: boolean;
+  answered_elsewhere?: boolean;
+}): string {
+  if (
+    log.answered_elsewhere ||
+    (log.is_missed === false && isMissedResult(log.result))
+  ) {
+    return "Answered elsewhere";
+  }
+  return (log.result || "").trim() || "—";
+}
+
 /** Patient-facing miss after Call Group blast sibling suppression. */
 export function isEffectiveMiss(log: {
   result?: string | null;
@@ -232,7 +250,8 @@ export function talkTimeByPerson(logs: CallLogDoc[]): PersonTalkRow[] {
 export function resultBreakdown(logs: CallLogDoc[]): ResultBreakdownRow[] {
   const map = new Map<string, ResultBreakdownRow>();
   for (const log of logs) {
-    const result = normalizeResult(log.result);
+    const shown = displayCallResult(log);
+    const result = shown === "—" ? "Unknown" : shown;
     const existing = map.get(result) || { result, count: 0, talkSeconds: 0 };
     existing.count += 1;
     existing.talkSeconds += Math.max(0, Number(log.length_seconds || 0));
