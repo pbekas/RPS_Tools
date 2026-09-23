@@ -10,6 +10,7 @@ export const config = {
     "/calls/:path*",
     "/queue",
     "/ops",
+    "/logs",
     "/coaching",
     "/settings",
     "/users",

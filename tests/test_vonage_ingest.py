@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from src.vonage_poller import _backfill_is_due
+from src.vonage_poller import _backfill_is_due, drain_missing_recorded_cdrs
 from src.vonage_sync import (
     is_recorded_answered_unmatched,
     match_recording_for_cdr,
@@ -228,6 +228,41 @@ class BackfillDueTest(unittest.TestCase):
         )
 
 
+class DrainCompletenessTest(unittest.TestCase):
+    def test_stops_when_a_pass_is_not_capped(self) -> None:
+        with patch(
+            "src.vonage_poller.ingest_missing_recorded_cdrs",
+            side_effect=[
+                {"capped": True, "queued": 2, "candidates": 5, "rematch": {"matched": 1}, "errors": [], "call_ids": ["a"]},
+                {"capped": False, "queued": 1, "candidates": 1, "rematch": {"matched": 0}, "errors": [], "call_ids": ["b"]},
+            ],
+        ) as ingest:
+            summary = drain_missing_recorded_cdrs(hours_back=6, max_recordings=2, max_passes=6)
+
+        self.assertEqual(ingest.call_count, 2)
+        self.assertEqual(summary["passes"], 2)
+        self.assertEqual(summary["queued"], 3)
+        self.assertEqual(summary["rematched"], 1)
+        self.assertFalse(summary["capped"])
+
+    def test_stops_when_capped_pass_queues_nothing(self) -> None:
+        with patch(
+            "src.vonage_poller.ingest_missing_recorded_cdrs",
+            return_value={
+                "capped": True,
+                "queued": 0,
+                "candidates": 4,
+                "rematch": {"matched": 0},
+                "errors": [],
+                "call_ids": [],
+            },
+        ) as ingest:
+            summary = drain_missing_recorded_cdrs(hours_back=6, max_passes=6)
+
+        self.assertEqual(ingest.call_count, 1)
+        self.assertTrue(summary["capped"])
+
+
 class CompletenessIngestTest(unittest.TestCase):
     def test_ingests_unmatched_recorded_cdr_and_stamps_match(self) -> None:
         start = datetime.now(timezone.utc) - timedelta(minutes=20)
@@ -251,6 +286,10 @@ class CompletenessIngestTest(unittest.TestCase):
         with (
             patch("src.vonage_sync.get_settings", return_value=settings),
             patch("src.vonage_sync.db") as mock_db,
+            patch(
+                "src.cdr_sync.rematch_unlinked_call_logs",
+                return_value={"candidates": 0, "matched": 0, "errors": []},
+            ),
             patch("src.vonage_sync.VonageVBCClient", return_value=client),
             patch(
                 "src.vonage_sync.find_existing_by_vonage_recording_id",
@@ -341,7 +380,140 @@ class MatchCallByExtensionTest(unittest.TestCase):
             "vonage_caller_id": "9999999999",
             "vonage_dnis": "18885550100",
         }
-        self.assertEqual(_match_call(log, [other, hit]), "qa-1")
+        with patch("src.cdr_sync._match_call_by_stored_ids", return_value=None):
+            self.assertEqual(_match_call(log, [other, hit]), "qa-1")
+
+    def test_outbound_prefers_dialed_number(self) -> None:
+        start = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+        log = VBCCallLog(
+            log_id="cdr-out",
+            direction="Outbound",
+            from_number="17028321940",
+            to_number="18883415040",
+            result="Answered",
+            recorded=True,
+            length_seconds=600,
+            start=start,
+            end=None,
+            source_user=None,
+            source_user_full_name=None,
+            source_extension="1100",
+            destination_user=None,
+            destination_user_full_name=None,
+            destination_extension=None,
+            custom_tag=None,
+            in_network=None,
+            international=None,
+            ring_seconds=None,
+            wait_seconds=None,
+            queue_seconds=None,
+            answered_at=None,
+            raw={},
+        )
+        wrong = {
+            "id": "qa-wrong",
+            "call_date": start + timedelta(seconds=2),
+            "vonage_extension": "1100",
+            "vonage_caller_id": "17028321940",
+            "vonage_dnis": "17024629932",
+        }
+        hit = {
+            "id": "qa-hit",
+            "call_date": start + timedelta(seconds=20),
+            "vonage_extension": "1100",
+            "vonage_caller_id": "17028321940",
+            "vonage_dnis": "18883415040",
+        }
+        with patch("src.cdr_sync._match_call_by_stored_ids", return_value=None):
+            self.assertEqual(_match_call(log, [wrong, hit]), "qa-hit")
+
+    def test_raw_recording_id_links_before_fuzzy_match(self) -> None:
+        start = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+        log = VBCCallLog(
+            log_id="cdr-raw",
+            direction="Outbound",
+            from_number="17028321940",
+            to_number="18883415040",
+            result="Answered",
+            recorded=True,
+            length_seconds=90,
+            start=start,
+            end=None,
+            source_user=None,
+            source_user_full_name=None,
+            source_extension=None,
+            destination_user=None,
+            destination_user_full_name=None,
+            destination_extension=None,
+            custom_tag=None,
+            in_network=None,
+            international=None,
+            ring_seconds=None,
+            wait_seconds=None,
+            queue_seconds=None,
+            answered_at=None,
+            raw={"recording_id": "rec-42"},
+        )
+        hit = {
+            "id": "qa-raw",
+            "call_date": start,
+            "vonage_recording_id": "rec-42",
+            "vonage_caller_id": "19995550000",
+        }
+        with patch("src.cdr_sync._match_call_by_stored_ids", return_value=None):
+            self.assertEqual(_match_call(log, [hit]), "qa-raw")
+
+
+class CaptureCandidateTest(unittest.TestCase):
+    def test_group_ring_answered_elsewhere_is_a_candidate(self) -> None:
+        self.assertTrue(
+            is_recorded_answered_unmatched(
+                {
+                    "recorded": True,
+                    "result": "Missed",
+                    "is_missed": False,
+                    "answered_elsewhere": True,
+                    "length_seconds": 90,
+                    "matched_call_id": None,
+                }
+            )
+        )
+
+
+class OutboundRecordingMatchTest(unittest.TestCase):
+    def test_prefers_recording_whose_dnis_is_the_dialed_number(self) -> None:
+        start = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+        wrong = _rec(
+            "r-wrong",
+            call_id=None,
+            start=start + timedelta(seconds=2),
+            extension="1100",
+            caller_id="17028321940",
+            dnis="17024629932",
+        )
+        wrong.call_direction = "Outbound"
+        hit = _rec(
+            "r-hit",
+            call_id=None,
+            start=start + timedelta(seconds=15),
+            extension="1100",
+            caller_id="17028321940",
+            dnis="18883415040",
+        )
+        hit.call_direction = "Outbound"
+        matched = match_recording_for_cdr(
+            {
+                "id": "cdr-out",
+                "direction": "Outbound",
+                "start": start,
+                "from_number": "17028321940",
+                "to_number": "18883415040",
+                "source_extension": "1100",
+            },
+            [wrong, hit],
+        )
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.recording_id, "r-hit")
 
 
 if __name__ == "__main__":

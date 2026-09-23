@@ -161,6 +161,21 @@ def find_call_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | None
     return None
 
 
+def find_call_by_vonage_call_id(call_id: str) -> dict[str, Any] | None:
+    needle = str(call_id or "").strip()
+    if not needle:
+        return None
+    db = get_db()
+    query = (
+        db.collection("calls")
+        .where("vonage_call_id", "==", needle)
+        .limit(1)
+    )
+    for doc in query.stream():
+        return _serialize(doc)
+    return None
+
+
 def list_calls(
     *,
     agent_email: str | None = None,
@@ -168,6 +183,8 @@ def list_calls(
     limit: int = 100,
     status: str | None = None,
     require_min_duration: bool | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """
     List calls. For status=\"complete\", short IVR-only recordings (<=30s)
@@ -188,7 +205,21 @@ def list_calls(
         fetch_limit
     )
 
+    def _in_window(row: dict[str, Any]) -> bool:
+        if since is None and until is None:
+            return True
+        raw = row.get("call_date") or row.get("created_at")
+        if not isinstance(raw, datetime):
+            return since is None and until is None
+        moment = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        if since is not None and moment < since:
+            return False
+        if until is not None and moment > until:
+            return False
+        return True
+
     def _filter(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows = [r for r in rows if _in_window(r)]
         if require_min_duration:
             rows = [
                 r for r in rows if is_qa_eligible_duration(r.get("duration_seconds"))
@@ -477,6 +508,9 @@ def upsert_call_log(payload: dict[str, Any]) -> str:
     now = _now()
     data = {**payload, "synced_at": now, "updated_at": now, "created_at": now}
     data.pop("id", None)
+    # Omit a null match so a later sync does not wipe a link already stored.
+    if "matched_call_id" in data and not str(data.get("matched_call_id") or "").strip():
+        data.pop("matched_call_id", None)
     # Single write — avoid a read-before-write (quota-heavy during bulk sync).
     # created_at is overwritten on re-sync; acceptable for CDR ops data.
     db.collection("call_logs").document(log_id).set(data, merge=True)
@@ -497,6 +531,7 @@ def list_call_logs(
     direction: str | None = None,
     missed_only: bool = False,
     unrecorded_only: bool = False,
+    capture_gaps_only: bool = False,
 ) -> list[dict[str, Any]]:
     """List CDRs newest-first. Filters applied in memory for index flexibility."""
     db = get_db()
@@ -555,6 +590,10 @@ def list_call_logs(
         rows = [r for r in rows if r.get("is_missed") is True]
     if unrecorded_only:
         rows = [r for r in rows if r.get("recorded") is False or r.get("is_unrecorded")]
+    if capture_gaps_only:
+        from src.call_match import is_capture_candidate
+
+        rows = [r for r in rows if is_capture_candidate(r)]
 
     return rows[:limit]
 

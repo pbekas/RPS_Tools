@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from src import database as db
+from src.call_match import alignment_score, digits, recording_id_from_raw
 from src.config import get_settings
 from src.missed_call_group import (
     DEFAULT_ANSWERED_ELSEWHERE_WINDOW_SECONDS,
@@ -245,6 +246,85 @@ def _maybe_alert_missed_spike(summary: dict[str, Any]) -> None:
         logger.exception("Missed-spike alert check failed")
 
 
+def rematch_unlinked_call_logs(
+    *,
+    days_back: int = 2,
+    limit: int = 1000,
+) -> dict[str, Any]:
+    """Link stored CDRs to QA calls already in the database. Does not download audio."""
+    summary: dict[str, Any] = {"candidates": 0, "matched": 0, "errors": []}
+    if not get_settings().database_configured:
+        return summary
+    try:
+        logs = db.list_call_logs(
+            limit=limit,
+            days=max(1, days_back),
+            capture_gaps_only=True,
+        )
+    except TypeError:
+        from src.call_match import is_capture_candidate
+
+        logs = [
+            row
+            for row in db.list_call_logs(limit=limit, days=max(1, days_back))
+            if is_capture_candidate(row)
+        ]
+    except Exception:
+        logger.exception("Failed listing unlinked CDRs for rematch")
+        summary["errors"].append({"error": "failed listing call logs"})
+        return summary
+
+    summary["candidates"] = len(logs)
+    starts = [dt for dt in (_as_dt(row.get("start")) for row in logs) if dt]
+    if not starts:
+        return summary
+    pad = timedelta(minutes=5)
+    candidates = _load_match_candidates(min(starts) - pad, max(starts) + pad)
+    for row in logs:
+        log_id = str(row.get("id") or "").strip()
+        if not log_id:
+            continue
+        try:
+            call_id = _match_call(_vbc_log_from_row(row), candidates)
+            if not call_id:
+                continue
+            db.upsert_call_log({"id": log_id, "matched_call_id": call_id})
+            summary["matched"] += 1
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"].append({"log_id": log_id, "error": str(exc)})
+            logger.exception("Rematch failed for CDR %s", log_id)
+    return summary
+
+
+def _vbc_log_from_row(row: Mapping[str, Any]) -> VBCCallLog:
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    return VBCCallLog(
+        log_id=str(row.get("id") or "").strip(),
+        direction=row.get("direction"),
+        from_number=row.get("from_number"),
+        to_number=row.get("to_number"),
+        result=row.get("result"),
+        recorded=row.get("recorded"),
+        length_seconds=int(row.get("length_seconds") or 0),
+        start=_as_dt(row.get("start")),
+        end=_as_dt(row.get("end")),
+        source_user=row.get("source_user"),
+        source_user_full_name=row.get("source_user_full_name"),
+        source_extension=row.get("source_extension"),
+        destination_user=row.get("destination_user"),
+        destination_user_full_name=row.get("destination_user_full_name"),
+        destination_extension=row.get("destination_extension"),
+        custom_tag=row.get("custom_tag"),
+        in_network=row.get("in_network"),
+        international=row.get("international"),
+        ring_seconds=row.get("ring_seconds"),
+        wait_seconds=row.get("wait_seconds"),
+        queue_seconds=row.get("queue_seconds"),
+        answered_at=_as_dt(row.get("answered_at")),
+        raw=raw,
+    )
+
+
 def test_reports_connection() -> dict[str, Any]:
     """List a tiny window of call logs to verify Reports API access."""
     client = VonageReportsClient()
@@ -369,8 +449,16 @@ def _load_match_candidates(
     start_gte: datetime,
     start_lte: datetime,
 ) -> list[dict[str, Any]]:
-    """Recent QA calls that might match CDRs in this window."""
-    rows = db.list_calls(limit=400, require_min_duration=False)
+    """QA calls in the CDR window, not just the latest global rows."""
+    try:
+        rows = db.list_calls(
+            limit=2000,
+            require_min_duration=False,
+            since=start_gte,
+            until=start_lte,
+        )
+    except TypeError:
+        rows = db.list_calls(limit=2000, require_min_duration=False)
     out: list[dict[str, Any]] = []
     for call in rows:
         call_dt = _as_dt(call.get("call_date") or call.get("created_at"))
@@ -382,27 +470,55 @@ def _load_match_candidates(
     return out
 
 
+def _match_call_by_stored_ids(log: VBCCallLog) -> str | None:
+    """O(1) link when the QA call already stores this CDR or recording id."""
+    if not get_settings().database_configured:
+        return None
+    try:
+        hit = db.find_call_by_vonage_call_id(log.log_id)
+        if hit and hit.get("id"):
+            return str(hit["id"])
+    except Exception:
+        logger.debug("vonage_call_id lookup failed for %s", log.log_id, exc_info=True)
+    rec_id = recording_id_from_raw(log.raw)
+    if not rec_id:
+        return None
+    try:
+        hit = db.find_call_by_vonage_recording_id(rec_id)
+        if hit and hit.get("id"):
+            return str(hit["id"])
+    except Exception:
+        logger.debug("recording id lookup failed for %s", rec_id, exc_info=True)
+    return None
+
+
 def _match_call(
     log: VBCCallLog,
     candidates: list[dict[str, Any]],
 ) -> str | None:
-    if not candidates:
-        return None
+    stored = _match_call_by_stored_ids(log)
+    if stored:
+        return stored
 
-    # Prefer exact vonage_call_id == CDR id when present.
     for call in candidates:
         vonage_call_id = str(call.get("vonage_call_id") or "").strip()
         if vonage_call_id and vonage_call_id == log.log_id:
             return str(call["id"])
+    raw_recording_id = recording_id_from_raw(log.raw)
+    if raw_recording_id:
+        for call in candidates:
+            if str(call.get("vonage_recording_id") or "").strip() == raw_recording_id:
+                return str(call["id"])
 
-    if log.start is None:
+    if log.start is None or not candidates:
         return None
 
-    log_from = _digits(log.from_number)
-    log_to = _digits(log.to_number)
-    log_exts = {_digits(log.destination_extension), _digits(log.source_extension)}
+    log_from = digits(log.from_number)
+    log_to = digits(log.to_number)
+    log_exts = {digits(log.destination_extension), digits(log.source_extension)}
     log_exts.discard("")
     best_id: str | None = None
+    best_score = 0
     best_delta = _MATCH_WINDOW_SECONDS + 1
 
     for call in candidates:
@@ -413,30 +529,25 @@ def _match_call(
         if delta > _MATCH_WINDOW_SECONDS:
             continue
 
-        caller = _digits(call.get("vonage_caller_id"))
-        dnis = _digits(call.get("vonage_dnis"))
-        call_ext = _digits(call.get("vonage_extension"))
-        numbers_ok = False
-        if call_ext and call_ext in log_exts:
-            numbers_ok = True
-        elif log_from and caller and _phones_match(log_from, caller):
-            numbers_ok = True
-        elif log_to and dnis and _phones_match(log_to, dnis):
-            numbers_ok = True
-        elif log_from and dnis and _phones_match(log_from, dnis):
-            numbers_ok = True
-        elif log_to and caller and _phones_match(log_to, caller):
-            numbers_ok = True
-        elif not log_from and not log_to:
-            # No CDR numbers — time proximity alone is weak; skip.
-            numbers_ok = False
-        elif not caller and not dnis:
-            # Recording has no numbers; allow time-only if unique-ish.
-            numbers_ok = delta <= 30
-
-        if not numbers_ok:
+        call_ext = digits(call.get("vonage_extension"))
+        other_exts = {call_ext} if call_ext else set()
+        score = alignment_score(
+            direction=log.direction or str(call.get("vonage_direction") or ""),
+            log_from=log_from,
+            log_to=log_to,
+            caller=digits(call.get("vonage_caller_id")),
+            dnis=digits(call.get("vonage_dnis")),
+            log_exts=log_exts,
+            other_exts=other_exts,
+        )
+        if score <= 0 and not other_exts and not digits(call.get("vonage_caller_id")) and not digits(
+            call.get("vonage_dnis")
+        ):
+            score = 1 if delta <= 30 else 0
+        if score <= 0:
             continue
-        if delta < best_delta:
+        if score > best_score or (score == best_score and delta < best_delta):
+            best_score = score
             best_delta = delta
             best_id = str(call["id"])
 

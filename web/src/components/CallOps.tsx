@@ -251,7 +251,11 @@ export function CallOps({
             Control tower, agent scorecard, coaching queue, and CDR detail for the
             last {days} days ({logs.length} CDRs loaded). Talk duration comes from
             Vonage Reports — true ASA needs ring/queue wait (not available on VBC
-            CDRs yet; see SLA proxies).
+            CDRs yet; see SLA proxies). For phone/extension lookup across months, use{" "}
+            <Link href="/logs" className="font-semibold text-accent hover:underline">
+              Logs
+            </Link>
+            .
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-sm">

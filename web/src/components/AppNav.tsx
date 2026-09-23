@@ -102,6 +102,12 @@ export function AppNav() {
                     Call ops
                   </Link>
                   <Link
+                    href="/logs"
+                    className={navClass(pathname.startsWith("/logs"))}
+                  >
+                    Logs
+                  </Link>
+                  <Link
                     href="/queue"
                     className={navClass(pathname.startsWith("/queue"))}
                   >

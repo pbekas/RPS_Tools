@@ -54,6 +54,7 @@ export type QaCapture = {
   missing: number;
   captureRate: number;
   byDay: CaptureRow[];
+  byDirection: CaptureRow[];
   byExtension: CaptureRow[];
 };
 
@@ -333,6 +334,7 @@ export function buildOpsTower(
   let recordedAnswered = 0;
   let recordedAnsweredWithQa = 0;
   const captureByDay = new Map<string, CaptureRow>();
+  const captureByDirection = new Map<string, CaptureRow>();
   const captureByExt = new Map<string, CaptureRow>();
 
   for (const log of logs) {
@@ -437,6 +439,10 @@ export function buildOpsTower(
       const extCap = captureByExt.get(ext) || emptyCapture(ext, `Ext ${ext}`);
       bumpCapture(extCap, captured);
       captureByExt.set(ext, extCap);
+      const dirCap =
+        captureByDirection.get(direction) || emptyCapture(direction, direction);
+      bumpCapture(dirCap, captured);
+      captureByDirection.set(direction, dirCap);
     }
   }
 
@@ -491,6 +497,12 @@ export function buildOpsTower(
       byDay: [...captureByDay.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([, row]) => finalizeCapture(row)),
+      byDirection: [...captureByDirection.values()]
+        .map(finalizeCapture)
+        .sort(
+          (a, b) =>
+            b.missing - a.missing || b.recordedAnswered - a.recordedAnswered
+        ),
       byExtension: [...captureByExt.values()]
         .map(finalizeCapture)
         .sort(

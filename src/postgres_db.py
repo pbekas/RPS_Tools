@@ -511,6 +511,20 @@ def find_call_by_vonage_recording_id(recording_id: str) -> dict[str, Any] | None
     return _serialize_call(rows[0]) if rows else None
 
 
+def find_call_by_vonage_call_id(call_id: str) -> dict[str, Any] | None:
+    """Find a QA call by the Vonage CDR / recording call id."""
+    needle = str(call_id or "").strip()
+    if not needle:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM calls WHERE vonage_call_id = %s ORDER BY call_date DESC LIMIT 1",
+            (needle,),
+        ).fetchone()
+        rows = _attach_call_results(conn, [row] if row else [])
+    return _serialize_call(rows[0]) if rows else None
+
+
 def list_calls(
     *,
     agent_email: str | None = None,
@@ -518,6 +532,8 @@ def list_calls(
     limit: int = 100,
     status: str | None = None,
     require_min_duration: bool | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> list[dict[str, Any]]:
     if require_min_duration is None:
         require_min_duration = status == "complete"
@@ -532,6 +548,12 @@ def list_calls(
     if status:
         clauses.append(sql.SQL("status = %s"))
         params.append(status)
+    if since is not None:
+        clauses.append(sql.SQL("call_date >= %s"))
+        params.append(since)
+    if until is not None:
+        clauses.append(sql.SQL("call_date <= %s"))
+        params.append(until)
     fetch_limit = max(0, limit * 3 if require_min_duration else limit)
     where = (
         sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
@@ -928,10 +950,21 @@ def upsert_call_log(payload: dict[str, Any]) -> str:
         now,
         now,
     ]
-    updates = [
-        sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(name), sql.Identifier(name))
-        for name in supplied
-    ]
+    updates = []
+    for name in supplied:
+        if name == "matched_call_id":
+            # A later sync that fails to rematch must not wipe an existing link.
+            updates.append(
+                sql.SQL(
+                    "matched_call_id = COALESCE(EXCLUDED.matched_call_id, call_logs.matched_call_id)"
+                )
+            )
+        else:
+            updates.append(
+                sql.SQL("{} = EXCLUDED.{}").format(
+                    sql.Identifier(name), sql.Identifier(name)
+                )
+            )
     updates.extend(
         [
             sql.SQL("raw = call_logs.raw || EXCLUDED.raw"),
@@ -971,6 +1004,7 @@ def list_call_logs(
     direction: str | None = None,
     missed_only: bool = False,
     unrecorded_only: bool = False,
+    capture_gaps_only: bool = False,
 ) -> list[dict[str, Any]]:
     clauses: list[sql.SQL] = []
     params: list[Any] = []
@@ -992,6 +1026,28 @@ def list_call_logs(
         clauses.append(sql.SQL("is_missed = true"))
     if unrecorded_only:
         clauses.append(sql.SQL("(recorded = false OR is_unrecorded = true)"))
+    if capture_gaps_only:
+        clauses.append(
+            sql.SQL(
+                """
+                recorded IS TRUE
+                AND COALESCE(is_unrecorded, false) = false
+                AND (matched_call_id IS NULL OR btrim(matched_call_id) = '')
+                AND COALESCE(length_seconds, 0) > 30
+                AND (
+                  (
+                    lower(btrim(COALESCE(result, ''))) IN ('answered', 'connected')
+                    AND COALESCE(is_missed, false) = false
+                  )
+                  OR lower(COALESCE(raw->>'answered_elsewhere', '')) IN ('true', '1')
+                  OR (
+                    is_missed IS FALSE
+                    AND lower(btrim(COALESCE(result, ''))) NOT IN ('answered', 'connected')
+                  )
+                )
+                """
+            )
+        )
     where = (
         sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
         if clauses

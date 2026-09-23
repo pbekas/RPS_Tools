@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from src import database as db
 from src.call_filters import is_qa_eligible_duration
+from src.call_match import alignment_score, digits, is_capture_candidate, phones_match, recording_id_from_raw
 from src.config import get_settings
-from src.missed_call_group import is_answered_result
 from src.pipeline import enqueue_bytes
 from src.vonage_vbc import VBCRecording, VonageVBCClient, VonageVBCError
 
@@ -93,6 +92,7 @@ def sync_company_recordings(
         if skip_existing and existing:
             summary["skipped_existing"] += 1
             _attach_extension_to_existing(existing, rec)
+            _stamp_cdr_by_vonage_call_id(str(existing.get("id") or ""), rec.call_id)
             continue
 
         if not is_qa_eligible_duration(rec.duration_seconds):
@@ -120,43 +120,39 @@ def sync_company_recordings(
 
 
 def is_recorded_answered_unmatched(log: Mapping[str, Any]) -> bool:
-    """True when a CDR claims a recording but has no linked QA call."""
-    if str(log.get("matched_call_id") or "").strip():
-        return False
-    if log.get("recorded") is not True:
-        return False
-    if log.get("is_unrecorded"):
-        return False
-    if log.get("is_missed") is True:
-        return False
-    if not is_answered_result(log.get("result")):
-        return False
-    return is_qa_eligible_duration(log.get("length_seconds"))
+    """True when a CDR should have QA audio but has no linked call."""
+    return is_capture_candidate(log)
 
 
 def match_recording_for_cdr(
     log: Mapping[str, Any],
     recordings: list[VBCRecording],
 ) -> VBCRecording | None:
-    """Prefer vonage call_id == CDR id, then time + numbers/extension."""
+    """Prefer call id or recording id, then time + direction-aware numbers."""
     log_id = str(log.get("id") or log.get("log_id") or "").strip()
-    if log_id:
+    raw = log.get("raw") if isinstance(log.get("raw"), Mapping) else None
+    raw_recording_id = recording_id_from_raw(raw)
+    if log_id or raw_recording_id:
         for rec in recordings:
-            if rec.call_id and str(rec.call_id) == log_id:
+            if log_id and rec.call_id and str(rec.call_id) == log_id:
+                return rec
+            if raw_recording_id and str(rec.recording_id) == raw_recording_id:
                 return rec
 
     start = _as_dt(log.get("start"))
     if start is None:
         return None
 
-    log_from = _digits(log.get("from_number"))
-    log_to = _digits(log.get("to_number"))
+    log_from = digits(log.get("from_number"))
+    log_to = digits(log.get("to_number"))
     log_exts = {
-        _digits(log.get("destination_extension")),
-        _digits(log.get("source_extension")),
+        digits(log.get("destination_extension")),
+        digits(log.get("source_extension")),
     }
     log_exts.discard("")
+    direction = str(log.get("direction") or "") or None
     best: VBCRecording | None = None
+    best_score = 0
     best_delta = _CDR_MATCH_WINDOW_SECONDS + 1
 
     for rec in recordings:
@@ -169,28 +165,24 @@ def match_recording_for_cdr(
         if delta > _CDR_MATCH_WINDOW_SECONDS:
             continue
 
-        rec_exts = {_digits(x) for x in (rec.extensions or []) if _digits(x)}
+        rec_exts = {digits(x) for x in (rec.extensions or []) if digits(x)}
         if rec.extension:
-            rec_exts.add(_digits(rec.extension))
-        caller = _digits(rec.caller_id)
-        dnis = _digits(rec.dnis)
-        numbers_ok = False
-        if log_exts and rec_exts and log_exts & rec_exts:
-            numbers_ok = True
-        elif log_from and caller and _phones_match(log_from, caller):
-            numbers_ok = True
-        elif log_to and dnis and _phones_match(log_to, dnis):
-            numbers_ok = True
-        elif log_from and dnis and _phones_match(log_from, dnis):
-            numbers_ok = True
-        elif log_to and caller and _phones_match(log_to, caller):
-            numbers_ok = True
-        elif not log_from and not log_to and not log_exts:
-            numbers_ok = delta <= 30
-
-        if not numbers_ok:
+            rec_exts.add(digits(rec.extension))
+        score = alignment_score(
+            direction=direction or rec.call_direction,
+            log_from=log_from,
+            log_to=log_to,
+            caller=digits(rec.caller_id),
+            dnis=digits(rec.dnis),
+            log_exts=log_exts,
+            other_exts=rec_exts,
+        )
+        if score <= 0 and not log_from and not log_to and not log_exts:
+            score = 1 if delta <= 30 else 0
+        if score <= 0:
             continue
-        if delta < best_delta:
+        if score > best_score or (score == best_score and delta < best_delta):
+            best_score = score
             best_delta = delta
             best = rec
 
@@ -236,7 +228,21 @@ def ingest_missing_recorded_cdrs(
 
     lookback_days = max(1, int((start_lte - start_gte).total_seconds() // 86400) + 1)
     try:
-        logs = db.list_call_logs(limit=2000, days=lookback_days, recorded=True)
+        from src.cdr_sync import rematch_unlinked_call_logs
+
+        summary["rematch"] = rematch_unlinked_call_logs(
+            days_back=lookback_days,
+            limit=2000,
+        )
+    except Exception:
+        logger.exception("CDR rematch before completeness failed")
+        summary["rematch"] = {"error": "rematch failed"}
+    try:
+        logs = db.list_call_logs(
+            limit=2000,
+            days=lookback_days,
+            capture_gaps_only=True,
+        )
     except Exception:
         logger.exception("Failed listing CDRs for completeness ingest")
         summary["errors"].append({"error": "failed listing call logs"})
@@ -363,19 +369,74 @@ def _stamp_matched_call(log: Mapping[str, Any], recording_id: str) -> None:
 
 
 def _digits(value: Any) -> str:
-    if value is None:
-        return ""
-    return re.sub(r"\D", "", str(value))
+    return digits(value)
 
 
 def _phones_match(a: str, b: str) -> bool:
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    if len(a) >= 10 and len(b) >= 10:
-        return a[-10:] == b[-10:]
-    return a.endswith(b) or b.endswith(a)
+    return phones_match(a, b)
+
+
+def _stamp_cdr_by_vonage_call_id(call_id: str, vonage_call_id: str | None) -> None:
+    """Link the CDR whose id is the recording's call id, without clearing other fields."""
+    log_id = str(vonage_call_id or "").strip()
+    qa_id = str(call_id or "").strip()
+    if not log_id or not qa_id or qa_id.startswith("local_"):
+        return
+    if not get_settings().database_configured:
+        return
+    try:
+        existing = db.get_call_log(log_id)
+    except Exception:
+        logger.exception("Failed reading CDR %s while linking recording", log_id)
+        return
+    if not existing:
+        return
+    if str(existing.get("matched_call_id") or "").strip() == qa_id:
+        return
+    try:
+        db.upsert_call_log({"id": log_id, "matched_call_id": qa_id})
+    except Exception:
+        logger.exception("Failed linking CDR %s to call %s", log_id, qa_id)
+
+
+def link_ingested_recording(call_id: str, rec: VBCRecording) -> None:
+    """Point matching CDRs at a QA call that was just ingested."""
+    _stamp_cdr_by_vonage_call_id(call_id, rec.call_id)
+    if rec.start is None or not get_settings().database_configured:
+        return
+    qa_id = str(call_id or "").strip()
+    if not qa_id or qa_id.startswith("local_"):
+        return
+    try:
+        logs = db.list_call_logs(limit=400, days=2)
+    except Exception:
+        logger.exception("Failed listing CDRs to link recording %s", rec.recording_id)
+        return
+    for log in logs:
+        log_id = str(log.get("id") or "").strip()
+        if not log_id or log_id == str(rec.call_id or ""):
+            continue
+        if str(log.get("matched_call_id") or "").strip():
+            continue
+        start = _as_dt(log.get("start"))
+        if start is None:
+            continue
+        rec_start = rec.start if rec.start.tzinfo else rec.start.replace(tzinfo=timezone.utc)
+        if abs((start - rec_start).total_seconds()) > _CDR_MATCH_WINDOW_SECONDS:
+            continue
+        raw = log.get("raw") if isinstance(log.get("raw"), Mapping) else None
+        raw_id = recording_id_from_raw(raw)
+        if raw_id and raw_id == rec.recording_id:
+            try:
+                db.upsert_call_log({"id": log_id, "matched_call_id": qa_id})
+            except Exception:
+                logger.exception("Failed linking CDR %s by recording id", log_id)
+            continue
+        if is_capture_candidate(log) and match_recording_for_cdr(log, [rec]) is not None:
+            try:
+                db.upsert_call_log({"id": log_id, "matched_call_id": qa_id})
+            except Exception:
+                logger.exception("Failed linking CDR %s by time match", log_id)
 
 
 def _as_dt(value: Any) -> datetime | None:
@@ -447,6 +508,10 @@ def ingest_recording(
         except Exception:
             logger.exception("Failed mapping extension %s on ingest %s", ext, call_id)
         db.update_call(call_id, fields)
+        try:
+            link_ingested_recording(call_id, rec)
+        except Exception:
+            logger.exception("Failed linking CDRs for ingested call %s", call_id)
 
     if process_now and settings.database_configured and not str(call_id).startswith("local_"):
         process_call_sync(call_id, audio_path)

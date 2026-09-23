@@ -26,11 +26,11 @@ _state: dict[str, Any] = {
     "interval_seconds": 300,
     "lookback_minutes": 30,
     "safety_lookback_hours": 6,
-    "max_per_cycle": 50,
-    "max_call_logs_per_cycle": 400,
-    "backfill_days": 2,
+    "max_per_cycle": 100,
+    "max_call_logs_per_cycle": 1500,
+    "backfill_days": 7,
     "backfill_interval_hours": 24,
-    "backfill_max": 200,
+    "backfill_max": 400,
     "last_started_at": None,
     "last_finished_at": None,
     "last_summary": None,
@@ -121,17 +121,21 @@ def run_sync_cycle(
         completeness_hours = max(safety_hours, max(1, (minutes + 59) // 60))
         completeness_summary: dict[str, Any] | None = None
         try:
-            completeness_summary = ingest_missing_recorded_cdrs(
+            completeness_summary = drain_missing_recorded_cdrs(
                 hours_back=completeness_hours,
                 max_recordings=max_recs,
                 process_now=process_now,
             )
             logger.info(
-                "VBC completeness: candidates=%s queued=%s no_recording=%s existing=%s errors=%s",
+                "VBC completeness: passes=%s candidates=%s queued=%s rematched=%s "
+                "no_recording=%s existing=%s capped=%s errors=%s",
+                completeness_summary.get("passes"),
                 completeness_summary.get("candidates"),
                 completeness_summary.get("queued"),
+                completeness_summary.get("rematched"),
                 completeness_summary.get("skipped_no_recording"),
                 completeness_summary.get("skipped_existing"),
+                completeness_summary.get("capped"),
                 len(completeness_summary.get("errors") or []),
             )
         except Exception as complete_exc:  # noqa: BLE001
@@ -214,6 +218,55 @@ def run_sync_cycle(
         raise
 
 
+def drain_missing_recorded_cdrs(
+    *,
+    hours_back: int | None = None,
+    days_back: int | None = None,
+    max_recordings: int = 50,
+    process_now: bool = False,
+    max_passes: int = 6,
+) -> dict[str, Any]:
+    """Keep ingesting recorded gaps until the cap clears or a pass makes no progress."""
+    combined: dict[str, Any] = {
+        "passes": 0,
+        "candidates": 0,
+        "queued": 0,
+        "skipped_existing": 0,
+        "skipped_no_recording": 0,
+        "skipped_short": 0,
+        "rematched": 0,
+        "capped": False,
+        "errors": [],
+        "call_ids": [],
+    }
+    for _ in range(max(1, max_passes)):
+        kwargs: dict[str, Any] = {
+            "max_recordings": max_recordings,
+            "process_now": process_now,
+        }
+        if days_back is not None:
+            kwargs["days_back"] = days_back
+        else:
+            kwargs["hours_back"] = hours_back if hours_back is not None else 6
+        summary = ingest_missing_recorded_cdrs(**kwargs)
+        combined["passes"] += 1
+        combined["candidates"] = int(summary.get("candidates") or 0)
+        combined["queued"] += int(summary.get("queued") or 0)
+        combined["skipped_existing"] += int(summary.get("skipped_existing") or 0)
+        combined["skipped_no_recording"] += int(summary.get("skipped_no_recording") or 0)
+        combined["skipped_short"] += int(summary.get("skipped_short") or 0)
+        combined["rematched"] += int((summary.get("rematch") or {}).get("matched") or 0)
+        combined["errors"].extend(summary.get("errors") or [])
+        combined["call_ids"].extend(summary.get("call_ids") or [])
+        combined["capped"] = bool(summary.get("capped"))
+        if summary.get("error"):
+            combined["error"] = summary["error"]
+            break
+        if not summary.get("capped") or not summary.get("queued"):
+            break
+    return combined
+
+
 def _backfill_is_due(
     last_backfill_at: str | None,
     *,
@@ -259,7 +312,7 @@ def _run_backfill(
     except Exception as cdr_exc:  # noqa: BLE001
         logger.exception("VBC backfill CDR sync failed")
         call_logs = {"error": str(cdr_exc)}
-    completeness = ingest_missing_recorded_cdrs(
+    completeness = drain_missing_recorded_cdrs(
         days_back=days,
         max_recordings=max_recordings,
         process_now=process_now,
@@ -329,12 +382,12 @@ def autostart_from_env() -> dict[str, Any] | None:
         return None
     interval = int(os.getenv("VBC_POLLER_INTERVAL_SECONDS", "300"))
     lookback = int(os.getenv("VBC_POLLER_LOOKBACK_MINUTES", "30"))
-    max_cycle = int(os.getenv("VBC_POLLER_MAX_PER_CYCLE", "50"))
-    max_logs = int(os.getenv("VBC_POLLER_MAX_CALL_LOGS", "400"))
+    max_cycle = int(os.getenv("VBC_POLLER_MAX_PER_CYCLE", "100"))
+    max_logs = int(os.getenv("VBC_POLLER_MAX_CALL_LOGS", "1500"))
     safety_hours = int(os.getenv("VBC_POLLER_SAFETY_LOOKBACK_HOURS", "6"))
-    backfill_days = int(os.getenv("VBC_POLLER_BACKFILL_DAYS", "2"))
+    backfill_days = int(os.getenv("VBC_POLLER_BACKFILL_DAYS", "7"))
     backfill_interval = int(os.getenv("VBC_POLLER_BACKFILL_INTERVAL_HOURS", "24"))
-    backfill_max = int(os.getenv("VBC_POLLER_BACKFILL_MAX", "200"))
+    backfill_max = int(os.getenv("VBC_POLLER_BACKFILL_MAX", "400"))
     with _lock:
         _state["max_call_logs_per_cycle"] = max(1, max_logs)
         _state["safety_lookback_hours"] = max(0, safety_hours)

@@ -501,7 +501,12 @@ function QaCapturePanel({
           </div>
         </button>
       </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <CaptureTable
+          title="By direction"
+          empty="No recorded answered CDRs in this window."
+          rows={capture.byDirection}
+        />
         <CaptureTable
           title="By day"
           empty="No recorded answered CDRs in this window."

@@ -502,21 +502,50 @@ export async function getCall(id: string): Promise<CallDoc | null> {
   return rows[0] ? serializeCallRow(rows[0]) : null;
 }
 
-export async function listCallLogs(opts?: {
+export type CallLogSearchOpts = {
   limit?: number;
+  offset?: number;
   days?: number | null;
+  fromMs?: number | null;
+  toMs?: number | null;
+  q?: string | null;
   result?: string | null;
   recorded?: boolean | null;
   direction?: string | null;
   missedOnly?: boolean;
   unrecordedOnly?: boolean;
-}): Promise<CallLogDoc[]> {
+  missingQaOnly?: boolean;
+};
+
+const CALL_LOG_SELECT = `SELECT id, direction, from_number, to_number, result, recorded,
+            length_seconds, start_at AS start, end_at AS "end",
+            source_user, source_user_full_name, source_extension,
+            destination_user, destination_user_full_name, destination_extension,
+            custom_tag, in_network, international, is_missed, is_unrecorded,
+            matched_call_id, ring_seconds, wait_seconds, queue_seconds,
+            answered_at, synced_at
+       FROM call_logs`;
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+export async function listCallLogs(
+  opts?: CallLogSearchOpts
+): Promise<CallLogDoc[]> {
   if (!usePostgres()) return firestore.listCallLogs(opts);
   const values: unknown[] = [];
   const conditions: string[] = [];
-  if (opts?.days && opts.days > 0) {
+  if (opts?.fromMs && Number.isFinite(opts.fromMs)) {
+    values.push(new Date(opts.fromMs));
+    conditions.push(`start_at >= $${values.length}`);
+  } else if (opts?.days && opts.days > 0) {
     values.push(new Date(Date.now() - opts.days * 86_400_000));
     conditions.push(`start_at >= $${values.length}`);
+  }
+  if (opts?.toMs && Number.isFinite(opts.toMs)) {
+    values.push(new Date(opts.toMs));
+    conditions.push(`start_at <= $${values.length}`);
   }
   if (opts?.result) {
     values.push(opts.result.trim().toLowerCase());
@@ -537,22 +566,240 @@ export async function listCallLogs(opts?: {
   if (opts?.unrecordedOnly) {
     conditions.push("(recorded = false OR is_unrecorded = true)");
   }
-  values.push(Math.max(1, Math.min(opts?.limit ?? 200, 20000)));
+  if (opts?.missingQaOnly) {
+    conditions.push(`recorded = true
+      AND coalesce(is_unrecorded, false) = false
+      AND matched_call_id IS NULL
+      AND length_seconds > 30
+      AND (
+        (
+          lower(trim(coalesce(result, ''))) IN ('answered', 'connected')
+          AND coalesce(is_missed, false) = false
+        )
+        OR coalesce(raw->>'answered_elsewhere', '') IN ('true', 'True', '1')
+        OR (
+          is_missed = false
+          AND lower(trim(coalesce(result, ''))) NOT IN ('answered', 'connected')
+        )
+      )`);
+  }
+  const q = (opts?.q || "").trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    values.push(like);
+    const textIdx = values.length;
+    const digitNeedle = digitsOnly(q);
+    let digitClause = "";
+    if (digitNeedle.length >= 3) {
+      values.push(`%${digitNeedle}%`);
+      const digitIdx = values.length;
+      digitClause = ` OR regexp_replace(coalesce(from_number, ''), '\\D', '', 'g') LIKE $${digitIdx}
+        OR regexp_replace(coalesce(to_number, ''), '\\D', '', 'g') LIKE $${digitIdx}
+        OR regexp_replace(coalesce(source_extension, ''), '\\D', '', 'g') LIKE $${digitIdx}
+        OR regexp_replace(coalesce(destination_extension, ''), '\\D', '', 'g') LIKE $${digitIdx}`;
+    }
+    conditions.push(`(
+      lower(id) LIKE $${textIdx}
+      OR lower(coalesce(matched_call_id, '')) LIKE $${textIdx}
+      OR lower(coalesce(from_number, '')) LIKE $${textIdx}
+      OR lower(coalesce(to_number, '')) LIKE $${textIdx}
+      OR lower(coalesce(source_user, '')) LIKE $${textIdx}
+      OR lower(coalesce(source_user_full_name, '')) LIKE $${textIdx}
+      OR lower(coalesce(destination_user, '')) LIKE $${textIdx}
+      OR lower(coalesce(destination_user_full_name, '')) LIKE $${textIdx}
+      OR lower(coalesce(source_extension, '')) LIKE $${textIdx}
+      OR lower(coalesce(destination_extension, '')) LIKE $${textIdx}
+      OR lower(coalesce(result, '')) LIKE $${textIdx}
+      ${digitClause}
+    )`);
+  }
+  // Ops SSR may request a large recent window; search APIs should cap lower.
+  const limit = Math.max(1, Math.min(opts?.limit ?? 200, 20000));
+  const offset = Math.max(0, opts?.offset ?? 0);
+  values.push(limit);
+  const limitIdx = values.length;
+  values.push(offset);
+  const offsetIdx = values.length;
   const rows = await query(
-    `SELECT id, direction, from_number, to_number, result, recorded,
-            length_seconds, start_at AS start, end_at AS "end",
-            source_user, source_user_full_name, source_extension,
-            destination_user, destination_user_full_name, destination_extension,
-            custom_tag, in_network, international, is_missed, is_unrecorded,
-            matched_call_id, ring_seconds, wait_seconds, queue_seconds,
-            answered_at, synced_at
-       FROM call_logs
+    `${CALL_LOG_SELECT}
       ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
       ORDER BY start_at DESC NULLS LAST
-      LIMIT $${values.length}`,
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
     values
   );
   return rows.map((row) => serializeRow<CallLogDoc>(row));
+}
+
+const CALL_SEARCH_SELECT = `
+  SELECT c.id, c.agent_name, c.agent_email, c.patient_name, c.doctor_name,
+         c.call_date, c.duration_seconds, c.topic, c.quality_score,
+         c.status, c.source, c.reviewed_at, c.auto_failed, c.has_critical_flags,
+         c.vonage_caller_id, c.vonage_cnam, c.vonage_direction,
+         c.vonage_extension, c.vonage_recording_id, c.vonage_call_id,
+         c.vonage_dnis, c.recording_storage_uri
+    FROM calls c`;
+
+export type CallSearchOpts = {
+  limit?: number;
+  offset?: number;
+  days?: number | null;
+  fromMs?: number | null;
+  toMs?: number | null;
+  q?: string | null;
+  status?: string | null;
+  agentEmail?: string | null;
+  agentEmails?: string[] | null;
+  hasRecording?: boolean | null;
+  requireMinDuration?: boolean;
+};
+
+/** Lean call list for search — no transcript / rule blobs. */
+export async function searchCalls(opts?: CallSearchOpts): Promise<CallDoc[]> {
+  if (!usePostgres()) {
+    const rows = await firestore.listCalls({
+      agentEmail: opts?.agentEmail,
+      agentEmails: opts?.agentEmails,
+      limit: Math.min((opts?.limit ?? 50) + (opts?.offset ?? 0) + 50, 400),
+      status: opts?.status || undefined,
+      sinceMs: opts?.fromMs ?? (opts?.days && opts.days > 0
+        ? Date.now() - opts.days * 86_400_000
+        : null),
+      requireMinDuration: opts?.requireMinDuration,
+    });
+    let filtered = rows;
+    if (opts?.toMs) {
+      filtered = filtered.filter((r) => {
+        if (!r.call_date) return true;
+        return new Date(r.call_date).getTime() <= opts.toMs!;
+      });
+    }
+    const q = (opts?.q || "").trim().toLowerCase();
+    if (q) {
+      const digits = digitsOnly(q);
+      filtered = filtered.filter((r) => {
+        const hay = [
+          r.id,
+          r.agent_name,
+          r.agent_email,
+          r.patient_name,
+          r.doctor_name,
+          r.topic,
+          r.vonage_caller_id,
+          r.vonage_cnam,
+          r.vonage_dnis,
+          r.vonage_extension,
+          r.vonage_recording_id,
+          r.vonage_call_id,
+        ]
+          .map((v) => String(v || "").toLowerCase())
+          .join(" ");
+        if (hay.includes(q)) return true;
+        if (digits.length >= 3) {
+          return [
+            r.vonage_caller_id,
+            r.vonage_dnis,
+            r.vonage_extension,
+          ].some((v) => digitsOnly(String(v || "")).includes(digits));
+        }
+        return false;
+      });
+    }
+    if (opts?.hasRecording === true) {
+      filtered = filtered.filter(
+        (r) => Boolean(r.recording_storage_uri || r.recording_url)
+      );
+    } else if (opts?.hasRecording === false) {
+      filtered = filtered.filter(
+        (r) => !(r.recording_storage_uri || r.recording_url)
+      );
+    }
+    const offset = Math.max(0, opts?.offset ?? 0);
+    const limit = Math.max(1, Math.min(opts?.limit ?? 50, 200));
+    return filtered.slice(offset, offset + limit);
+  }
+
+  if (opts?.agentEmails && opts.agentEmails.length === 0) return [];
+  const values: unknown[] = [];
+  const conditions: string[] = [];
+  if (opts?.agentEmails?.length) {
+    values.push(opts.agentEmails.map((email) => email.toLowerCase()));
+    conditions.push(`c.agent_email = ANY($${values.length}::text[])`);
+  } else if (opts?.agentEmail) {
+    values.push(opts.agentEmail.toLowerCase());
+    conditions.push(`c.agent_email = $${values.length}`);
+  }
+  if (opts?.status) {
+    values.push(opts.status);
+    conditions.push(`c.status = $${values.length}`);
+  }
+  if (opts?.fromMs && Number.isFinite(opts.fromMs)) {
+    values.push(new Date(opts.fromMs));
+    conditions.push(`c.call_date >= $${values.length}`);
+  } else if (opts?.days && opts.days > 0) {
+    values.push(new Date(Date.now() - opts.days * 86_400_000));
+    conditions.push(`c.call_date >= $${values.length}`);
+  }
+  if (opts?.toMs && Number.isFinite(opts.toMs)) {
+    values.push(new Date(opts.toMs));
+    conditions.push(`c.call_date <= $${values.length}`);
+  }
+  if (opts?.requireMinDuration !== false) {
+    values.push(30);
+    conditions.push(`c.duration_seconds > $${values.length}`);
+  }
+  if (opts?.hasRecording === true) {
+    conditions.push(
+      `(coalesce(c.recording_storage_uri, '') <> '' OR coalesce(c.recording_url, '') <> '')`
+    );
+  } else if (opts?.hasRecording === false) {
+    conditions.push(
+      `(coalesce(c.recording_storage_uri, '') = '' AND coalesce(c.recording_url, '') = '')`
+    );
+  }
+  const q = (opts?.q || "").trim();
+  if (q) {
+    const like = `%${q.toLowerCase()}%`;
+    values.push(like);
+    const textIdx = values.length;
+    const digitNeedle = digitsOnly(q);
+    let digitClause = "";
+    if (digitNeedle.length >= 3) {
+      values.push(`%${digitNeedle}%`);
+      const digitIdx = values.length;
+      digitClause = ` OR regexp_replace(coalesce(c.vonage_caller_id, ''), '\\D', '', 'g') LIKE $${digitIdx}
+        OR regexp_replace(coalesce(c.vonage_dnis, ''), '\\D', '', 'g') LIKE $${digitIdx}
+        OR regexp_replace(coalesce(c.vonage_extension, ''), '\\D', '', 'g') LIKE $${digitIdx}`;
+    }
+    conditions.push(`(
+      lower(c.id) LIKE $${textIdx}
+      OR lower(coalesce(c.agent_name, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.agent_email, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.patient_name, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.doctor_name, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.topic, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_caller_id, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_cnam, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_dnis, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_extension, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_recording_id, '')) LIKE $${textIdx}
+      OR lower(coalesce(c.vonage_call_id, '')) LIKE $${textIdx}
+      ${digitClause}
+    )`);
+  }
+  const limit = Math.max(1, Math.min(opts?.limit ?? 50, 200));
+  const offset = Math.max(0, opts?.offset ?? 0);
+  values.push(limit);
+  const limitIdx = values.length;
+  values.push(offset);
+  const offsetIdx = values.length;
+  const rows = await query(
+    `${CALL_SEARCH_SELECT}
+     ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
+     ORDER BY c.call_date DESC NULLS LAST
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    values
+  );
+  return rows.map((row) => serializeRow<CallDoc>(row));
 }
 
 export async function getUser(email: string): Promise<UserDoc | null> {

@@ -9,6 +9,7 @@ import {
 import fs from "fs";
 import { isQaEligibleDuration } from "@/lib/qa";
 import type { CallLogDoc } from "@/lib/callLogs";
+import { isMissingQaCapture } from "@/lib/opsTower";
 
 export type { CallLogDoc, CallLogStats } from "@/lib/callLogs";
 export { summarizeCallLogs } from "@/lib/callLogs";
@@ -676,17 +677,30 @@ export async function listCalls(opts?: {
 
 export async function listCallLogs(opts?: {
   limit?: number;
+  offset?: number;
   days?: number | null;
+  fromMs?: number | null;
+  toMs?: number | null;
+  q?: string | null;
   result?: string | null;
   recorded?: boolean | null;
   direction?: string | null;
   missedOnly?: boolean;
   unrecordedOnly?: boolean;
+  missingQaOnly?: boolean;
 }): Promise<CallLogDoc[]> {
   // Keep reads small — Ops loads this on every refresh.
   const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 20000);
-  const days = opts?.days && opts.days > 0 ? opts.days : null;
-  const cutoff = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+  const offset = Math.max(0, opts?.offset ?? 0);
+  const fetchLimit = Math.min(limit + offset + (opts?.q || opts?.missingQaOnly ? 500 : 0), 20000);
+  const fromMs =
+    opts?.fromMs && Number.isFinite(opts.fromMs)
+      ? opts.fromMs
+      : opts?.days && opts.days > 0
+        ? Date.now() - opts.days * 24 * 60 * 60 * 1000
+        : null;
+  const toMs = opts?.toMs && Number.isFinite(opts.toMs) ? opts.toMs : null;
+  const cutoff = fromMs ? new Date(fromMs) : null;
 
   let rows: CallLogDoc[] = [];
   try {
@@ -694,7 +708,7 @@ export async function listCallLogs(opts?: {
     if (cutoff) {
       query = query.where("start", ">=", cutoff);
     }
-    query = query.orderBy("start", "desc").limit(limit);
+    query = query.orderBy("start", "desc").limit(fetchLimit);
     const snap = await query.get();
     rows = snap.docs.map((d) => serializeDoc<CallLogDoc>(d.id, d.data()));
   } catch (err) {
@@ -706,7 +720,7 @@ export async function listCallLogs(opts?: {
     // Fallback: recent docs only (no orderBy), then sort in memory.
     const snap = await getDb()
       .collection("call_logs")
-      .limit(Math.min(limit, 300))
+      .limit(Math.min(fetchLimit, 300))
       .get();
     rows = snap.docs.map((d) => serializeDoc<CallLogDoc>(d.id, d.data()));
     rows.sort((a, b) => toMillis(b.start) - toMillis(a.start));
@@ -719,6 +733,12 @@ export async function listCallLogs(opts?: {
     }
   }
 
+  if (toMs) {
+    rows = rows.filter((r) => {
+      const ms = toMillis(r.start);
+      return !ms || ms <= toMs;
+    });
+  }
   if (opts?.result) {
     const needle = opts.result.trim().toLowerCase();
     rows = rows.filter((r) => (r.result || "").trim().toLowerCase() === needle);
@@ -737,7 +757,38 @@ export async function listCallLogs(opts?: {
   if (opts?.unrecordedOnly) {
     rows = rows.filter((r) => r.recorded === false || r.is_unrecorded);
   }
-  return rows.slice(0, limit);
+  if (opts?.missingQaOnly) {
+    rows = rows.filter((r) => isMissingQaCapture(r));
+  }
+  const q = (opts?.q || "").trim().toLowerCase();
+  if (q) {
+    const digits = q.replace(/\D/g, "");
+    rows = rows.filter((r) => {
+      const hay = [
+        r.id,
+        r.matched_call_id,
+        r.from_number,
+        r.to_number,
+        r.source_user,
+        r.source_user_full_name,
+        r.destination_user,
+        r.destination_user_full_name,
+        r.source_extension,
+        r.destination_extension,
+        r.result,
+      ]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+      if (hay.includes(q)) return true;
+      if (digits.length >= 3) {
+        return [r.from_number, r.to_number, r.source_extension, r.destination_extension]
+          .map((v) => String(v || "").replace(/\D/g, ""))
+          .some((v) => v.includes(digits));
+      }
+      return false;
+    });
+  }
+  return rows.slice(offset, offset + limit);
 }
 
 export async function listUsers(): Promise<UserDoc[]> {
