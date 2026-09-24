@@ -17,6 +17,7 @@ type Props = {
   initialEditRequests: TimeEntryEditRequest[];
   initialTimesheets: WeeklyTimesheet[];
   initialTimeOffRequests: TimeOffEntry[];
+  initialApprovedTimeOff: TimeOffEntry[];
   overlapEntries: TeamTimeOffEntry[];
   settings: TimeClockSettings;
   people: Array<{ email: string; name: string }>;
@@ -26,6 +27,7 @@ export function ApprovalsHub({
   initialEditRequests,
   initialTimesheets,
   initialTimeOffRequests,
+  initialApprovedTimeOff,
   overlapEntries,
   settings,
   people,
@@ -80,7 +82,9 @@ export function ApprovalsHub({
       ) : (
         <TimeOffApprovals
           initialRequests={initialTimeOffRequests}
+          initialApproved={initialApprovedTimeOff}
           overlapEntries={overlapEntries}
+          people={people}
         />
       )}
 

@@ -6,8 +6,19 @@ import {
   listSubmittedTimesheets,
   listTimeClockRoster,
 } from "@/lib/timeClockDb";
-import { listPendingTimeOffRequests, listTeamTimeOff } from "@/lib/timeOffDb";
+import { dateToYmd } from "@/lib/timeClockPayPeriod";
+import {
+  listPendingTimeOffRequests,
+  listReviewedTimeOff,
+  listTeamTimeOff,
+} from "@/lib/timeOffDb";
 import { ApprovalsHub } from "@/components/ApprovalsHub";
+
+function shiftYmd(ymd: string, days: number): string {
+  const [year, month, day] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return date.toISOString().slice(0, 10);
+}
 
 export default async function TimeClockApprovalsPage() {
   const { access } = await requireTimeClockManager();
@@ -24,6 +35,15 @@ export default async function TimeClockApprovalsPage() {
       listPendingTimeOffRequests(access.visibleUserEmails),
       listTimeClockRoster(access.visibleUserEmails),
     ]);
+
+  const today = dateToYmd(new Date(), settings.timezone);
+  const approvedTimeOff = await listReviewedTimeOff({
+    from: shiftYmd(today, -365),
+    to: shiftYmd(today, 548),
+    userEmails: access.visibleUserEmails,
+    statuses: ["approved"],
+    limit: 500,
+  });
 
   const timesheets = await Promise.all(
     submitted.map((sheet) =>
@@ -52,6 +72,7 @@ export default async function TimeClockApprovalsPage() {
           initialEditRequests={requests}
           initialTimesheets={timesheets}
           initialTimeOffRequests={timeOffRequests}
+          initialApprovedTimeOff={approvedTimeOff}
           overlapEntries={overlapEntries}
           settings={settings}
           people={people}

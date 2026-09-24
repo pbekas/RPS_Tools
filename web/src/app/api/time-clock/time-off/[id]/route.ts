@@ -5,7 +5,9 @@ import {
   deleteTimeOffEntry,
   getTimeOffBank,
   getTimeOffEntryById,
+  isTimeOffKind,
   reviewTimeOffEntry,
+  updateApprovedTimeOffEntry,
 } from "@/lib/timeOffDb";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -50,6 +52,58 @@ export async function POST(req: Request, context: RouteContext) {
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Review failed" },
+      { status: 400 }
+    );
+  }
+}
+
+export async function PATCH(req: Request, context: RouteContext) {
+  const { session, error } = await apiRequireModule("time_clock");
+  if (error) return error;
+
+  const access = await resolveTimeClockAccess(session!.user!);
+  if (!access.isManager) {
+    return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+  }
+
+  const { id } = await context.params;
+  const existing = await getTimeOffEntryById(id);
+  if (!existing) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!canViewTimeClockUser(access, existing.user_email)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const entryDate = String(body.entry_date || "").slice(0, 10);
+  const kind = String(body.kind || "");
+  const hours = Number(body.hours);
+  const notes = typeof body.notes === "string" ? body.notes : existing.notes;
+  if (!entryDate) {
+    return NextResponse.json({ error: "entry_date is required" }, { status: 400 });
+  }
+  if (!isTimeOffKind(kind)) {
+    return NextResponse.json({ error: "Invalid kind" }, { status: 400 });
+  }
+
+  try {
+    const entry = await updateApprovedTimeOffEntry({
+      id,
+      entryDate,
+      kind,
+      hours,
+      notes,
+      actorEmail: session!.user!.email!,
+    });
+    const bank = await getTimeOffBank(
+      existing.user_email,
+      Number(entry.entry_date.slice(0, 4))
+    );
+    return NextResponse.json({ entry, bank });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Update failed" },
       { status: 400 }
     );
   }

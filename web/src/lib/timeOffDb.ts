@@ -705,6 +705,93 @@ export async function reviewTimeOffEntry(input: {
   return saved;
 }
 
+export async function updateApprovedTimeOffEntry(input: {
+  id: string;
+  entryDate: string;
+  kind: TimeOffKind;
+  hours: number;
+  notes?: string;
+  actorEmail: string;
+}): Promise<TimeOffEntry> {
+  requirePostgres();
+  if (!isTimeOffKind(input.kind)) {
+    throw new Error("Invalid time off kind");
+  }
+  if (!Number.isFinite(input.hours) || input.hours <= 0 || input.hours > 24) {
+    throw new Error("Hours must be between 0 and 24");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entryDate)) {
+    throw new Error("A valid date is required");
+  }
+
+  const existing = await getTimeOffEntryById(input.id);
+  if (!existing) throw new Error("Time off request not found");
+  if (existing.status !== "approved") {
+    throw new Error("Only approved time off can be edited here");
+  }
+
+  const conflict = await findTimeOffOnDate(existing.user_email, input.entryDate);
+  if (conflict && conflict.id !== existing.id) {
+    throw new Error("This person already has time off on that date.");
+  }
+
+  await assertBankAllowsHours({
+    userEmail: existing.user_email,
+    entryDate: input.entryDate,
+    kind: input.kind,
+    hours: input.hours,
+    existing,
+  });
+
+  await query(
+    `UPDATE time_off_entries
+     SET entry_date = $2::date,
+         kind = $3,
+         hours = $4,
+         notes = $5,
+         updated_at = now()
+     WHERE id = $1 AND status = 'approved'`,
+    [
+      input.id,
+      input.entryDate,
+      input.kind,
+      input.hours,
+      (input.notes || "").trim(),
+    ]
+  );
+
+  const saved = await getTimeOffEntryById(input.id);
+  if (!saved) throw new Error("Time off request not found");
+  const teamId = await getTeamIdForUser(existing.user_email);
+  const bankAfter = deductsFromTimeOffBank(saved.kind)
+    ? await getTimeOffBank(existing.user_email, yearFromDate(saved.entry_date))
+    : null;
+  await logTimeClockAudit({
+    actorEmail: input.actorEmail,
+    subjectEmail: existing.user_email,
+    teamId: teamId || null,
+    action: "time_off.updated",
+    entityType: "time_off",
+    entityId: saved.id,
+    before: {
+      entry_date: existing.entry_date,
+      kind: existing.kind,
+      hours: existing.hours,
+      notes: existing.notes,
+      status: existing.status,
+    },
+    after: {
+      entry_date: saved.entry_date,
+      kind: saved.kind,
+      hours: saved.hours,
+      notes: saved.notes,
+      status: saved.status,
+      bank_remaining: bankAfter?.remaining_hours,
+    },
+  });
+  return saved;
+}
+
 export async function deleteTimeOffEntry(
   id: string,
   userEmail: string,
