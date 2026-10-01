@@ -13,6 +13,46 @@ type Props = {
   agents?: UserDoc[];
 };
 
+function ExpandableExplanation({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(text.length > 140);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      if (expanded) return;
+      const full = el.scrollHeight > el.clientHeight + 1;
+      setCanExpand(full || text.length > 140);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text, expanded]);
+
+  return (
+    <div className="mt-2">
+      <p
+        ref={ref}
+        className={`text-sm leading-relaxed text-ink-soft ${expanded ? "" : "line-clamp-3"}`}
+      >
+        {text}
+      </p>
+      {canExpand || expanded ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((open) => !open)}
+          className="mt-1.5 text-xs font-semibold text-accent hover:underline"
+        >
+          {expanded ? "Show less" : "Show full explanation"}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function timestampToSeconds(ts?: string | null): number | null {
   if (!ts) return null;
   const parts = ts.split(":").map((p) => Number(p));
@@ -475,7 +515,7 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
           <div className="border-b border-line px-5 py-3">
             <h2 className="font-display text-lg text-ink">Audit checklist</h2>
             <p className="text-sm text-ink-soft">
-              Click a fail to jump to the moment and scrub audio.
+              Use Show full explanation to read a finding. Use Jump to scrub audio to that moment.
               {call.topic
                 ? ` Scored for ${call.topic} (topic-specific rules only).`
                 : ""}
@@ -492,14 +532,14 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
             ) : (
               rules.map((r) => {
                 const passed = !!r.passed;
+                const turnIndex = r.evidence_turn_index;
+                const canJump =
+                  (turnIndex != null && turnIndex >= 0 && turnIndex < transcript.length) ||
+                  !!r.evidence_timestamp;
                 return (
-                  <button
+                  <div
                     key={r.rule_id}
-                    type="button"
-                    onClick={() =>
-                      jumpToTurn(r.evidence_turn_index ?? null, r.evidence_timestamp)
-                    }
-                    className={`w-full rounded-xl border px-3 py-3 text-left transition hover:shadow-soft ${
+                    className={`w-full rounded-xl border px-3 py-3 text-left ${
                       passed ? "border-emerald-200 bg-white" : "border-red-200 bg-white"
                     }`}
                   >
@@ -519,15 +559,17 @@ function CallReviewInner({ call, isAdmin, agents = [] }: Props) {
                     {r.score_1_to_10 != null ? (
                       <div className="text-xs text-ink-soft">{r.score_1_to_10}/10</div>
                     ) : null}
-                    <p className="mt-2 line-clamp-3 text-sm text-ink-soft">
-                      {r.evidence || r.notes || "—"}
-                    </p>
-                    {r.evidence_timestamp ? (
-                      <div className="mt-2 text-xs font-semibold text-accent">
-                        Jump · {r.evidence_timestamp}
-                      </div>
+                    <ExpandableExplanation text={r.evidence || r.notes || "—"} />
+                    {canJump ? (
+                      <button
+                        type="button"
+                        onClick={() => jumpToTurn(turnIndex, r.evidence_timestamp)}
+                        className="mt-2 text-xs font-semibold text-accent hover:underline"
+                      >
+                        Jump{r.evidence_timestamp ? ` · ${r.evidence_timestamp}` : ""}
+                      </button>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })
             )}
