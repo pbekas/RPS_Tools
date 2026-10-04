@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from src.pipeline import process_call_sync
 from src.vonage_poller import _backfill_is_due, drain_missing_recorded_cdrs
 from src.vonage_sync import (
     is_recorded_answered_unmatched,
@@ -81,6 +83,23 @@ class RecordedAnsweredUnmatchedTest(unittest.TestCase):
         self.assertFalse(is_recorded_answered_unmatched({**base, "length_seconds": 20}))
         self.assertFalse(
             is_recorded_answered_unmatched({**base, "result": "Missed", "is_missed": True})
+        )
+
+    def test_skips_excluded_extension(self) -> None:
+        base = {
+            "recorded": True,
+            "result": "Answered",
+            "is_missed": False,
+            "length_seconds": 90,
+        }
+        self.assertFalse(
+            is_recorded_answered_unmatched({**base, "destination_extension": "4912"})
+        )
+        self.assertFalse(
+            is_recorded_answered_unmatched({**base, "source_extension": "ext 4912"})
+        )
+        self.assertTrue(
+            is_recorded_answered_unmatched({**base, "destination_extension": "9004"})
         )
 
 
@@ -196,6 +215,52 @@ class IngestCapTest(unittest.TestCase):
         self.assertTrue(summary["capped"])
         self.assertEqual(ingest.call_count, 2)
         self.assertEqual(summary["call_ids"], ["c1", "c2"])
+
+    def test_excluded_extension_is_not_downloaded_or_scored(self) -> None:
+        spam = [_rec(f"spam-{i}", extension="4912") for i in range(4)]
+        real = [_rec("real-1", extension="9004")]
+        client = MagicMock()
+        client.iter_company_recordings.return_value = iter(spam + real)
+
+        with (
+            patch("src.vonage_sync.VonageVBCClient", return_value=client),
+            patch("src.vonage_sync.find_existing_by_vonage_recording_id", return_value=None),
+            patch("src.vonage_sync.ingest_recording", return_value="c-real") as ingest,
+        ):
+            summary = sync_company_recordings(
+                minutes_back=30,
+                max_recordings=2,
+                process_now=False,
+            )
+
+        self.assertEqual(summary["skipped_extension"], 4)
+        self.assertEqual(summary["queued"], 1)
+        self.assertEqual(summary["call_ids"], ["c-real"])
+        self.assertFalse(summary["capped"])
+        ingest.assert_called_once()
+        self.assertEqual(ingest.call_args.args[1].recording_id, "real-1")
+
+
+class ExcludedExtensionScoringTest(unittest.TestCase):
+    def test_queued_call_is_not_transcribed(self) -> None:
+        with (
+            patch("src.pipeline.db") as db,
+            patch("src.pipeline.analyze_call_audio") as analyze,
+        ):
+            db.get_call.return_value = {
+                "id": "c1",
+                "vonage_extension": "4912",
+                "duration_seconds": 180,
+            }
+            result = process_call_sync("c1", Path("/tmp/spam.mp3"))
+
+        analyze.assert_not_called()
+        self.assertEqual(result["status"], "skipped_extension")
+        db.update_call.assert_called_once()
+        self.assertEqual(db.update_call.call_args.args[0], "c1")
+        self.assertEqual(
+            db.update_call.call_args.args[1]["status"], "skipped_extension"
+        )
 
 
 class BackfillDueTest(unittest.TestCase):

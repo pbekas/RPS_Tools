@@ -12,7 +12,7 @@ from typing import Any, BinaryIO
 
 from src import database as db
 from src.agent_identity import known_mapped_agent_email, resolve_or_create_agent
-from src.call_filters import is_qa_eligible_duration
+from src.call_filters import is_excluded_qa_extension, is_qa_eligible_duration
 from src.config import get_settings
 from src.bedrock_analyst import analyze_call_audio
 from src.metrics import recompute_weekly_metrics_for_agent
@@ -82,6 +82,15 @@ def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
     """Run Transcribe + Bedrock analysis and storage update for one call."""
     settings = get_settings()
     existing = db.get_call(call_id) or {}
+    if is_excluded_qa_extension(existing.get("vonage_extension")):
+        updates = {
+            "status": "skipped_extension",
+            "error_message": "Extension excluded from QA scoring",
+            "ai_summary": "Skipped: this extension is excluded from scoring.",
+        }
+        db.update_call(call_id, updates)
+        return {"call_id": call_id, **existing, **updates}
+
     known_duration = int(existing.get("duration_seconds") or 0)
     # Only short-circuit when we already know a positive short duration (e.g. Vonage).
     if known_duration > 0 and not is_qa_eligible_duration(known_duration):

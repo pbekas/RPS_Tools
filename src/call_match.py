@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from src.call_filters import is_qa_eligible_duration
+from src.call_filters import is_excluded_qa_extension, is_qa_eligible_duration
 from src.missed_call_group import is_answered_result
 
 _RECORDING_ID_KEYS = (
@@ -116,6 +116,10 @@ def is_capture_candidate(log: Mapping[str, Any]) -> bool:
     the ops capture denominator.
     """
     if str(log.get("matched_call_id") or "").strip():
+        return False
+    if is_excluded_qa_extension(
+        log.get("source_extension"), log.get("destination_extension")
+    ):
         return False
     if log.get("recorded") is not True:
         return False

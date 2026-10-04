@@ -171,11 +171,12 @@ def run_sync_cycle(
             _state["last_finished_at"] = datetime.now(timezone.utc).isoformat()
             _state["cycles"] = int(_state["cycles"]) + 1
         logger.info(
-            "VBC poll cycle: listed=%s queued=%s skipped_existing=%s skipped_short=%s errors=%s",
+            "VBC poll cycle: listed=%s queued=%s skipped_existing=%s skipped_short=%s skipped_extension=%s errors=%s",
             summary.get("listed"),
             summary.get("queued"),
             summary.get("skipped_existing"),
             summary.get("skipped_short"),
+            summary.get("skipped_extension"),
             len(summary.get("errors") or []),
         )
 
@@ -234,6 +235,7 @@ def drain_missing_recorded_cdrs(
         "skipped_existing": 0,
         "skipped_no_recording": 0,
         "skipped_short": 0,
+        "skipped_extension": 0,
         "rematched": 0,
         "capped": False,
         "errors": [],
@@ -255,6 +257,7 @@ def drain_missing_recorded_cdrs(
         combined["skipped_existing"] += int(summary.get("skipped_existing") or 0)
         combined["skipped_no_recording"] += int(summary.get("skipped_no_recording") or 0)
         combined["skipped_short"] += int(summary.get("skipped_short") or 0)
+        combined["skipped_extension"] += int(summary.get("skipped_extension") or 0)
         combined["rematched"] += int((summary.get("rematch") or {}).get("matched") or 0)
         combined["errors"].extend(summary.get("errors") or [])
         combined["call_ids"].extend(summary.get("call_ids") or [])

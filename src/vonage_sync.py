@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from src import database as db
-from src.call_filters import is_qa_eligible_duration
+from src.call_filters import is_excluded_qa_extension, is_qa_eligible_duration
 from src.call_match import alignment_score, digits, is_capture_candidate, phones_match, recording_id_from_raw
 from src.config import get_settings
 from src.pipeline import enqueue_bytes
@@ -66,6 +66,7 @@ def sync_company_recordings(
         "queued": 0,
         "skipped_existing": 0,
         "skipped_short": 0,
+        "skipped_extension": 0,
         "capped": False,
         "errors": [],
         "call_ids": [],
@@ -90,6 +91,12 @@ def sync_company_recordings(
             else None
         )
         if skip_existing and existing:
+            if is_excluded_qa_extension(
+                existing.get("vonage_extension"), rec.extension, rec.extensions
+            ):
+                _mark_excluded_pending(existing)
+                summary["skipped_extension"] += 1
+                continue
             summary["skipped_existing"] += 1
             _attach_extension_to_existing(existing, rec)
             _stamp_cdr_by_vonage_call_id(str(existing.get("id") or ""), rec.call_id)
@@ -97,6 +104,10 @@ def sync_company_recordings(
 
         if not is_qa_eligible_duration(rec.duration_seconds):
             summary["skipped_short"] += 1
+            continue
+
+        if is_excluded_qa_extension(rec.extension, rec.extensions):
+            summary["skipped_extension"] += 1
             continue
 
         if ingest_attempts >= max_recordings:
@@ -216,6 +227,7 @@ def ingest_missing_recorded_cdrs(
         "skipped_existing": 0,
         "skipped_no_recording": 0,
         "skipped_short": 0,
+        "skipped_extension": 0,
         "capped": False,
         "errors": [],
         "call_ids": [],
@@ -253,8 +265,14 @@ def ingest_missing_recorded_cdrs(
         start = _as_dt(log.get("start"))
         if start is not None and (start < start_gte or start > start_lte):
             continue
-        if is_recorded_answered_unmatched(log):
-            candidates.append(log)
+        if not is_recorded_answered_unmatched(log):
+            continue
+        if is_excluded_qa_extension(
+            log.get("source_extension"), log.get("destination_extension")
+        ):
+            summary["skipped_extension"] += 1
+            continue
+        candidates.append(log)
     summary["candidates"] = len(candidates)
     if not candidates:
         return summary
@@ -276,6 +294,15 @@ def ingest_missing_recorded_cdrs(
             continue
         existing = find_existing_by_vonage_recording_id(rec.recording_id)
         if existing:
+            if is_excluded_qa_extension(
+                existing.get("vonage_extension"),
+                rec.extension,
+                rec.extensions,
+                _preferred_extension_for_cdr(log, rec),
+            ):
+                _mark_excluded_pending(existing)
+                summary["skipped_extension"] += 1
+                continue
             summary["skipped_existing"] += 1
             _attach_extension_to_existing(
                 existing, rec, preferred_extension=_preferred_extension_for_cdr(log, rec)
@@ -284,6 +311,13 @@ def ingest_missing_recorded_cdrs(
             continue
         if not is_qa_eligible_duration(rec.duration_seconds):
             summary["skipped_short"] += 1
+            continue
+        if is_excluded_qa_extension(
+            rec.extension,
+            rec.extensions,
+            _preferred_extension_for_cdr(log, rec),
+        ):
+            summary["skipped_extension"] += 1
             continue
         if ingest_attempts >= max_recordings:
             summary["capped"] = True
@@ -316,6 +350,26 @@ def ingest_missing_recorded_cdrs(
             )
 
     return summary
+
+
+def _mark_excluded_pending(existing: Mapping[str, Any]) -> None:
+    """Stop a queued spam call from being scored. Leave finished calls as they are."""
+    if str(existing.get("status") or "") not in {"pending", "processing"}:
+        return
+    call_id = str(existing.get("id") or "").strip()
+    if not call_id:
+        return
+    try:
+        db.update_call(
+            call_id,
+            {
+                "status": "skipped_extension",
+                "error_message": "Extension excluded from QA scoring",
+                "ai_summary": "Skipped: this extension is excluded from scoring.",
+            },
+        )
+    except Exception:
+        logger.exception("Failed marking excluded call %s", call_id)
 
 
 def _preferred_extension_for_cdr(
@@ -459,6 +513,13 @@ def ingest_recording(
     process_now: bool = True,
     preferred_extension: str | None = None,
 ) -> str:
+    if is_excluded_qa_extension(preferred_extension, rec.extension, rec.extensions):
+        logger.info(
+            "Skipping QA for excluded extension on recording %s",
+            rec.recording_id,
+        )
+        return ""
+
     if not is_qa_eligible_duration(rec.duration_seconds):
         raise VonageVBCError(
             f"Recording {rec.recording_id} is {rec.duration_seconds}s "

@@ -14,7 +14,7 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from src.call_filters import is_qa_eligible_duration
+from src.call_filters import excluded_qa_extensions, is_qa_eligible_duration
 from src.config import get_settings
 
 _CALL_COLUMNS = (
@@ -1048,6 +1048,17 @@ def list_call_logs(
                 """
             )
         )
+        excluded = sorted(excluded_qa_extensions())
+        if excluded:
+            clauses.append(
+                sql.SQL(
+                    """
+                    COALESCE(regexp_replace(source_extension, '\\D', '', 'g'), '') <> ALL(%s)
+                    AND COALESCE(regexp_replace(destination_extension, '\\D', '', 'g'), '') <> ALL(%s)
+                    """
+                )
+            )
+            params.extend([excluded, excluded])
     where = (
         sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses)
         if clauses
