@@ -78,11 +78,30 @@ def enqueue_upload_file(
     return enqueue_bytes(data=data, original_filename=original_filename, source="upload")
 
 
+def _linked_cdr_is_excluded(vonage_call_id: Any) -> bool:
+    log_id = str(vonage_call_id or "").strip()
+    if not log_id:
+        return False
+    try:
+        log = db.get_call_log(log_id)
+    except Exception:
+        return False
+    if not log:
+        return False
+    return is_excluded_qa_extension(
+        log.get("source_extension"), log.get("destination_extension")
+    )
+
+
 def process_call_sync(call_id: str, audio_path: Path) -> dict[str, Any]:
     """Run Transcribe + Bedrock analysis and storage update for one call."""
     settings = get_settings()
     existing = db.get_call(call_id) or {}
-    if is_excluded_qa_extension(existing.get("vonage_extension")):
+    if is_excluded_qa_extension(
+        existing.get("vonage_extension"),
+        existing.get("vonage_caller_id"),
+        existing.get("vonage_dnis"),
+    ) or _linked_cdr_is_excluded(existing.get("vonage_call_id")):
         updates = {
             "status": "skipped_extension",
             "error_message": "Extension excluded from QA scoring",

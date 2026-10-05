@@ -891,6 +891,65 @@ def save_call_flags(flagset: dict[str, Any]) -> str:
 # ── Alert deduplication ────────────────────────────────────────────────
 
 
+def list_outbound_daily_volumes(
+    *,
+    baseline_days: int,
+    timezone_name: str,
+) -> list[dict[str, Any]]:
+    """Outbound CDRs per source extension: today vs the prior N local days.
+
+    baseline_avg includes quiet days as zero, so a rarely used extension does
+    not look busy just because its last active day was large.
+    """
+    days = max(1, int(baseline_days))
+    zone = (timezone_name or "America/Los_Angeles").strip() or "America/Los_Angeles"
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            WITH bounds AS (
+                SELECT
+                    (now() AT TIME ZONE %(zone)s)::date AS today,
+                    ((now() AT TIME ZONE %(zone)s)::date - %(days)s) AS baseline_start
+            ),
+            daily AS (
+                SELECT
+                    regexp_replace(coalesce(source_extension, ''), '\\D', '', 'g') AS ext,
+                    (start_at AT TIME ZONE %(zone)s)::date AS day,
+                    count(*)::int AS n,
+                    (
+                        array_agg(source_user_full_name ORDER BY start_at DESC)
+                        FILTER (WHERE coalesce(source_user_full_name, '') <> '')
+                    )[1] AS agent_name
+                FROM call_logs
+                CROSS JOIN bounds
+                WHERE lower(btrim(coalesce(direction, ''))) = 'outbound'
+                  AND start_at >= (bounds.baseline_start::timestamp AT TIME ZONE %(zone)s)
+                  AND coalesce(source_extension, '') <> ''
+                GROUP BY 1, 2
+            )
+            SELECT
+                d.ext,
+                coalesce(sum(d.n) FILTER (WHERE d.day = b.today), 0)::int AS today_count,
+                (
+                    coalesce(sum(d.n) FILTER (WHERE d.day < b.today AND d.day >= b.baseline_start), 0)::float
+                    / %(days)s
+                ) AS baseline_avg,
+                (
+                    array_agg(d.agent_name ORDER BY d.day DESC)
+                    FILTER (WHERE d.agent_name IS NOT NULL)
+                )[1] AS agent_name
+            FROM daily d
+            CROSS JOIN bounds b
+            WHERE d.ext <> ''
+            GROUP BY d.ext, b.today
+            HAVING coalesce(sum(d.n) FILTER (WHERE d.day = b.today), 0) > 0
+            ORDER BY today_count DESC
+            """,
+            {"zone": zone, "days": days},
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def alert_recently_sent(alert_key: str, *, cooldown_minutes: int) -> bool:
     with get_connection() as conn:
         row = conn.execute(

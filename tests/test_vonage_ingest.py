@@ -225,6 +225,7 @@ class IngestCapTest(unittest.TestCase):
         with (
             patch("src.vonage_sync.VonageVBCClient", return_value=client),
             patch("src.vonage_sync.find_existing_by_vonage_recording_id", return_value=None),
+            patch("src.vonage_sync._cdr_is_excluded", return_value=False),
             patch("src.vonage_sync.ingest_recording", return_value="c-real") as ingest,
         ):
             summary = sync_company_recordings(
@@ -239,6 +240,23 @@ class IngestCapTest(unittest.TestCase):
         self.assertFalse(summary["capped"])
         ingest.assert_called_once()
         self.assertEqual(ingest.call_args.args[1].recording_id, "real-1")
+
+    def test_caller_id_4912_is_not_scored_when_extension_is_a_phone_number(self) -> None:
+        spam = _rec("spam-cid", extension="18035551212", caller_id="4912")
+        client = MagicMock()
+        client.iter_company_recordings.return_value = iter([spam])
+
+        with (
+            patch("src.vonage_sync.VonageVBCClient", return_value=client),
+            patch("src.vonage_sync.find_existing_by_vonage_recording_id", return_value=None),
+            patch("src.vonage_sync._cdr_is_excluded", return_value=False),
+            patch("src.vonage_sync.ingest_recording", return_value="should-not") as ingest,
+        ):
+            summary = sync_company_recordings(minutes_back=30, process_now=False)
+
+        self.assertEqual(summary["skipped_extension"], 1)
+        self.assertEqual(summary["queued"], 0)
+        ingest.assert_not_called()
 
 
 class ExcludedExtensionScoringTest(unittest.TestCase):

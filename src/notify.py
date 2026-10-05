@@ -253,6 +253,51 @@ def alert_missed_spike(
     return notify_gchat(text, webhook_url=missed_url)
 
 
+def alert_outbound_volume_spike(
+    *,
+    extension: str,
+    agent_name: str | None,
+    today_count: int,
+    baseline_avg: float,
+    baseline_days: int,
+    ratio: float,
+    dedup_key: str,
+) -> bool:
+    """Post one Call Alerts message when an extension's outbound volume jumps.
+
+    Uses GCHAT_WEBHOOK_URL (the critical Call Alerts space).
+    """
+    settings = get_settings()
+    url = (settings.gchat_webhook_url or "").strip()
+    if not settings.alerts_enabled or not url:
+        return False
+    ext = (extension or "").strip()
+    if not ext or today_count <= 0:
+        return False
+
+    who = (agent_name or "").strip()
+    label = f"{who} (ext {ext})" if who else f"ext {ext}"
+    pct = max(0, round((ratio - 1) * 100))
+    ops = f"{settings.app_url.rstrip('/')}/ops?days=1"
+    text = (
+        f"*Outbound volume spike*\n"
+        f"Extension: {label}\n"
+        f"Today: *{today_count}* outbound\n"
+        f"Recent average: {baseline_avg:.1f}/day over {baseline_days} days\n"
+        f"Alert when today is {pct}% above that average\n"
+        f"Call ops: {ops}"
+    )
+    sent = notify_gchat(text, webhook_url=url)
+    if sent:
+        try:
+            from src import database as db
+
+            db.mark_alert_sent(dedup_key)
+        except Exception:
+            logger.exception("Failed to stamp outbound volume alert_state")
+    return sent
+
+
 def alert_contract_expiry(
     *,
     contract_id: str,

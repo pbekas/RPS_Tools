@@ -92,7 +92,13 @@ def sync_company_recordings(
         )
         if skip_existing and existing:
             if is_excluded_qa_extension(
-                existing.get("vonage_extension"), rec.extension, rec.extensions
+                existing.get("vonage_extension"),
+                existing.get("vonage_caller_id"),
+                existing.get("vonage_dnis"),
+                rec.caller_id,
+                rec.dnis,
+                rec.extension,
+                rec.extensions,
             ):
                 _mark_excluded_pending(existing)
                 summary["skipped_extension"] += 1
@@ -106,7 +112,9 @@ def sync_company_recordings(
             summary["skipped_short"] += 1
             continue
 
-        if is_excluded_qa_extension(rec.extension, rec.extensions):
+        if is_excluded_qa_extension(
+            rec.caller_id, rec.dnis, rec.extension, rec.extensions
+        ) or _cdr_is_excluded(rec.call_id):
             summary["skipped_extension"] += 1
             continue
 
@@ -296,6 +304,10 @@ def ingest_missing_recorded_cdrs(
         if existing:
             if is_excluded_qa_extension(
                 existing.get("vonage_extension"),
+                existing.get("vonage_caller_id"),
+                existing.get("vonage_dnis"),
+                rec.caller_id,
+                rec.dnis,
                 rec.extension,
                 rec.extensions,
                 _preferred_extension_for_cdr(log, rec),
@@ -313,6 +325,8 @@ def ingest_missing_recorded_cdrs(
             summary["skipped_short"] += 1
             continue
         if is_excluded_qa_extension(
+            rec.caller_id,
+            rec.dnis,
             rec.extension,
             rec.extensions,
             _preferred_extension_for_cdr(log, rec),
@@ -350,6 +364,23 @@ def ingest_missing_recorded_cdrs(
             )
 
     return summary
+
+
+def _cdr_is_excluded(call_id: str | None) -> bool:
+    """True when the linked CDR was placed from or to an excluded extension."""
+    log_id = str(call_id or "").strip()
+    if not log_id:
+        return False
+    try:
+        log = db.get_call_log(log_id)
+    except Exception:
+        logger.exception("Failed reading CDR %s for extension exclusion", log_id)
+        return False
+    if not log:
+        return False
+    return is_excluded_qa_extension(
+        log.get("source_extension"), log.get("destination_extension")
+    )
 
 
 def _mark_excluded_pending(existing: Mapping[str, Any]) -> None:
@@ -513,7 +544,13 @@ def ingest_recording(
     process_now: bool = True,
     preferred_extension: str | None = None,
 ) -> str:
-    if is_excluded_qa_extension(preferred_extension, rec.extension, rec.extensions):
+    if is_excluded_qa_extension(
+        preferred_extension,
+        rec.caller_id,
+        rec.dnis,
+        rec.extension,
+        rec.extensions,
+    ) or _cdr_is_excluded(rec.call_id):
         logger.info(
             "Skipping QA for excluded extension on recording %s",
             rec.recording_id,

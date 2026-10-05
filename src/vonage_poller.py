@@ -210,6 +210,14 @@ def run_sync_cycle(
             logger.exception("Time clock reminders during poll cycle failed")
             result["time_clock_reminders_error"] = str(clock_exc)
 
+        try:
+            from src.outbound_volume import check_outbound_volume_alerts
+
+            result["outbound_volume"] = check_outbound_volume_alerts()
+        except Exception as volume_exc:  # noqa: BLE001
+            logger.exception("Outbound volume alert check failed")
+            result["outbound_volume_error"] = str(volume_exc)
+
         return result
     except Exception as exc:  # noqa: BLE001
         with _lock:
