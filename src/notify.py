@@ -277,14 +277,14 @@ def alert_outbound_volume_spike(
 
     who = (agent_name or "").strip()
     label = f"{who} (ext {ext})" if who else f"ext {ext}"
-    pct = max(0, round((ratio - 1) * 100))
+    pct_of_average = max(0, round(float(ratio) * 100))
     ops = f"{settings.app_url.rstrip('/')}/ops?days=1"
     text = (
         f"*Outbound volume spike*\n"
         f"Extension: {label}\n"
         f"Today: *{today_count}* outbound\n"
         f"Recent average: {baseline_avg:.1f}/day over {baseline_days} days\n"
-        f"Alert when today is {pct}% above that average\n"
+        f"Alert when today reaches {pct_of_average}% of that average\n"
         f"Call ops: {ops}"
     )
     sent = notify_gchat(text, webhook_url=url)

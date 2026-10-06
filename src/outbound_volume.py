@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def spike_threshold(baseline_avg: float, *, ratio: float, min_calls: int) -> int:
-    """Smallest today-count that is both 25% above average and past the noise floor."""
+    """Smallest today-count that is both 200% of average and past the noise floor."""
     averaged = math.ceil(max(0.0, float(baseline_avg)) * max(1.0, float(ratio)) - 1e-9)
     return max(max(1, int(min_calls)), averaged)
 
@@ -65,7 +65,7 @@ def check_outbound_volume_alerts() -> dict[str, Any]:
     from src import database as db
     from src.notify import alert_outbound_volume_spike
 
-    ratio = float(settings.outbound_volume_alert_ratio or 1.25)
+    ratio = float(settings.outbound_volume_alert_ratio or 2)
     min_calls = int(settings.outbound_volume_min_calls or 15)
     baseline_days = max(1, int(settings.outbound_volume_baseline_days or 14))
     zone_name = settings.outbound_volume_timezone or "America/Los_Angeles"

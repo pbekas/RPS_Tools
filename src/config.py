@@ -169,12 +169,12 @@ class Settings:
         self.missed_alert_max_age_minutes = int(
             os.getenv("MISSED_ALERT_MAX_AGE_MINUTES", "120")
         )
-        # Outbound volume vs recent daily average (per extension). 1.25 = 25% above.
+        # Outbound volume vs recent daily average (per extension). 2.0 = 200% of average.
         self.outbound_volume_alert_enabled = os.getenv(
             "OUTBOUND_VOLUME_ALERT_ENABLED", "1"
         ).strip().lower() in {"1", "true", "yes", "on"}
         self.outbound_volume_alert_ratio = float(
-            os.getenv("OUTBOUND_VOLUME_ALERT_RATIO", "1.25")
+            os.getenv("OUTBOUND_VOLUME_ALERT_RATIO", "2")
         )
         self.outbound_volume_min_calls = int(
             os.getenv("OUTBOUND_VOLUME_MIN_CALLS", "15")
