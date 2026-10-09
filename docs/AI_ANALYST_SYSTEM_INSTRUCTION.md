@@ -4,7 +4,7 @@ Used by `src/bedrock_analyst.py` with the active ruleset from `docs/qa_rules_v1.
 (or Firestore `qa_rules/current`).
 
 Default audit model: Claude **Haiku 4.5** (`BEDROCK_MODEL_ID`). Optional coaching
-model: Claude **Sonnet 4.5** (`BEDROCK_COACHING_MODEL_ID`).
+model: Claude **Sonnet 5.5** (`BEDROCK_COACHING_MODEL_ID`).
 
 The model must return JSON including `rule_results` for every **applicable**
 rule id (rules with empty `topic_ids` apply to all calls; otherwise only when

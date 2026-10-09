@@ -98,4 +98,4 @@ backfill about once a day. Already-ingested recordings do not count toward
 - ALB HTTPS only; Workspace SSO `@releviumpain.com`
 - Secrets never in the image — Secrets Manager injection
 - Fargate tasks in private subnets with NAT egress
-- Enable Bedrock model access for `BEDROCK_MODEL_ID` in `us-east-1`
+- Enable Bedrock model access for `BEDROCK_MODEL_ID` and `BEDROCK_COACHING_MODEL_ID` (Claude Sonnet 5.5) in `us-east-1`

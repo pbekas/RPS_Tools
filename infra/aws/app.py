@@ -52,7 +52,7 @@ DEFAULT_DOMAIN = "tool.releviumpain.com"
 DEFAULT_BUCKET = "rps-call-qa-recordings-013908492747"
 SECRET_NAME = "rps-call-qa/app"
 DEFAULT_BEDROCK = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-DEFAULT_COACHING = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+DEFAULT_COACHING = "us.anthropic.claude-sonnet-5-5"
 
 
 class RpsCallQaStack(Stack):

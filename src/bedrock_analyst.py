@@ -326,6 +326,28 @@ Tone: direct, kind, actionable. No fluff. Do not invent facts not supported by t
     ).strip()
 
 
+def converse_inference_fields(
+    model_id: str, *, temperature: float, max_tokens: int
+) -> dict[str, Any]:
+    """Build Converse inference fields for the selected model.
+
+    Claude Sonnet 5.5 rejects non-default temperature, top_p, and top_k, and
+    thinks by default. Coaching and audit prompts were written for Sonnet 4.5
+    with thinking off, so Sonnet 5.5 runs at medium effort without up-front
+    thinking.
+    """
+    inference: dict[str, Any] = {"maxTokens": max_tokens}
+    fields: dict[str, Any] = {"inferenceConfig": inference}
+    if "claude-sonnet-5-5" in model_id:
+        fields["additionalModelRequestFields"] = {
+            "thinking": {"type": "between_tools"},
+            "output_config": {"effort": "medium"},
+        }
+    else:
+        inference["temperature"] = temperature
+    return fields
+
+
 def bedrock_text(
     *,
     system: str,
@@ -335,15 +357,15 @@ def bedrock_text(
     model_id: str | None = None,
 ) -> str:
     settings = get_settings()
+    resolved_model = model_id or settings.bedrock_model_id
     client = boto3.client("bedrock-runtime", region_name=settings.aws_region)
     response = client.converse(
-        modelId=model_id or settings.bedrock_model_id,
+        modelId=resolved_model,
         system=[{"text": system}],
         messages=[{"role": "user", "content": [{"text": user}]}],
-        inferenceConfig={
-            "temperature": temperature,
-            "maxTokens": max_tokens,
-        },
+        **converse_inference_fields(
+            resolved_model, temperature=temperature, max_tokens=max_tokens
+        ),
     )
     parts = response.get("output", {}).get("message", {}).get("content", [])
     texts = [p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")]

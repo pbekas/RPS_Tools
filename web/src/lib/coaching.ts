@@ -178,7 +178,9 @@ Do not invent facts not supported by the signals/notes/summaries. Prefer ops met
   const modelId =
     process.env.BEDROCK_COACHING_MODEL_ID ||
     process.env.BEDROCK_MODEL_ID ||
-    "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+    "us.anthropic.claude-sonnet-5-5";
+  // Sonnet 5.5 rejects non-default temperature and thinks unless told not to.
+  const sonnet55 = modelId.includes("claude-sonnet-5-5");
 
   const resp = await bedrockClient().send(
     new ConverseCommand({
@@ -189,7 +191,17 @@ Do not invent facts not supported by the signals/notes/summaries. Prefer ops met
         },
       ],
       messages: [{ role: "user", content: [{ text: prompt }] }],
-      inferenceConfig: { temperature: 0.4, maxTokens: 2048 },
+      inferenceConfig: sonnet55
+        ? { maxTokens: 2048 }
+        : { temperature: 0.4, maxTokens: 2048 },
+      ...(sonnet55
+        ? {
+            additionalModelRequestFields: {
+              thinking: { type: "between_tools" },
+              output_config: { effort: "medium" },
+            },
+          }
+        : {}),
     })
   );
 

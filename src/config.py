@@ -101,10 +101,11 @@ class Settings:
             "BEDROCK_MODEL_ID",
             "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         ).strip()
-        # Optional stronger model for weekly coaching narratives
+        # Optional stronger model for weekly coaching narratives.
+        # Sonnet 4.5 entered Legacy on 2026-10-08; Sonnet 5.5 is the replacement.
         self.bedrock_coaching_model_id = os.getenv(
             "BEDROCK_COACHING_MODEL_ID",
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.anthropic.claude-sonnet-5-5",
         ).strip() or self.bedrock_model_id
         self.transcribe_language_code = os.getenv(
             "TRANSCRIBE_LANGUAGE_CODE", "en-US"
